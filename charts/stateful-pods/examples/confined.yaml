@@ -1,0 +1,20 @@
+# A machine confined by a syscall filter the cluster provides.
+#
+# The profile named below has to be on every node this machine can be scheduled
+# to, at <the kubelet's seccomp directory>/profiles/stateful-pods-machine.json.
+# The chart cannot put it there - see charts/stateful-pods/profiles/README.md for
+# the three ways to, and for what the profile is worth in each mode.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/confined.yaml
+machines:
+  web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    security:
+      mode: userns
+      seccompProfile:
+        type: Localhost
+        localhostProfile: profiles/stateful-pods-machine.json
+    rootfs:
+      size: 8Gi
