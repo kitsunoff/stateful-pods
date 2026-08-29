@@ -4,10 +4,9 @@ A Helm chart that runs a *machine* — a pet with a persistent root filesystem �
 pod. Each machine gets its own StatefulSet, its own rootfs PersistentVolume and its own headless
 Service.
 
-> **This version does not boot a machine.** It fills a machine's root filesystem from the source it
-> declares, and stops there. The guest container runs a placeholder command; the shim that mounts
-> the volume and hands control to the guest's init, and everything to do with guest provisioning,
-> arrive in later changes.
+> **The machine boots.** Its root filesystem is filled from the source it declares, mounted as a
+> root, and handed to its own init system. Guest provisioning — cloud-init, SSH host keys, accounts —
+> arrives in a later change, so a machine starts with the identity and accounts its source shipped.
 
 ## Prerequisites
 
@@ -52,14 +51,17 @@ really does nothing. Its template case needs a tarball served over HTTPS, becaus
 chart accepts:
 
 ```bash
-TEMPLATE_URL=https://.../rootfs.tar.xz \
-TEMPLATE_SHA256=<the digest from the publisher's SHA256SUMS> \
-  make integration-test
+TEMPLATE_URL='https://.../alpine/3.21/{arch}/default/<date>/rootfs.tar.xz' make integration-test
 ```
 
-Without those two the template case is skipped rather than silently passed. In CI they come from
-the `INTEGRATION_TEMPLATE_URL` and `INTEGRATION_TEMPLATE_SHA256` repository variables; distributors
-publish under dated paths, so those values need refreshing when a build is retired upstream.
+`{arch}` is replaced with the cluster node's own architecture, and the checksum is taken from the
+publisher's `SHA256SUMS` beside the tarball. Both matter: a rootfs built for another architecture
+seeds perfectly and then cannot be executed, so a fixed URL passes on the machine it was chosen on
+and crash-loops everywhere else. Set `TEMPLATE_SHA256` to check against a digest of your own instead.
+
+Without `TEMPLATE_URL` the template case is skipped rather than silently passed. In CI it comes from
+the `INTEGRATION_TEMPLATE_URL` repository variable; distributors publish under dated paths, so it
+needs refreshing when a build is retired upstream.
 
 ## Usage
 
@@ -138,6 +140,106 @@ Restoring a snapshot back into the machine it was taken from keeps that machine'
 Restoring it under a different namespace, release or machine name is a clone: the machine ID is
 cleared so the guest generates a fresh one, and nothing else on the volume is touched. SSH host keys
 are not yet handled and are inherited by a clone — that arrives with guest provisioning.
+
+## Booting
+
+Once the volume is seeded, the guest container mounts what an init system expects to find inside it,
+changes the root to the volume, and hands over to the machine's own `/sbin/init`. From that moment
+the container's process *is* the machine.
+
+The root change is `pivot_root`, not `chroot`, and that is a requirement rather than a preference: it
+makes the container's mount namespace root the machine, so `kubectl exec` and exec probes land in the
+machine rather than in this chart's image.
+
+```bash
+kubectl exec --stdin --tty lab-web-0 -- /bin/sh   # a shell in the machine, not in the shim
+kubectl logs lab-web-0 --follow                   # the machine's own boot sequence
+```
+
+### What a machine gets
+
+The mount set is the same for every machine and is not configurable: `/proc`, a read-only `/sys`, a
+`tmpfs` `/dev` with the runtime's own device nodes bound into it, `/dev/pts`, `/dev/shm`, `/run`,
+`/tmp`, and a writable `cgroup2` hierarchy at `/sys/fs/cgroup`.
+
+The control-group hierarchy is mounted for every machine, whatever it runs. A systemd guest needs one
+it can own — Kubernetes mounts the pod's read-only — and a guest running a lighter init ignores it.
+Making it an input would add a value whose wrong setting produces a machine that fails to boot for a
+reason no message could explain.
+
+Device nodes are bound from the ones the runtime already gave the pod, never created: `mknod` checks
+the capability in the *initial* user namespace, so a pod running in its own user namespace cannot
+create `/dev/null` at all, whatever it is granted. This is what Proxmox does, and it makes both
+security modes take the identical path.
+
+The machine is told it is running in a container. Without it systemd concludes it is on hardware and
+starts loading kernel modules, checking filesystems and taking over the control-group hierarchy.
+
+### Files the chart maintains inside the machine
+
+A pod is given `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` as mounts into the container
+image's filesystem. After the root change those are no longer in the machine's root, so the chart
+writes them into the machine itself, on every boot, from the pod's own copies. Without it a machine
+boots with no resolver and a host name belonging to the image's build machine.
+
+To keep one of them as the machine's own, create a marker beside it inside the machine:
+
+```bash
+touch /etc/.stateful-pods-ignore.resolv.conf
+```
+
+The marker is per file — claiming the resolver does not also claim the host name — and it lives on
+the volume, so it travels with the machine rather than with the release.
+
+### Readiness, shutdown and logs
+
+The chart ships a **readiness probe and no liveness probe**. Readiness gates the Service endpoint
+without touching the machine; a liveness probe would reboot a pet because something inside it was
+briefly unresponsive, destroying the state that would have explained why.
+
+The machine's headless Service publishes its address before it is ready, so its stable name resolves
+while it is still booting and while it is unwell — which is exactly when someone is looking for it.
+
+Deleting the pod asks the machine to shut down with the signal its own init understands. `SIGTERM`
+means *re-execute* to systemd, not *stop*, so the default would leave every machine to be killed when
+the grace period expired. The grace period is 120 seconds, copying Proxmox's own.
+
+The machine's console goes to the pod's logs, so `kubectl logs` shows a boot sequence. It is noisy
+and unstructured, and that is the accepted cost of not being empty. Per-service logs stay in the
+machine's own journal.
+
+### Prerequisites the chart cannot check
+
+The `userns` mode is verified at render time against the cluster's Kubernetes version, and that is
+the only part of it the chart can see. These it cannot, and a machine that renders may still fail to
+boot on them:
+
+- the node's kernel, which must support user namespaces for pods;
+- the container runtime's configuration;
+- whether the storage backend supports idmapped mounts — NFS does not.
+
+When one of them is missing the boot fails on a mount, naming the path and the filesystem type. The
+`privileged` mode has none of these prerequisites and works on any cluster, at the cost of almost all
+isolation from the node.
+
+**What `userns` looks like when the environment cannot support it.** The mode has been exercised by
+hand on a `kind` cluster, where it does not work — a `kind` node is itself a container, so a pod's
+user namespace nests inside one, and every volume in the pod would additionally have to support
+idmapped mounts. The failure arrives before any of this chart's code runs, from the runtime:
+
+```text
+Error: failed to create containerd task: failed to create shim task: OCI runtime create failed:
+runc create failed: unable to start container process: error during container init:
+error running createContainer hook #0: ... permission denied
+```
+
+The pod never leaves `Init:RunContainerError`, and no chart message appears because nothing of the
+chart has executed yet. A failure *inside* the chart looks different: the guest container starts, and
+its log names the mount it could not make.
+
+Because of this the project's own integration test boots `privileged` only. `userns` is supported and
+rendered, and it is verified against the cluster version at render time, but it is not exercised by
+this repository's CI.
 
 ## Specification coverage
 
@@ -257,6 +359,55 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The image is available for the architectures the audience runs | `.github/workflows/ci.yaml` (multi-architecture build) |
 | Preparation is done by writing files | `prepare.bats`, `seed-oci-copy.bats` |
 | Generated content comes from the chart's own tools | `prepare.bats` |
+
+### machine-boot
+
+| Scenario | Covered by |
+| --- | --- |
+| The guest's root is the volume | `hack/integration-test.sh` |
+| A shell in the machine is the machine's shell | `hack/integration-test.sh` |
+| The volume is not offered to the runtime as the root | `boot_test.yaml`, `rootfs_volume_test.yaml` |
+| An init system finds what it expects | `boot-mounts.bats`, `hack/integration-test.sh` |
+| A control-group hierarchy the guest can own | `boot-mounts.bats`, `hack/integration-test.sh` |
+| Device nodes come from the runtime, not from creation | `boot-handover.bats`, `hack/integration-test.sh` |
+| Two machines get the same filesystems | `boot-mounts.bats` |
+| There is no input that changes it | `boot-mounts.bats`, `hack/check-values-docs.sh` |
+| The init system knows where it is | `boot-handover.bats`, `hack/integration-test.sh` |
+| A failed mount stops the boot | `boot-mounts.bats` |
+| A machine with no init is reported as such | `boot-handover.bats` |
+| An unseeded volume is never booted | `boot-handover.bats` |
+
+### guest-managed-files
+
+| Scenario | Covered by |
+| --- | --- |
+| A machine knows its own name | `customize.bats`, `hack/integration-test.sh` |
+| A machine can resolve names | `customize.bats`, `hack/integration-test.sh` |
+| The values are refreshed, not seeded once | `customize.bats`, `hack/integration-test.sh` |
+| A file the machine claims is left alone | `customize.bats`, `hack/integration-test.sh` |
+| Claiming one file does not claim the others | `customize.bats`, `hack/integration-test.sh` |
+| The opt-out lives with the machine | `customize.bats` |
+
+### machine-lifecycle
+
+| Scenario | Covered by |
+| --- | --- |
+| A booting machine is not yet ready | `lifecycle-helpers.bats`, `hack/integration-test.sh` |
+| A booted machine is ready | `lifecycle-helpers.bats`, `hack/integration-test.sh` |
+| Readiness does not depend on knowing the guest | `lifecycle-helpers.bats` |
+| No check can restart the machine | `boot_test.yaml` |
+| A machine shuts down cleanly | `lifecycle-helpers.bats`, `hack/integration-test.sh` |
+| The signal follows the machine, not a declaration | `lifecycle-helpers.bats` |
+| Stopping waits for the machine to finish | `lifecycle-helpers.bats`, `boot_test.yaml` |
+| The boot is visible from outside | `hack/integration-test.sh` |
+| A machine that fails to boot says why | `boot-mounts.bats`, `boot-handover.bats` |
+
+### machine-topology (added by machine-boot)
+
+| Scenario | Covered by |
+| --- | --- |
+| A booting machine can be reached | `service_reachability_test.yaml` |
+| The name does not disappear when the machine is unwell | `service_reachability_test.yaml` |
 
 ### machine-topology (modified) and pod-security-posture (added)
 

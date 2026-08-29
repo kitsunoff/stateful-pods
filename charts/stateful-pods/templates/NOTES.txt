@@ -12,14 +12,24 @@ Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root
 
 On its first start the machine's root filesystem is filled from its {{ $machine.source.kind }} source,
 once. After that the volume is the machine's operating system and changing the source
-changes nothing. Watch it happen with:
+changes nothing.
 
-  kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --container seed --follow
+The machine then boots. Watch it:
 
-WARNING: this machine does not boot. Its disk is correct and nothing runs on it: the shim
-that mounts the volume and hands control to the guest's init does not exist yet, so the
-guest container runs a placeholder command that sleeps. Do not expect a running operating
-system.
+  kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --follow
+
+Get a shell in it - this is the machine's own shell, not the chart's:
+
+  kubectl --namespace {{ $root.Release.Namespace }} exec --stdin --tty {{ $objectName }}-0 -- /bin/sh
+
+It reports itself ready when its operating system has finished starting, and its name
+resolves before that, so you can reach it while it boots. Deleting the pod asks it to shut
+down and waits up to 120 seconds; it is not killed where it stands.
+
+The chart writes /etc/hostname, /etc/hosts and /etc/resolv.conf into the machine on every
+boot. To keep one of them as the machine's own, create the marker beside it:
+
+  touch /etc/.stateful-pods-ignore.resolv.conf
 
 The root volume is retained when the release is uninstalled. Deleting a machine's state is
 a separate, deliberate action:

@@ -94,20 +94,3 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: ':(latest|placeholder|v?[0-9]+(\.[0-9]+)*)$'
 
-  - it: still runs a placeholder command, because the machine does not boot yet
-    set:
-      machines.web:
-        source:
-          kind: oci
-          reference: docker.io/library/debian:13
-        rootfs:
-          size: 8Gi
-        security:
-          mode: userns
-    asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: 'PLACEHOLDER'
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: 'does not boot'

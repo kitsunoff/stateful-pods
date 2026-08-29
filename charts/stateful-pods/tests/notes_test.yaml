@@ -29,11 +29,6 @@ tests:
       - matchRegexRaw:
           pattern: 'lab-web-0\.lab-web\.homelab\.svc\.cluster\.local'
 
-  - it: says unambiguously that the machine does not boot yet
-    asserts:
-      - matchRegexRaw:
-          pattern: 'does not boot'
-
   - it: says the root filesystem is seeded from the machine's source
     asserts:
       - matchRegexRaw:
@@ -41,9 +36,32 @@ tests:
       - matchRegexRaw:
           pattern: 'once'
 
-  - it: still says the machine does not boot
+  - it: no longer says the machine does not boot
+    asserts:
+      - notMatchRegexRaw:
+          pattern: 'does not boot'
+      - notMatchRegexRaw:
+          pattern: 'placeholder'
+
+  - it: says the machine boots and how to watch it
     asserts:
       - matchRegexRaw:
-          pattern: 'does not boot'
+          pattern: 'The machine then boots'
       - matchRegexRaw:
-          pattern: 'placeholder command that sleeps'
+          pattern: 'logs lab-web-0 --follow'
+
+  - it: says how to reach the machine and how it stops
+    asserts:
+      - matchRegexRaw:
+          pattern: 'exec --stdin --tty lab-web-0'
+      - matchRegexRaw:
+          pattern: 'reports itself ready'
+      - matchRegexRaw:
+          pattern: 'shut\s+down and waits up to 120 seconds'
+
+  - it: says how a machine keeps one of the managed files as its own
+    asserts:
+      - matchRegexRaw:
+          pattern: '/etc/resolv.conf'
+      - matchRegexRaw:
+          pattern: 'stateful-pods-ignore\.resolv\.conf'

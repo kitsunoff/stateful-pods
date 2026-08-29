@@ -1,13 +1,17 @@
 # A source image for the integration test.
 #
-# It is a real distribution image with a file capability deliberately set, because
-# that is the property a rendering test cannot check: whether the copy that filled
-# the volume preserved security.capability, or produced a rootfs that looks correct
+# A real distribution image with a file capability deliberately set, because that
+# is the property a rendering test cannot check: whether the copy that filled the
+# volume preserved security.capability, or produced a rootfs that looks correct
 # and whose unprivileged ping will fail forever.
+#
+# It also carries an init system, because a machine's source has to be an
+# operating system rather than an application image - which is exactly what the
+# boot refuses when it is not.
 FROM debian:13-slim
 
 RUN apt-get update \
- && apt-get install --assume-yes --no-install-recommends libcap2-bin \
+ && apt-get install --assume-yes --no-install-recommends libcap2-bin systemd systemd-sysv \
  && rm --recursive --force /var/lib/apt/lists/* \
  && cp /bin/true /usr/local/bin/sp-probe \
  && setcap cap_net_raw+ep /usr/local/bin/sp-probe \

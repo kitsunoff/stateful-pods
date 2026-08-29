@@ -17,9 +17,9 @@ shim:
   # reproducible, and a tag that silently comes to mean different content makes
   # its own boot path unreproducible without anything in the release changing.
   #
-  # This version of the chart still does not boot a machine: the guest container
-  # runs a placeholder command. Override this only if you are building your own
-  # shim.
+  # The guest container's process mounts the machine's filesystems, changes the
+  # root to the volume, and then becomes the machine's own init. Override this only
+  # if you are building your own shim.
   image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:c0ddf59e2365dd5b78d19a2421063c48be9e0801a1ade473f45ca251db557fcb
 
 # Machines to run, keyed by machine name.
@@ -79,7 +79,12 @@ shim:
 #       # sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 #
 #     # The guest's hostname. Unset means the machine keeps the pod's own hostname,
-#     # which the kubelet already writes to /etc/hostname. Set it to override.
+#     # which the kubelet writes for the pod and the chart then writes into the
+#     # machine on every boot. Set it to override.
+#     #
+#     # A machine that wants to keep its own can say so from the inside, with a
+#     # marker beside the file: /etc/.stateful-pods-ignore.hostname. The same
+#     # applies to /etc/hosts and /etc/resolv.conf.
 #     hostname: null
 #
 #     security:
@@ -95,6 +100,11 @@ shim:
 #       #                storage (not NFS).
 #       #   privileged - the guest container runs privileged. Works on any cluster
 #       #                and gives up almost all isolation from the node.
+#       #
+#       # The version check happens at render time. The node's kernel, the
+#       # runtime's configuration and whether the storage supports idmapped mounts
+#       # cannot be seen from here, so a userns machine that renders may still fail
+#       # to boot on them - it fails on a mount, naming the path.
 #       mode: userns
 #
 #     rootfs:

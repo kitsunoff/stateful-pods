@@ -1,0 +1,110 @@
+suite: rendering - the machine boots
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: runs the boot script as the guest container's command
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value:
+            - /bin/bash
+            - /scripts/boot.sh
+
+  - it: runs no placeholder any more
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: 'placeholder'
+      - notContains:
+          path: spec.template.spec.containers[0].command
+          content: sleep infinity
+
+  - it: prepares the machine's files before the guest starts
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[2].name
+          value: customize
+      - equal:
+          path: spec.template.spec.initContainers[2].command
+          value:
+            - /bin/bash
+            - /scripts/customize.sh
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 3
+
+  - it: gives the guest container a terminal, so the machine's console reaches the logs
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].tty
+          value: true
+
+  - it: asks the machine to shut down rather than killing it
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value:
+            - /bin/sh
+            - /.stateful-pods/bin/stop.sh
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 120
+
+  - it: reports readiness from inside the machine
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.exec.command
+          value:
+            - /bin/sh
+            - /.stateful-pods/bin/ready.sh
+
+  - it: never restarts the machine for being unwell
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe
+      - notExists:
+          path: spec.template.spec.containers[0].startupProbe
+
+  - it: ships no liveness probe in the privileged mode either
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe
+
+  - it: keeps the mode's privilege on the guest container alone
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          value:
+            - SYS_ADMIN
+      - equal:
+          path: spec.template.spec.initContainers[2].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+      - notExists:
+          path: spec.template.spec.initContainers[2].securityContext.capabilities

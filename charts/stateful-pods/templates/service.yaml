@@ -11,6 +11,10 @@ metadata:
     {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
 spec:
   clusterIP: None
+  # A machine's stable name must keep resolving while its operating system is
+  # still booting, and while it is unwell. A machine is a pet with an address, not
+  # a member of a pool whose traffic is withheld until it is healthy.
+  publishNotReadyAddresses: true
   selector:
     {{- include "stateful-pods.machine.selectorLabels" $ctx | nindent 4 }}
 {{- end }}
