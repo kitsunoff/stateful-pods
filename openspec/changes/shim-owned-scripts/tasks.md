@@ -109,7 +109,7 @@
 
 ## 7. Release sequencing
 
-- [ ] 7.1 Land the chart and image changes with `values.yaml` still pinning the previous digest, and
+- [x] 7.1 Land the chart and image changes with `values.yaml` still pinning the previous digest, and
   state in the pull request that the chart is installable only with a `shim.image` override until
   the image is published; verify CI is green on the branch
 - [ ] 7.2 After the tag build publishes the image, bump the default `shim.image` digest in
