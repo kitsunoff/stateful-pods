@@ -245,7 +245,7 @@ Takes the root context.
 {{- $pullSecret := index $source "pullSecretName" -}}
 {{- if not (kindIs "invalid" $pullSecret) -}}
 {{- if not (kindIs "string" $pullSecret) -}}
-{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: must be the name of a Secret, but is of type %s. An unquoted no, off or n is a boolean in YAML rather than a name; quote it." $name (kindOf $pullSecret)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: must be the name of a Secret, but is of type %s. Name a single Secret in this release's namespace - and quote it if the name is one YAML reads as something else, such as an unquoted no, off or a number." $name (kindOf $pullSecret)) -}}
 {{- else if eq ($pullSecret | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.pullSecretName: is empty. Name the Secret in this release's namespace that holds the registry credentials, or remove the field entirely to fetch the source anonymously." $name) -}}
 {{- else if or (gt (len ($pullSecret | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($pullSecret | toString))) -}}

@@ -207,5 +207,4 @@ tests:
           mode: userns
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.source\.pullSecretName: must be the name of a Secret.*boolean in YAML'
-
+          errorPattern: '(?s)machines\.web\.source\.pullSecretName: must be the name of a Secret.*is of type bool.*quote it'
