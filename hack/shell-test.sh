@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Runs the bats suites for the chart's shell scripts.
+# Runs the bats suites for the scripts the shim image carries.
 #
 # Always inside a Linux container, on every host including CI. The scripts exist
 # to manipulate another system's root filesystem, so what they do - ownership,

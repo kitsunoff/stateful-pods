@@ -31,7 +31,7 @@ docs:
 test:
 	$(HELM) unittest $(CHART)
 
-## shell-test: run the bats suites for the chart's shell scripts
+## shell-test: run the bats suites for the shim image's shell scripts
 shell-test:
 	./hack/shell-test.sh
 

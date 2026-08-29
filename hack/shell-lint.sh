@@ -2,8 +2,8 @@
 #
 # Runs shellcheck over every shell script in the repository. The dialect comes
 # from each file's own shebang, which is what keeps the POSIX-only scripts honest:
-# the seeding script that runs inside a machine's own source image may not assume
-# bash, and shellcheck is what enforces that.
+# the helpers that run inside a machine after the root change may not assume bash,
+# and shellcheck is what enforces that.
 set -o errexit
 set -o nounset
 set -o pipefail
