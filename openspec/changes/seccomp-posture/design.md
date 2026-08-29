@@ -76,6 +76,32 @@ So the shipped profile is LXC's list, expressed as Kubernetes seccomp JSON:
 argument. Five system calls, and it is the profile every Proxmox container in the world already runs
 under, which is the strongest evidence available that it does not break a booting distribution.
 
+### A privileged container is given no filter at all, and this was measured
+
+Settled by experiment before anything in this change was written, because the answer decides what
+`values.yaml` is allowed to claim.
+
+On a kind cluster (Kubernetes v1.35.0, containerd v2.2.0, arm64) a profile was placed at
+`/var/lib/kubelet/seccomp/profiles/deny-chmod.json` with `defaultAction: SCMP_ACT_ALLOW` and the
+`chmod` family returning errno 42, which is a value nothing else returns. Four pods ran the same
+`chmod` against a file they owned:
+
+| Pod | `seccompProfile` | `privileged` | Result |
+| --- | --- | --- | --- |
+| control | none | no | `chmod` succeeded |
+| pod-level filter | `Localhost` | no | `chmod` failed with errno 42 |
+| container-level filter | `Localhost` | no | `chmod` failed with errno 42 |
+| privileged, same filter | `Localhost` | yes | `chmod` succeeded |
+
+The runtime spec containerd generated says the same thing more directly. For the unprivileged
+container, `linux.seccomp` is present with the profile's single rule. For the privileged container,
+the CRI request still carries `localhost_ref` pointing at the same file, and `linux.seccomp` is
+absent from the generated spec entirely — the reference is received and then dropped.
+
+So a `privileged` machine cannot be confined by this change, or by any value a chart can set. That
+is a fact about the runtime, not a gap in the chart, and `values.yaml` says so where the mode is
+documented rather than describing a filter that is not applied.
+
 ### What that profile is actually worth, per mode
 
 Worth stating plainly, because the answer is not what it looks like:
@@ -92,9 +118,9 @@ target, and `CAP_SYS_ADMIN` in a user namespace unlocks a large amount of mount-
 The profile does not close that, and this design does not claim it does.
 
 In `privileged` all three are open, and `open_by_handle_at` is a classic escape primitive — so that
-is where the profile would matter most, and it is exactly where containerd appears not to apply one.
-That contradiction is not resolvable inside this change; it is what the follow-up change about the
-privileged mode exists for.
+is where the profile would matter most, and it is exactly where the experiment above shows no
+profile is applied. That contradiction is not resolvable inside this change; it is what the
+follow-up change about the privileged mode exists for.
 
 ### Distribution is documented, not implemented
 
@@ -108,10 +134,9 @@ shipping the thing this change is trying to reduce.
 
 ## Risks / Trade-offs
 
-- **A privileged container may ignore any profile** → Containerd's CRI passes the privileged flag
-  into the decision, which strongly suggests the profile is skipped. Task group 1 settles it with an
-  experiment before `values.yaml` documents anything, because documenting a protection that is not
-  applied is worse than documenting its absence.
+- **A privileged container may ignore any profile** → Settled: it does, measured on a real cluster and
+  confirmed against the runtime spec containerd generated. See the decision above. `values.yaml`
+  documents the absence, because documenting a protection that is not applied is worse.
 - **`RuntimeDefault` on the init containers might not be as free as it looks** → `setxattr`,
   `chown`, `mknod`-free extraction and an HTTPS fetch are all ordinary, but this is asserted by the
   integration test rather than assumed, on both source kinds.

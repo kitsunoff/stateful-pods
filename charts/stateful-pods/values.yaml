@@ -138,7 +138,13 @@ shim:
 #       #                containerd >= 2.0 or CRI-O, Linux >= 6.3, and idmap-capable
 #       #                storage (not NFS).
 #       #   privileged - the guest container runs privileged. Works on any cluster
-#       #                and gives up almost all isolation from the node.
+#       #                and gives up almost all isolation from the node. No syscall
+#       #                filter reaches it: containerd drops the profile a privileged
+#       #                container names before it builds the container, so this mode
+#       #                cannot be confined by anything the chart sets. That was
+#       #                measured on a cluster, not inferred - a profile denying an
+#       #                ordinary system call stopped it in an unprivileged container
+#       #                and was absent from the privileged one's runtime spec.
 #       #
 #       # The version check happens at render time. The node's kernel, the
 #       # runtime's configuration and whether the storage supports idmapped mounts

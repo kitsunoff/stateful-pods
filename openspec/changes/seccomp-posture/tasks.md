@@ -1,9 +1,9 @@
 ## 1. Settle what a privileged container actually gets
 
-- [ ] 1.1 On a throwaway cluster, run a pod with `privileged: true` and an explicit
+- [x] 1.1 On a throwaway cluster, run a pod with `privileged: true` and an explicit
   `seccompProfile` naming a profile that denies an obvious system call, and check whether that call
   is denied; verify by observing the call succeed or fail, and record the result in `design.md`
-- [ ] 1.2 Write what was observed into the `values.yaml` comment for the `privileged` mode — either
+- [x] 1.2 Write what was observed into the `values.yaml` comment for the `privileged` mode — either
   that a filter applies to it or that it does not — because documenting a protection that is not
   applied is worse than documenting its absence; verify `make docs` passes
 
