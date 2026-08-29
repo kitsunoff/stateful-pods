@@ -26,12 +26,22 @@ teardown() {
     rm -rf "$ROOTFS" /usr/local/bin/sp-probe
 }
 
+# A copy that fails with no explanation is the failure mode this whole change
+# exists to avoid, and a test that fails the same way is no better.
+fill() {
+    run sp_fill_rootfs "$1"
+    if [ "$status" -ne 0 ]; then
+        echo "sp_fill_rootfs exited $status" >&2
+        echo "$output" >&2
+    fi
+}
+
 @test "a file capability in the image survives the copy" {
     cp /bin/true /usr/local/bin/sp-probe
     setcap cap_net_raw+ep /usr/local/bin/sp-probe
     getcap /usr/local/bin/sp-probe | grep -q cap_net_raw
 
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     [ -f "$ROOTFS/usr/local/bin/sp-probe" ]
     run getcap "$ROOTFS/usr/local/bin/sp-probe"
@@ -40,13 +50,13 @@ teardown() {
 
 @test "device nodes are not copied" {
     [ -c /dev/null ] || skip "no device node to copy in this environment"
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     [ ! -e "$ROOTFS/dev/null" ]
 }
 
 @test "kernel filesystems are not copied" {
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     # The directories may exist as mount points in the image; what must not be
     # here is their contents.
@@ -57,20 +67,20 @@ teardown() {
 @test "another mounted filesystem is not copied" {
     # The repository is bind-mounted at /src, which is a different filesystem.
     [ -e /src/Makefile ] || skip "the repository is not mounted at /src"
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     [ ! -e "$ROOTFS/src/Makefile" ]
 }
 
 @test "the destination volume is not copied into itself" {
     echo canary > "$ROOTFS/canary"
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     [ ! -e "$ROOTFS$ROOTFS" ]
 }
 
 @test "the copy produces a root filesystem at the top level" {
-    run sp_fill_rootfs "$ROOTFS"
+    fill "$ROOTFS"
     [ "$status" -eq 0 ]
     [ -d "$ROOTFS/usr" ]
     [ -d "$ROOTFS/etc" ]
