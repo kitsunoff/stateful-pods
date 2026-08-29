@@ -47,10 +47,7 @@ system's root filesystem, and ownership, extended attributes and file capabiliti
 Linux. `make image-test` additionally runs a throwaway registry on a container network of its own,
 because an `oci` source is fetched from a registry rather than run.
 
-`make integration-test` seeds a machine end to end on a throwaway `kind` cluster, and then runs
-`make seccomp-test`, which builds a second one whose kubelet applies a default syscall filter to
-every container that declares none — the configuration under which a machine that named no filter
-would not boot. It is the only
+`make integration-test` seeds a machine end to end on a throwaway `kind` cluster. It is the only
 test that can tell whether a copy really preserved a file capability, or whether a second start
 really does nothing. Its template case needs a tarball served over HTTPS, because that is what the
 chart accepts:
@@ -67,6 +64,13 @@ and crash-loops everywhere else. Set `TEMPLATE_SHA256` to check against a digest
 Without `TEMPLATE_URL` the template case is skipped rather than silently passed. In CI it comes from
 the `INTEGRATION_TEMPLATE_URL` repository variable; distributors publish under dated paths, so it
 needs refreshing when a build is retired upstream.
+
+`make integration-test` then runs `make seccomp-test`, which builds a second cluster whose kubelet
+applies a default syscall filter to every container that declares none. That is the configuration
+under which a machine declaring no filter of its own does not boot, and it is the only place the
+defect can be reproduced — so the suite reproduces it, on a real machine, before asserting that
+declaring the filter starts the same machine on the same volume. Run it on its own with
+`make seccomp-test`.
 
 ## Usage
 

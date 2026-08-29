@@ -56,3 +56,9 @@
     passing over it.
 - [x] 4.4 Assert the five denied system calls are actually denied under that profile, from inside a
   running machine; verify each returns an error rather than succeeding
+  - Asserted from a probe container under the identical profile, on the identical node, granted the
+    capabilities those calls need so that the errno means what it appears to mean. Not from inside a
+    running machine, for the reason 4.3 records: on kind the only mode that runs is `privileged`,
+    and a privileged container is given no profile at all, so a machine there would report every
+    call permitted no matter what the profile said. Each denial is paired with the same call made
+    under no profile, which is what makes it falsifiable.

@@ -56,6 +56,7 @@ REGISTRY_PORT="${SECCOMP_REGISTRY_PORT:-5001}"
 REGISTRY_LOCAL="localhost:${REGISTRY_PORT}"
 PORT_FORWARD_PID=""
 KIND_CONFIG=""
+RAW_MANIFEST=""
 MACHINE_MANIFEST=""
 DEFECTIVE_MANIFEST=""
 
@@ -93,7 +94,9 @@ on_exit() {
   if [[ -n "$PORT_FORWARD_PID" ]]; then
     kill "$PORT_FORWARD_PID" 2>/dev/null || true
   fi
-  rm --force "$KIND_CONFIG" "$MACHINE_MANIFEST" "$DEFECTIVE_MANIFEST" 2>/dev/null || true
+  # Short flag on purpose, against this repository's usual rule: BSD rm rejects
+  # --force, so the long form makes this cleanup silently do nothing on a Mac.
+  rm -f "$KIND_CONFIG" "$RAW_MANIFEST" "$MACHINE_MANIFEST" "$DEFECTIVE_MANIFEST" 2>/dev/null || true
   if [[ "$KEEP_CLUSTER" == "1" ]]; then
     echo "cluster $CLUSTER kept; this run's namespace is $NAMESPACE"
     echo "remove the cluster with: kind delete cluster --name $CLUSTER"
@@ -257,6 +260,7 @@ step "rendering the machine the defect belongs to"
 # it is the mode the runtime's default profile breaks. hostUsers is removed
 # because a kind node cannot nest a user namespace; nothing else about the guest
 # changes, and what remains is the container the default profile would stop.
+RAW_MANIFEST="$(mktemp)"
 MACHINE_MANIFEST="$(mktemp)"
 DEFECTIVE_MANIFEST="$(mktemp)"
 helm template defect "$CHART" \
@@ -264,8 +268,13 @@ helm template defect "$CHART" \
   --values test/integration/oci.yaml \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.web.source.reference=$SOURCE_REFERENCE" \
-  --set "machines.web.security.mode=userns" \
-  | sed -e '/^      hostUsers: false$/d' > "$MACHINE_MANIFEST"
+  --set "machines.web.security.mode=userns" > "$RAW_MANIFEST"
+# Checked, for the same reason the removal below is: a sed that matched nothing
+# would leave a pod kind cannot start, and the section would fail for a reason
+# that has nothing to do with the filter.
+[[ "$(grep --count '^      hostUsers: false$' "$RAW_MANIFEST" || true)" -eq 1 ]] \
+  || fail "the userns render no longer carries hostUsers, so there is nothing here to remove"
+sed -e '/^      hostUsers: false$/d' "$RAW_MANIFEST" > "$MACHINE_MANIFEST"
 
 # The same machine as the chart rendered it before this change: the guest's
 # declared filter taken away, so the kubelet supplies one. The two lines go
@@ -315,6 +324,10 @@ check "its own init is process 1" \
     sh -c '[ "$(cat /proc/1/comm)" != "boot.sh" ] && [ "$(cat /proc/1/comm)" != "bash" ]'
 check "its root is the volume, so the root change happened" \
   kc exec defect-web-0 --container guest -- test ! -d /mnt/rootfs
+# Taken down before the machine whose shutdown is timed below is installed. One
+# kind node runs both otherwise, and a shutdown measured against a 120s grace
+# period is exactly the assertion that gets flaky under load.
+kc delete --filename "$MACHINE_MANIFEST" --wait >/dev/null
 
 # ------------------------------------------------------ the machine, on it ---
 
