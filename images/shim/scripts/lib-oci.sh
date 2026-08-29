@@ -57,7 +57,10 @@ sp_fill_rootfs() {
     # cleans every header name, so `crane export` emits `dev` and `etc/os-release`
     # and never a `./` prefix - a pattern written the other way matches nothing
     # and excludes nothing. Both shapes are listed so that neither depends on
-    # that, and --anchored keeps `dev` from also matching `usr/local/dev`.
+    # that, and --anchored keeps `dev` from also matching `usr/local/dev`. An
+    # absolute header name would still slip past, since Clean keeps the leading
+    # slash; layer tars do not use one, and the failure if one ever did would be
+    # a loud EPERM rather than a quietly wrong rootfs.
     local -a excludes=(--anchored)
     local runtime_dir
     for runtime_dir in $SP_RUNTIME_DIRS; do

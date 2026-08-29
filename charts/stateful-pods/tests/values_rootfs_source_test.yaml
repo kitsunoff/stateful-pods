@@ -191,3 +191,21 @@ tests:
           mode: userns
     asserts:
       - notFailedTemplate: {}
+
+  - it: rejects a pull secret that YAML parsed as something other than a name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: registry.example.test/private/debian:13
+          # Unquoted, this is a boolean. Rendering it would drop the reference
+          # silently and fetch the private source anonymously.
+          pullSecretName: false
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.pullSecretName: must be the name of a Secret.*boolean in YAML'
+

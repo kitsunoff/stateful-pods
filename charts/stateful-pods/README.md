@@ -85,6 +85,12 @@ machines:
 helm install lab charts/stateful-pods --values my-machine.yaml
 ```
 
+> **Until the next release, name the shim image explicitly.** The default
+> `shim.image` still points at an image published before the chart's scripts
+> moved into it, so a default install renders containers whose command does not
+> exist. Add `--set shim.image=<an image built from images/shim in this
+> repository>` until the release that bumps the default lands.
+
 Every object the release renders for that machine is named `<release>-<machine>` — `lab-web` for
 the example above. **That name is permanent**: the machine's root filesystem lives in a
 PersistentVolumeClaim derived from it, so renaming a machine or a release orphans its rootfs and

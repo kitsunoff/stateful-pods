@@ -138,7 +138,10 @@ kubectl --context "$CONTEXT" create namespace "$NAMESPACE" --dry-run=client --ou
   | kubectl --context "$CONTEXT" apply --filename - >/dev/null
 
 step "starting a registry the pod can reach"
-kc apply --filename test/integration/registry.yaml >/dev/null
+# The manifest names the default; kind loaded whatever REGISTRY_IMAGE names, so
+# the two are kept in step here rather than drifting in two places.
+sed "s|image: registry:2$|image: $REGISTRY_IMAGE|" test/integration/registry.yaml \
+  | kc apply --filename - >/dev/null
 kc rollout status deployment/registry --timeout=180s >/dev/null
 kubectl --context "$CONTEXT" --namespace "$NAMESPACE" \
   port-forward service/registry "${REGISTRY_PORT:-5000}:5000" >/dev/null 2>&1 &
@@ -404,7 +407,8 @@ elif ! git cat-file -e "$previous_sha:charts/stateful-pods/templates/scripts-con
   skip "the upgrade assertion: $PREVIOUS_CHART_REF renders no ConfigMap to migrate from"
 else
   PREVIOUS_CHART_WORKTREE="$(mktemp -d)"
-  git worktree add --detach --force "$PREVIOUS_CHART_WORKTREE" "$previous_sha" >/dev/null 2>&1
+  git worktree add --detach --force "$PREVIOUS_CHART_WORKTREE" "$previous_sha" >/dev/null 2>&1 \
+    || fail "could not check out $PREVIOUS_CHART_REF ($previous_sha) to upgrade from"
   helm --kube-context "$CONTEXT" upgrade --install migrated \
     "$PREVIOUS_CHART_WORKTREE/charts/stateful-pods" \
     --namespace "$NAMESPACE" \
