@@ -45,6 +45,19 @@ sp_fill_rootfs() {
 
     sp_log "machine ${SP_MACHINE:-?}: fetching ${SP_SOURCE_REFERENCE:-} for $platform"
 
+    # The directories the kernel and the runtime own are not taken from the
+    # image. Nothing in them was ever wanted, and a device node among them
+    # cannot be recreated here at all: mknod(2) checks the capability in the
+    # *initial* user namespace, so a machine in `userns` mode has no way to make
+    # one whatever it is granted. tar would fail with EPERM and take the whole
+    # seed down over content that is discarded a moment later - the driver wipes
+    # and recreates all five of them empty as soon as the fill returns.
+    local -a excludes=()
+    local runtime_dir
+    for runtime_dir in $SP_RUNTIME_DIRS; do
+        excludes+=("--exclude=./$runtime_dir")
+    done
+
     # Both halves of the pipeline are checked. A tar that exits cleanly on a
     # stream that stopped early would otherwise report a successful seed for
     # half an operating system. The group is the left side of an `||` so that
@@ -53,7 +66,7 @@ sp_fill_rootfs() {
     # shellcheck disable=SC2086 # the flags are a word list on purpose
     {
         crane export --platform "$platform" "${SP_SOURCE_REFERENCE:-}" - \
-            | tar -C "$root" -x $SP_TAR_FLAGS -pf -
+            | tar -C "$root" -x $SP_TAR_FLAGS "${excludes[@]}" -pf -
         piped=("${PIPESTATUS[@]}")
     } || true
 

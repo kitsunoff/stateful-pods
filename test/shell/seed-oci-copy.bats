@@ -92,8 +92,29 @@ EOF
     chmod +x "$STUB_DIR/crane"
 }
 
+# A fetch that fails with a message of its own, the way crane's does when an
+# index offers no build for the platform it was asked for.
+stub_refusing_crane() {
+    local message="$1"
+    cat > "$STUB_DIR/crane" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" > "$STUB_DIR/args"
+echo "$message" >&2
+exit 1
+EOF
+    chmod +x "$STUB_DIR/crane"
+}
+
 crane_arg_after() {
     grep -A1 -x -- "$1" "$STUB_DIR/args" | tail -n 1
+}
+
+expected_platform() {
+    case "$(uname -m)" in
+        x86_64)  echo linux/amd64 ;;
+        aarch64) echo linux/arm64 ;;
+        *)       return 1 ;;
+    esac
 }
 
 @test "the volume is filled from what the registry client emits" {
@@ -139,11 +160,7 @@ crane_arg_after() {
     stub_crane "$FIXTURE_DIR/image.tar"
     run sp_fill_rootfs "$ROOTFS"
     [ "$status" -eq 0 ]
-    case "$(uname -m)" in
-        x86_64)  expected=linux/amd64 ;;
-        aarch64) expected=linux/arm64 ;;
-        *)       skip "no platform is claimed for $(uname -m)" ;;
-    esac
+    expected="$(expected_platform)" || skip "no platform is claimed for $(uname -m)"
     [ "$(crane_arg_after --platform)" = "$expected" ]
 }
 
@@ -217,4 +234,77 @@ crane_arg_after() {
     [[ "$output" == *"$small"* ]]
     [[ "$output" == *"docker.io/library/debian:13"* ]]
     [ ! -f "$small/.stateful-pods/provisioned" ]
+}
+
+@test "a source that offers no build for this node is refused, naming the platform" {
+    expected="$(expected_platform)" || skip "no platform is claimed for $(uname -m)"
+    stub_refusing_crane "no child with platform $expected in index"
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -ne 0 ]
+    # The platform that was required, and what the source had to say about it.
+    [[ "$output" == *"$expected"* ]]
+    [[ "$output" == *"no child with platform"* ]]
+    [ ! -e "$ROOTFS/etc" ]
+}
+
+@test "device nodes in the source are not written to the volume" {
+    make_image_tar
+    mkdir -p "$FIXTURE_DIR/src/dev"
+    mknod "$FIXTURE_DIR/src/dev/null" c 1 3 2>/dev/null \
+        || skip "this environment cannot create a device node to seed from"
+    tar -C "$FIXTURE_DIR/src" --numeric-owner -cf "$FIXTURE_DIR/image.tar" .
+    stub_crane "$FIXTURE_DIR/image.tar"
+
+    # A device node cannot be recreated in a machine's own user namespace at
+    # all, so one taken from a source image would fail the whole seed over
+    # content the driver discards a moment later.
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTFS/dev/null" ]
+    [ -e "$ROOTFS/etc/os-release" ]
+}
+
+@test "the kernel and runtime directories are not taken from the source" {
+    make_image_tar
+    mkdir -p "$FIXTURE_DIR/src/proc" "$FIXTURE_DIR/src/sys" "$FIXTURE_DIR/src/run"
+    echo stale > "$FIXTURE_DIR/src/run/leftover"
+    echo stale > "$FIXTURE_DIR/src/proc/leftover"
+    tar -C "$FIXTURE_DIR/src" --numeric-owner -cf "$FIXTURE_DIR/image.tar" .
+    stub_crane "$FIXTURE_DIR/image.tar"
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTFS/run/leftover" ]
+    [ ! -e "$ROOTFS/proc/leftover" ]
+}
+
+@test "a rejected credential names the secret that was used" {
+    make_image_tar
+    stub_crane "$FIXTURE_DIR/image.tar" 1
+    export SP_SOURCE_PULL_SECRET=registry-credentials
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *registry-credentials* ]]
+}
+
+@test "a rejected credential is not echoed into the message" {
+    make_image_tar
+    stub_crane "$FIXTURE_DIR/image.tar" 1
+    export SP_SOURCE_PULL_SECRET=registry-credentials
+    export DOCKER_CONFIG="$STUB_DIR/auth"
+    mkdir -p "$DOCKER_CONFIG"
+    cat > "$DOCKER_CONFIG/config.json" <<'JSON'
+{"auths":{"registry.example.test":{"auth":"c3VwZXItc2VjcmV0LXRva2Vu"}}}
+JSON
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -ne 0 ]
+    [[ "$output" != *c3VwZXItc2VjcmV0LXRva2Vu* ]]
+    [[ "$output" != *super-secret-token* ]]
+}
+
+@test "no secret is mentioned when the machine names none" {
+    make_image_tar
+    stub_crane "$FIXTURE_DIR/image.tar" 1
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -ne 0 ]
+    [[ "$output" != *secret* ]]
 }

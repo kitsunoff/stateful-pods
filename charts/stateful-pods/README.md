@@ -368,12 +368,13 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A named credential is used | `source_pull_secret_test.yaml` |
 | No credential named means an anonymous fetch | `source_pull_secret_test.yaml` |
 | The credentials reach only the seeding step | `source_pull_secret_test.yaml` |
+| A rejected credential fails with a usable message | `seed-oci-copy.bats` |
 | A matching checksum is unpacked | `seed-lxc.bats` |
 | A mismatched checksum is refused | `seed-lxc.bats` |
 | An unreachable template is a failure, not an empty machine | `seed-lxc.bats` |
 | An archive that is not a root filesystem is rejected | `seed-lxc.bats` |
 | A multi-part archive is rejected | `seed-lxc.bats` |
-| Device nodes are not copied | `hack/integration-test.sh` |
+| Device nodes are not copied | `seed-oci-copy.bats`, `hack/integration-test.sh` |
 | Runtime directories are present but empty | `seed-driver.bats`, `hack/integration-test.sh` |
 | A failed seeding does not start a guest | `seed-driver.bats`, `seed-oci-copy.bats` |
 | The cause is visible where a user will look | `seed-driver.bats`, `seed-lxc.bats` |
