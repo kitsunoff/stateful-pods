@@ -1,0 +1,117 @@
+suite: rendering - only the guest container carries the mode's privilege
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: gives the preparation steps nothing beyond a container's defaults, in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+
+  - it: gives the preparation steps nothing beyond a container's defaults, in privileged mode
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/d.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+
+  - it: marks no preparation step privileged in privileged mode
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/d.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers[0].securityContext.privileged
+      - notExists:
+          path: spec.template.spec.initContainers[1].securityContext.privileged
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.privileged
+          value: true
+
+  - it: adds no capability to a preparation step in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers[0].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.initContainers[1].securityContext.capabilities
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          value:
+            - SYS_ADMIN
+
+  - it: sets no runtimeClassName and shares no host namespace with the init containers present
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+      - notExists:
+          path: spec.template.spec.hostNetwork
+      - notExists:
+          path: spec.template.spec.hostPID
+      - notExists:
+          path: spec.template.spec.hostIPC

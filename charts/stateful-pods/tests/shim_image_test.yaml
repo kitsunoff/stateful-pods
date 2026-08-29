@@ -28,8 +28,17 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].image
           pattern: 'debian'
-      - notExists:
-          path: spec.template.spec.initContainers
+      # The source is a container image in exactly one place: the step that
+      # copies it. That step exits before the machine starts.
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: seed
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: docker.io/library/debian:13
+      - notMatchRegex:
+          path: spec.template.spec.initContainers[1].image
+          pattern: 'debian'
 
   - it: renders a complete pod for an lxc source with no image derived from the template url
     set:
@@ -53,10 +62,19 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].image
           pattern: 'example\.invalid|tar\.zst'
-      - notExists:
-          path: spec.template.spec.initContainers
+      # A template is a tarball, so no container anywhere runs an image derived
+      # from it - not even the step that fetches it.
+      - notMatchRegex:
+          path: spec.template.spec.initContainers[0].image
+          pattern: 'example\.invalid|tar\.zst'
+      - notMatchRegex:
+          path: spec.template.spec.initContainers[1].image
+          pattern: 'example\.invalid|tar\.zst'
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
 
-  - it: defaults the shim image to an obvious placeholder and runs a placeholder command
+  - it: defaults the shim image to an immutable reference
     set:
       machines.web:
         source:
@@ -67,9 +85,26 @@ tests:
         security:
           mode: userns
     asserts:
+      # A digest, never a tag: a reference that can come to mean different
+      # content later makes a machine's own boot path unreproducible.
       - matchRegex:
           path: spec.template.spec.containers[0].image
-          pattern: 'placeholder'
+          pattern: '^ghcr\.io/kitsunoff/stateful-pods-shim@sha256:[0-9a-f]{64}$'
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':(latest|placeholder|v?[0-9]+(\.[0-9]+)*)$'
+
+  - it: still runs a placeholder command, because the machine does not boot yet
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
       - matchRegex:
           path: spec.template.spec.containers[0].command[2]
           pattern: 'PLACEHOLDER'

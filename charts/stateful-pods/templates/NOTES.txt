@@ -10,10 +10,16 @@ Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root
   Root volume:  {{ $objectName }}-{{ $objectName }}-0 ({{ $rootfs.size | default "8Gi" }}, retained on uninstall)
   Mode:         {{ $machine.security.mode }}
 
-WARNING: this machine does not boot. This version of the chart renders the objects a
-machine is made of and nothing else: the shim does not exist yet, the root filesystem is
-never seeded from {{ $machine.source.kind }}, and the guest container runs a placeholder
-command that sleeps. Do not expect a running operating system.
+On its first start the machine's root filesystem is filled from its {{ $machine.source.kind }} source,
+once. After that the volume is the machine's operating system and changing the source
+changes nothing. Watch it happen with:
+
+  kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --container seed --follow
+
+WARNING: this machine does not boot. Its disk is correct and nothing runs on it: the shim
+that mounts the volume and hands control to the guest's init does not exist yet, so the
+guest container runs a placeholder command that sleeps. Do not expect a running operating
+system.
 
 The root volume is retained when the release is uninstalled. Deleting a machine's state is
 a separate, deliberate action:

@@ -57,6 +57,64 @@ helm.sh/chart: {{ include "stateful-pods.chart" .root }}
 {{- end -}}
 
 {{/*
+The environment the seeding and preparation steps read.
+
+Everything a script needs arrives this way. No value is ever interpolated into
+script text, so a hostname, a URL or a reference containing shell metacharacters
+is data to the script and never something it parses. The namespace comes from the
+downward API rather than from `.Release.Namespace`, so a manifest applied into a
+different namespace than it was rendered for still records where it actually ran.
+
+Takes (dict "root" $ "name" $name "machine" $machine).
+*/}}
+{{- define "stateful-pods.machine.seedEnv" -}}
+- name: SP_ROOTFS
+  value: /mnt/rootfs
+- name: SP_MACHINE
+  value: {{ .name | quote }}
+- name: SP_RELEASE
+  value: {{ .root.Release.Name | quote }}
+- name: SP_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+- name: SP_CHART_VERSION
+  value: {{ .root.Chart.Version | quote }}
+- name: SP_SOURCE_KIND
+  value: {{ .machine.source.kind | quote }}
+{{- if eq .machine.source.kind "oci" }}
+- name: SP_SOURCE_REFERENCE
+  value: {{ .machine.source.reference | quote }}
+{{- else }}
+- name: SP_SOURCE_URL
+  value: {{ .machine.source.url | quote }}
+- name: SP_SOURCE_SHA256
+  value: {{ .machine.source.sha256 | toString | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The security context of the steps that run before the guest.
+
+The privilege a machine's mode names belongs to the guest container and to nothing
+else. Preparing the contents of a volume is not privileged work: writing files
+with their ownership and attributes intact is something an ordinary container
+already does.
+
+Running as the container's root user is not privilege in that sense - it is what
+writing another system's file ownership requires, and under `userns` it is not
+root on the node at all. It is set explicitly because a source image may declare a
+non-root user of its own, and extraction would then fail.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.initSecurityContext" -}}
+runAsUser: 0
+runAsGroup: 0
+allowPrivilegeEscalation: false
+{{- end -}}
+
+{{/*
 --------------------------------------------------------------------------------
 Validation
 --------------------------------------------------------------------------------
