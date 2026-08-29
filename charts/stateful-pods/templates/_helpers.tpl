@@ -275,7 +275,20 @@ Takes the root context.
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile: must be a map naming the filter form, but is of type %s. Accepted forms:\n%s" $name (kindOf $seccomp) (include "stateful-pods.errors.seccompForms" $root)) -}}
 {{- else -}}
 {{- $type := $seccomp.type | default "" | toString -}}
-{{- $profilePath := index $seccomp "localhostProfile" | default "" | toString -}}
+{{- /* The path is read before the form, because a path that is not a string
+       cannot be checked for shape and would otherwise be reported twice - once
+       for its type and again for a shape derived from it. */ -}}
+{{- $rawPath := index $seccomp "localhostProfile" -}}
+{{- $profilePath := "" -}}
+{{- $pathIsUsable := true -}}
+{{- if not (kindIs "invalid" $rawPath) -}}
+{{- if kindIs "string" $rawPath -}}
+{{- $profilePath = $rawPath -}}
+{{- else -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: must be the path of a profile file on the node, but is of type %s. A path is a string - quote it if it is one YAML reads as something else. A value that is not one renders into the manifest, is accepted by the API server and fails in the kubelet, which surfaces as a machine that never starts a container." $name (kindOf $rawPath)) -}}
+{{- $pathIsUsable = false -}}
+{{- end -}}
+{{- end -}}
 {{- if eq $type "" -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: not set. Name the filter form explicitly, the same way the mode is named. Accepted forms:\n%s" $name (include "stateful-pods.errors.seccompForms" $root)) -}}
 {{- else if eq $type "RuntimeDefault" -}}
@@ -283,7 +296,9 @@ Takes the root context.
 {{- else if not (has $type (list "Unconfined" "Localhost")) -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: %q is not a syscall filter form. Accepted forms:\n%s" $name $type (include "stateful-pods.errors.seccompForms" $root)) -}}
 {{- end -}}
-{{- if eq $type "Localhost" -}}
+{{- if not $pathIsUsable -}}
+{{- /* Already reported above; anything derived from it would be noise. */ -}}
+{{- else if eq $type "Localhost" -}}
 {{- if eq $profilePath "" -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: not set. The \"Localhost\" form names a profile file the cluster has placed on its nodes, so it needs the path of one - relative to the kubelet's seccomp directory, which is /var/lib/kubelet/seccomp unless the kubelet was told otherwise. For example: profiles/stateful-pods-machine.json." $name) -}}
 {{- else if or (hasPrefix "/" $profilePath) (has ".." (splitList "/" $profilePath)) -}}

@@ -149,14 +149,16 @@ expect() {
   fi
 }
 
-# expect_not <output> <call> <value> <description>
+# expect_not <output> <call> <value> <description> [hint]
+# The hint is printed only on failure, where a second plausible cause exists and
+# the bare errno would point at the wrong one.
 expect_not() {
   local got
   got="$(probed "$1" "$2")"
   if [[ -n "$got" && "$got" != "$3" ]]; then
     pass "$4"
   else
-    fail "$4 (the probe reported $2=${got:-nothing}, which must not be $3)"
+    fail "$4 (the probe reported $2=${got:-nothing}, which must not be $3)${5:+ - $5}"
   fi
 }
 
@@ -362,10 +364,15 @@ EOF
 confined="$(run_probe named-profile "$named")"
 expect "$confined" seccomp_mode 2 \
   "the shipped profile is valid, and the kubelet loaded it"
+# Each denial is paired with the same call made under no profile at all. Without
+# that pair the assertion above could hold because the call is refused for some
+# other reason entirely, and would keep holding if the profile stopped being
+# applied.
 for call in kexec_load open_by_handle_at init_module finit_module delete_module; do
   expect "$confined" "$call" EPERM "the shipped profile denies $call"
   expect_not "$unconfined" "$call" EPERM \
-    "$call is not denied without the profile, so the assertion above can fail"
+    "$call is not denied without the profile, so the assertion above can fail" \
+    "a node with kernel.modules_disabled or kernel.kexec_load_disabled set refuses these calls in the kernel, which is indistinguishable from a filter here"
 done
 expect "$confined" umount2_force EPERM "the shipped profile denies a forced unmount"
 expect "$confined" umount2_plain ENOENT \

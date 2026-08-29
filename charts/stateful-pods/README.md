@@ -31,15 +31,15 @@ schemas — <https://github.com/yannh/kubeconform>.
 ## Working on the chart
 
 ```bash
-make lint        # helm lint --strict, against every example
-make shell-lint  # shellcheck over every shell script
-make docs        # the guarantees values.yaml makes about itself
-make test        # helm unittest
-make shell-test  # bats, inside a Linux container
-make conform     # kubeconform against the Kubernetes API schemas
-make image-test  # the toolbox image's archive and registry guarantees
+make lint         # helm lint --strict, against every example
+make shell-lint   # shellcheck over every shell script
+make docs         # the guarantees values.yaml makes about itself
+make test         # helm unittest
+make shell-test   # bats, inside a Linux container
+make conform      # kubeconform against the Kubernetes API schemas
+make image-test   # the toolbox image's archive and registry guarantees
 make seccomp-test # the syscall filter, on a cluster whose kubelet filters by default
-make render      # helm template
+make render       # helm template
 ```
 
 `make shell-test` and `make image-test` need a container engine: the scripts manipulate another
@@ -526,7 +526,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The filter applies to the machine and to nothing else | `seccomp_named_profile_test.yaml` |
 | The same values render the same posture everywhere | `security_cluster_independence_test.yaml` |
 | The syscall filter is never left to the cluster | `seccomp_posture_test.yaml` |
-| A cluster that filters by default does not change the machine | `hack/integration-test.sh` |
+| A cluster that filters by default does not change the machine | `hack/seccomp-test.sh` |
 
 ### values-validation (added by seccomp-posture)
 

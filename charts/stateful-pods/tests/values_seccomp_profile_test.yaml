@@ -137,6 +137,46 @@ tests:
       - failedTemplate:
           errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile:.*relative'
 
+  - it: rejects a profile path that is not a path, naming its type
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile:
+              name: machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile\.localhostProfile: must be the path of a profile file on the node, but is of type map'
+
+  - it: reports a profile path that is not a path once, not once per shape rule
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            # The form that needs a path, so without the guard the unusable value
+            # would also be reported a second time as no path at all.
+            type: Localhost
+            localhostProfile:
+              - machine.json
+    asserts:
+      - failedTemplate:
+          # The report's footer has to follow this message directly: a second
+          # accumulated violation would sit between the two and fail this.
+          errorPattern: '(?s)of a profile file on the node[^\n]*\s*Nothing was rendered'
+
   - it: rejects a path that steps back out of the kubelet's directory
     set:
       machines.web:
