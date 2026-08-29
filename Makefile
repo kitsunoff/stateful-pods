@@ -2,6 +2,7 @@ CHART ?= charts/stateful-pods
 IMAGE ?= stateful-pods-shim:dev
 IMAGE_CONTEXT ?= images/shim
 EXAMPLES ?= $(wildcard $(CHART)/examples/*.yaml)
+RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
@@ -53,9 +54,12 @@ integration-test:
 seccomp-test:
 	./hack/seccomp-test.sh
 
-## render: render the chart from the first example to stdout
+## render: render the chart from the oci example to stdout
+#  Named rather than taken from the wildcard: the example that sorts first is not
+#  a decision anyone made, and one naming a profile file that has to be placed on
+#  a node is a strange thing to hand someone as the canonical render.
 render:
-	$(HELM) template stateful-pods $(CHART) --values $(firstword $(EXAMPLES)) --kube-version $(KUBE_VERSION)
+	$(HELM) template stateful-pods $(CHART) --values $(RENDER_EXAMPLE) --kube-version $(KUBE_VERSION)
 
 ## conform: validate every example's rendered manifest against the Kubernetes API schemas
 conform:

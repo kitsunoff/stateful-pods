@@ -64,7 +64,7 @@ file in `/var/lib/kubelet/seccomp/profiles/` there. Nothing has to run in the cl
 is present before the kubelet is.
 
 **3. A DaemonSet that writes the file.** It works, and it is worth naming honestly for what it is: a
-privileged workload, mounting a host path under the kubelet's own directory, added in the name of
+workload with write access to the kubelet's own directory on every node, added in the name of
 confinement. Prefer either of the two above where they are available.
 
 ```yaml

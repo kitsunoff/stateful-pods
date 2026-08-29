@@ -162,9 +162,9 @@ shim:
 #       # container makes to become the machine, so a machine that named it would
 #       # seed its volume over several minutes and then die at the root change.
 #       #
-#       # In privileged mode this input has no effect. Containerd drops the
-#       # profile a privileged container names before it builds the container, so
-#       # nothing the chart sets can confine that mode.
+#       # In privileged mode this input still renders, and confines nothing.
+#       # Containerd drops the profile a privileged container names before it
+#       # builds the container, so no value the chart sets can confine that mode.
 #       seccompProfile:
 #         # Filter form: Unconfined | Localhost. Mandatory when seccompProfile is
 #         # declared at all.
