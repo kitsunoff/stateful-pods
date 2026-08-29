@@ -1,0 +1,135 @@
+suite: rendering - the syscall filter every container declares
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: confines every step that runs before the guest with the runtime's default filter, in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[2].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+
+  - it: confines every step that runs before the guest with the runtime's default filter, in privileged mode
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/d.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[2].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+
+  - it: declares the guest unconfined rather than leaving it to the cluster, in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Unconfined
+
+  - it: declares the guest unconfined rather than leaving it to the cluster, in privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Unconfined
+
+  - it: declares the same filter for the preparation steps whichever mode the machine names
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+
+  - it: leaves no container without a declared filter
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - exists:
+          path: spec.template.spec.initContainers[0].securityContext.seccompProfile.type
+      - exists:
+          path: spec.template.spec.initContainers[1].securityContext.seccompProfile.type
+      - exists:
+          path: spec.template.spec.initContainers[2].securityContext.seccompProfile.type
+      - exists:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile.type
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 3
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1

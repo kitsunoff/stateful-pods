@@ -24,6 +24,8 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
@@ -48,6 +50,8 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
@@ -71,6 +75,8 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             privileged: true
 
   - it: renders the privileged posture identically on Kubernetes 1.99
@@ -92,4 +98,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             privileged: true

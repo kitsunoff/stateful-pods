@@ -24,12 +24,16 @@ tests:
             runAsUser: 0
             runAsGroup: 0
             allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
       - equal:
           path: spec.template.spec.initContainers[1].securityContext
           value:
             runAsUser: 0
             runAsGroup: 0
             allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
 
   - it: gives the preparation steps nothing beyond a container's defaults, in privileged mode
     set:
@@ -49,12 +53,16 @@ tests:
             runAsUser: 0
             runAsGroup: 0
             allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
       - equal:
           path: spec.template.spec.initContainers[1].securityContext
           value:
             runAsUser: 0
             runAsGroup: 0
             allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
 
   - it: marks no preparation step privileged in privileged mode
     set:

@@ -9,10 +9,10 @@
 
 ## 2. The part that is free
 
-- [ ] 2.1 Write the helm-unittest suite first: every container that runs before the guest declares
+- [x] 2.1 Write the helm-unittest suite first: every container that runs before the guest declares
   the runtime's default filter, in both modes, and the guest declares `Unconfined`; verify
   `make test` fails on the current chart for exactly that
-- [ ] 2.2 Add the filter to `stateful-pods.machine.initSecurityContext` and the explicit
+- [x] 2.2 Add the filter to `stateful-pods.machine.initSecurityContext` and the explicit
   `Unconfined` to the guest container, with a comment stating that the explicit declaration exists
   so a kubelet flag cannot change the machine's posture; verify `make test` passes the suite from
   2.1

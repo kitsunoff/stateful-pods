@@ -107,12 +107,23 @@ root on the node at all. It is stated rather than left to the image, so that the
 posture a machine gets is the one the chart chose and not one a `shim.image`
 override could change by declaring a user of its own.
 
+The syscall filter is the runtime's own default. These steps unpack an archive,
+write files and fetch over HTTPS; they mount nothing and change no root, so
+nothing the default profile withholds is in their way. Unlike the guest's filter
+it needs no file to be present on any node, which makes it the one narrowing
+this chart can apply to every install without an operator doing anything first.
+It is named here rather than left unset for the same reason the mode is named: a
+kubelet configured to supply a default is a posture the machine's values do not
+describe.
+
 Takes the same machine context as the other helpers.
 */}}
 {{- define "stateful-pods.machine.initSecurityContext" -}}
 runAsUser: 0
 runAsGroup: 0
 allowPrivilegeEscalation: false
+seccompProfile:
+  type: RuntimeDefault
 {{- end -}}
 
 {{/*

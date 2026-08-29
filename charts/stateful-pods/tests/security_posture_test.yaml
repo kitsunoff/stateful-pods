@@ -24,6 +24,8 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
@@ -44,4 +46,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].securityContext
           value:
+            seccompProfile:
+              type: Unconfined
             privileged: true
