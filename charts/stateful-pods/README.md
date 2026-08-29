@@ -31,14 +31,15 @@ schemas — <https://github.com/yannh/kubeconform>.
 ## Working on the chart
 
 ```bash
-make lint        # helm lint --strict, against every example
-make shell-lint  # shellcheck over every shell script
-make docs        # the guarantees values.yaml makes about itself
-make test        # helm unittest
-make shell-test  # bats, inside a Linux container
-make conform     # kubeconform against the Kubernetes API schemas
-make image-test  # the toolbox image's archive and registry guarantees
-make render      # helm template
+make lint         # helm lint --strict, against every example
+make shell-lint   # shellcheck over every shell script
+make docs         # the guarantees values.yaml makes about itself
+make test         # helm unittest
+make shell-test   # bats, inside a Linux container
+make conform      # kubeconform against the Kubernetes API schemas
+make image-test   # the toolbox image's archive and registry guarantees
+make seccomp-test # the syscall filter, on a cluster whose kubelet filters by default
+make render       # helm template
 ```
 
 `make shell-test` and `make image-test` need a container engine: the scripts manipulate another
@@ -63,6 +64,13 @@ and crash-loops everywhere else. Set `TEMPLATE_SHA256` to check against a digest
 Without `TEMPLATE_URL` the template case is skipped rather than silently passed. In CI it comes from
 the `INTEGRATION_TEMPLATE_URL` repository variable; distributors publish under dated paths, so it
 needs refreshing when a build is retired upstream.
+
+`make integration-test` then runs `make seccomp-test`, which builds a second cluster whose kubelet
+applies a default syscall filter to every container that declares none. That is the configuration
+under which a machine declaring no filter of its own does not boot, and it is the only place the
+defect can be reproduced — so the suite reproduces it, on a real machine, before asserting that
+declaring the filter starts the same machine on the same volume. Run it on its own with
+`make seccomp-test`.
 
 ## Usage
 
@@ -242,6 +250,45 @@ the grace period expired. The grace period is 120 seconds, copying Proxmox's own
 The machine's console goes to the pod's logs, so `kubectl logs` shows a boot sequence. It is noisy
 and unstructured, and that is the accepted cost of not being empty. Per-service logs stay in the
 machine's own journal.
+
+### The syscall filter
+
+Every container the chart renders names the filter it runs under, and none is left for the cluster
+to choose. The steps that run before the guest declare the runtime's default profile: they unpack,
+write and fetch, so nothing it withholds is in their way, and it needs no file on any node. The
+guest declares `Unconfined`.
+
+That declaration is not a preference, it is what keeps a machine bootable. A kubelet running with
+`--seccomp-default=true` gives the runtime's default profile to every container that names none, and
+containerd's default profile does not contain `pivot_root` — not in its base list, and not in the
+block it unlocks for `CAP_SYS_ADMIN`, which does contain `mount`, `umount2`, `unshare` and `setns`.
+A machine that inherited it would render, seed its volume over several minutes and then die at the
+root change, on some clusters and not others.
+
+To confine the machine itself, name a profile the cluster provides:
+
+```yaml
+machines:
+  web:
+    security:
+      mode: userns
+      seccompProfile:
+        type: Localhost
+        localhostProfile: profiles/stateful-pods-machine.json
+```
+
+`Localhost` is the only form that can carry a filter permitting the root change, so it is the only
+alternative to `Unconfined` the chart accepts; `RuntimeDefault` is refused at render time with the
+reason. The file it names lives on the node, which is outside anything a chart can create. A profile
+suitable for a machine — LXC's own denylist, which every Proxmox container already runs under —
+ships at `profiles/stateful-pods-machine.json`, and `profiles/README.md` documents the three ways to
+get it onto nodes and what it is worth in each mode.
+
+**In `privileged` mode no filter applies at all.** Containerd drops the profile a privileged
+container names before it builds the container. That was measured rather than assumed: a profile
+denying an ordinary system call stopped an unprivileged container and was absent from the privileged
+container's runtime spec, while the CRI request still carried the reference. The input is accepted in
+that mode and does nothing.
 
 ### Prerequisites the chart cannot check
 
@@ -472,3 +519,25 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The guest container alone is privileged | `init_security_test.yaml` |
 | The guest container alone is granted the mode's capability | `init_security_test.yaml` |
 | Preparation steps are ordinary containers | `init_security_test.yaml` |
+
+### pod-security-posture (added and modified by seccomp-posture)
+
+| Scenario | Covered by |
+| --- | --- |
+| The preparation steps declare the runtime's default filter | `seccomp_posture_test.yaml` |
+| The default filter does not depend on the machine's mode | `seccomp_posture_test.yaml` |
+| A named filter is applied to the machine | `seccomp_named_profile_test.yaml` |
+| The filter applies to the machine and to nothing else | `seccomp_named_profile_test.yaml` |
+| The same values render the same posture everywhere | `security_cluster_independence_test.yaml` |
+| The syscall filter is never left to the cluster | `seccomp_posture_test.yaml` |
+| A cluster that filters by default does not change the machine | `hack/seccomp-test.sh` |
+
+### values-validation (added by seccomp-posture)
+
+| Scenario | Covered by |
+| --- | --- |
+| An unknown filter form is rejected | `values_seccomp_profile_test.yaml` |
+| A filter form requiring a path is rejected without one | `values_seccomp_profile_test.yaml` |
+| A path supplied to a form that takes none is rejected | `values_seccomp_profile_test.yaml` |
+| The runtime default is rejected for the machine | `values_seccomp_profile_test.yaml` |
+| The rejection does not apply to the preparation steps | `values_seccomp_profile_test.yaml` |

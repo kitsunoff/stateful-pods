@@ -2,11 +2,12 @@ CHART ?= charts/stateful-pods
 IMAGE ?= stateful-pods-shim:dev
 IMAGE_CONTEXT ?= images/shim
 EXAMPLES ?= $(wildcard $(CHART)/examples/*.yaml)
+RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
 
-.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test
+.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
 
 all: lint shell-lint docs test shell-test conform
 
@@ -43,13 +44,22 @@ image-build:
 image-test: image-build
 	IMAGE=$(IMAGE) ./hack/image-test.sh
 
-## integration-test: seed a machine end to end on a throwaway kind cluster
+## integration-test: seed a machine end to end on a throwaway kind cluster, then
+#  assert the syscall filter on a second one whose kubelet filters by default
 integration-test:
 	./hack/integration-test.sh
+	./hack/seccomp-test.sh
 
-## render: render the chart from the first example to stdout
+## seccomp-test: the syscall filter assertions alone, on their own kind cluster
+seccomp-test:
+	./hack/seccomp-test.sh
+
+## render: render the chart from the oci example to stdout
+#  Named rather than taken from the wildcard: the example that sorts first is not
+#  a decision anyone made, and one naming a profile file that has to be placed on
+#  a node is a strange thing to hand someone as the canonical render.
 render:
-	$(HELM) template stateful-pods $(CHART) --values $(firstword $(EXAMPLES)) --kube-version $(KUBE_VERSION)
+	$(HELM) template stateful-pods $(CHART) --values $(RENDER_EXAMPLE) --kube-version $(KUBE_VERSION)
 
 ## conform: validate every example's rendered manifest against the Kubernetes API schemas
 conform:

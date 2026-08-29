@@ -1,0 +1,289 @@
+suite: values validation - the syscall filter a machine names
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders a machine that names no filter at all
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Unconfined
+
+  - it: rejects a filter that is not a map, naming its type
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile: Unconfined
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile: must be a map'
+
+  - it: rejects a filter form outside the accepted set, naming the offending value
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Apparmor
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.type: "Apparmor" is not.*Unconfined.*Localhost'
+
+  - it: rejects a filter that names no form
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            localhostProfile: profiles/machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.type: not set.*Unconfined.*Localhost'
+
+  - it: rejects the form that identifies a profile on the node when no path is given
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile\.localhostProfile: not set'
+
+  - it: rejects an empty path for the form that needs one
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile\.localhostProfile: not set'
+
+  - it: rejects a path supplied alongside a form that takes none, naming the field and the form
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Unconfined
+            localhostProfile: profiles/machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile: does not belong to.*"Unconfined"'
+
+  - it: rejects an absolute path, which the kubelet resolves under its own directory
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: /var/lib/kubelet/seccomp/profiles/machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile:.*relative'
+
+  - it: rejects a profile path that is not a path, naming its type
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile:
+              name: machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile\.localhostProfile: must be the path of a profile file on the node, but is of type map'
+
+  - it: reports a profile path that is not a path once, not once per shape rule
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            # The form that needs a path, so without the guard the unusable value
+            # would also be reported a second time as no path at all.
+            type: Localhost
+            localhostProfile:
+              - machine.json
+    asserts:
+      - failedTemplate:
+          # The report's footer has to follow this message directly: a second
+          # accumulated violation would sit between the two and fail this.
+          errorPattern: '(?s)of a profile file on the node[^\n]*\s*Nothing was rendered'
+
+  - it: rejects a path that steps back out of the kubelet's directory
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/../../etc/machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile:.*relative'
+
+  - it: accepts a file name that merely contains two dots
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/machine..v2.json
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Localhost
+            localhostProfile: profiles/machine..v2.json
+
+  - it: rejects the runtime's default filter for the guest, naming what it withholds
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: RuntimeDefault
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.type: "RuntimeDefault".*pivot_root'
+
+  - it: points at the form that can carry a filter permitting the root change
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: RuntimeDefault
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)"RuntimeDefault".*Localhost'
+
+  - it: rejects the runtime default for the guest in privileged mode too
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+          seccompProfile:
+            type: RuntimeDefault
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.seccompProfile\.type: "RuntimeDefault"'
+
+  - it: still gives the preparation steps the runtime default, which is not rejected
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Unconfined
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[2].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault

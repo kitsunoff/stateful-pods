@@ -107,12 +107,56 @@ root on the node at all. It is stated rather than left to the image, so that the
 posture a machine gets is the one the chart chose and not one a `shim.image`
 override could change by declaring a user of its own.
 
+The syscall filter is the runtime's own default. These steps unpack an archive,
+write files and fetch over HTTPS; they mount nothing and change no root, so
+nothing the default profile withholds is in their way. Unlike the guest's filter
+it needs no file to be present on any node, which makes it the one narrowing
+this chart can apply to every install without an operator doing anything first.
+It is named here rather than left unset for the same reason the mode is named: a
+kubelet configured to supply a default is a posture the machine's values do not
+describe.
+
 Takes the same machine context as the other helpers.
 */}}
 {{- define "stateful-pods.machine.initSecurityContext" -}}
 runAsUser: 0
 runAsGroup: 0
 allowPrivilegeEscalation: false
+seccompProfile:
+  type: RuntimeDefault
+{{- end -}}
+
+{{/*
+The syscall filter the guest container declares.
+
+`Unconfined` unless the machine names something else, and declared either way.
+Leaving the field out would hand the choice to the kubelet: one configured with
+`--seccomp-default=true` supplies the runtime's default profile to every
+container that names none, and that profile does not permit `pivot_root` - the
+call this container makes to become the machine. The machine would seed its
+volume and then die at the root change, on some clusters and not others.
+
+The only form that can confine a machine is `Localhost`, because the filter has
+to permit an entire distribution's userland and no default profile does. The
+file it names lives on the node, which is outside anything a chart can create -
+see `profiles/stateful-pods-machine.json` and the chart README for the ways to
+get one there.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.guestSeccompProfile" -}}
+{{- $security := .machine.security | default dict -}}
+{{- $profile := dict "type" "Unconfined" -}}
+{{- if kindIs "map" $security -}}
+{{- if kindIs "map" (index $security "seccompProfile") -}}
+{{- $profile = index $security "seccompProfile" -}}
+{{- end -}}
+{{- end -}}
+seccompProfile:
+  type: {{ $profile.type | toString | quote }}
+{{- if eq ($profile.type | toString) "Localhost" }}
+  localhostProfile: {{ $profile.localhostProfile | toString | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -220,6 +264,53 @@ Takes the root context.
 {{- end -}}
 {{- end -}}
 
+{{- /* The syscall filter, optional. The chart declares one for every container, so
+       this is the machine's chance to replace the guest's - and the one value of it
+       that is known to produce an unbootable machine is refused rather than
+       rendered. */ -}}
+{{- if kindIs "map" $security -}}
+{{- $seccomp := index $security "seccompProfile" -}}
+{{- if not (kindIs "invalid" $seccomp) -}}
+{{- if not (kindIs "map" $seccomp) -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile: must be a map naming the filter form, but is of type %s. Accepted forms:\n%s" $name (kindOf $seccomp) (include "stateful-pods.errors.seccompForms" $root)) -}}
+{{- else -}}
+{{- $type := $seccomp.type | default "" | toString -}}
+{{- /* The path is read before the form, because a path that is not a string
+       cannot be checked for shape and would otherwise be reported twice - once
+       for its type and again for a shape derived from it. */ -}}
+{{- $rawPath := index $seccomp "localhostProfile" -}}
+{{- $profilePath := "" -}}
+{{- $pathIsUsable := true -}}
+{{- if not (kindIs "invalid" $rawPath) -}}
+{{- if kindIs "string" $rawPath -}}
+{{- $profilePath = $rawPath -}}
+{{- else -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: must be the path of a profile file on the node, but is of type %s. A path is a string - quote it if it is one YAML reads as something else. A value that is not one renders into the manifest, is accepted by the API server and fails in the kubelet, which surfaces as a machine that never starts a container." $name (kindOf $rawPath)) -}}
+{{- $pathIsUsable = false -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $type "" -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: not set. Name the filter form explicitly, the same way the mode is named. Accepted forms:\n%s" $name (include "stateful-pods.errors.seccompForms" $root)) -}}
+{{- else if eq $type "RuntimeDefault" -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: \"RuntimeDefault\" cannot be used for a machine. The container runtime's default profile does not permit pivot_root, which is the call the guest container makes to become the machine, so in \"userns\" mode this value renders cleanly, seeds the volume over several minutes and then fails at the root change. It is refused in \"privileged\" mode too, where the runtime drops the profile and nothing would fail, because a machine's posture must not depend on what a runtime does with a value. A filter that does permit it has to come from a file on the node: place one and name it with type \"Localhost\" and machines.%s.security.seccompProfile.localhostProfile. This chart ships such a profile in profiles/stateful-pods-machine.json." $name $name) -}}
+{{- else if not (has $type (list "Unconfined" "Localhost")) -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: %q is not a syscall filter form. Accepted forms:\n%s" $name $type (include "stateful-pods.errors.seccompForms" $root)) -}}
+{{- end -}}
+{{- if not $pathIsUsable -}}
+{{- /* Already reported above; anything derived from it would be noise. */ -}}
+{{- else if eq $type "Localhost" -}}
+{{- if eq $profilePath "" -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: not set. The \"Localhost\" form names a profile file the cluster has placed on its nodes, so it needs the path of one - relative to the kubelet's seccomp directory, which is /var/lib/kubelet/seccomp unless the kubelet was told otherwise. For example: profiles/stateful-pods-machine.json." $name) -}}
+{{- else if or (hasPrefix "/" $profilePath) (has ".." (splitList "/" $profilePath)) -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: %q must be a relative path, descending from the kubelet's seccomp directory. The kubelet resolves it under that directory itself, so an absolute path or one containing \"..\" is rejected by the API server, which surfaces as a machine that never starts a container. Give the part below the directory, for example profiles/stateful-pods-machine.json." $name $profilePath) -}}
+{{- end -}}
+{{- else if and (ne $profilePath "") (has $type (list "Unconfined" "RuntimeDefault")) -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: does not belong to filter form %q; only \"Localhost\" names a profile file. Remove the field, or set machines.%s.security.seccompProfile.type to \"Localhost\"." $name $type $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* The rootfs source: kind named explicitly, never inferred from the fields present. */ -}}
 {{- $source := $machine.source -}}
 {{- if kindIs "invalid" $source -}}
@@ -303,6 +394,22 @@ documentation of the two modes, which is why it states what each needs.
                    idmap-capable storage (not NFS).
       privileged - the guest container runs privileged. Works on any cluster and on any
                    kernel, and gives up almost all isolation from the node.
+{{- end -}}
+
+{{/*
+The forms a machine's syscall filter may take. It doubles as the documentation of
+them, which is why it states what each one costs the operator.
+*/}}
+{{- define "stateful-pods.errors.seccompForms" }}
+      Unconfined - no syscall filter. The default, and the only form under which a machine
+                   boots with nothing placed on the node: every runtime default profile
+                   withholds pivot_root, which the guest container needs to become the
+                   machine.
+      Localhost  - the profile file named by
+                   machines.<name>.security.seccompProfile.localhostProfile, which the
+                   kubelet resolves under its own seccomp directory. That file has to be on
+                   every node the machine can be scheduled to, and putting it there is not
+                   something a chart can do - see the chart README.
 {{- end -}}
 
 {{- define "stateful-pods.errors.noMachines" -}}

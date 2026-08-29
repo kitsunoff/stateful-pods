@@ -88,6 +88,23 @@ check() {
 
 kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 
+# assert_default_filter <pod>
+# The steps that run before the guest declare the runtime's default syscall
+# filter, and a pod that is Ready is a pod whose preparation steps succeeded
+# under it. Asserted on every source kind, because what they do differs: one
+# unpacks a flattened image fetched over HTTPS from a registry, the other a
+# template tarball fetched over HTTPS from a web server.
+assert_default_filter() {
+  local pod="$1" filters
+  filters="$(kc get pod "$pod" --output \
+    "jsonpath={.spec.initContainers[*].securityContext.seccompProfile.type}")"
+  if [[ "$filters" == "RuntimeDefault RuntimeDefault RuntimeDefault" ]]; then
+    pass "$pod: every preparation step ran under the runtime's default filter"
+  else
+    fail "$pod: the preparation steps declared '${filters:-nothing}'"
+  fi
+}
+
 on_exit() {
   local code=$?
   if [[ "$code" -ne 0 ]]; then
@@ -174,6 +191,8 @@ helm --kube-context "$CONTEXT" upgrade --install oci "$CHART" \
   --set "machines.web.source.reference=$SOURCE_REFERENCE" \
   --wait --timeout 5m >/dev/null
 kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+
+assert_default_filter oci-web-0
 
 step "asserting the machine's source is nowhere in its pod"
 images="$(kc get pod oci-web-0 --output \
@@ -359,6 +378,8 @@ helm --kube-context "$CONTEXT" upgrade --install alpine "$CHART" \
   --wait --timeout 5m >/dev/null
 kc wait --for=condition=Ready pod/alpine-tiny-0 --timeout=300s >/dev/null
 
+assert_default_filter alpine-tiny-0
+
 step "asserting the machine the old seeding path refused"
 tiny() { kc exec alpine-tiny-0 --container guest -- "$@"; }
 check "the volume carries a seeding record" tiny test -f /.stateful-pods/provisioned
@@ -462,6 +483,8 @@ else
     --set-string "machines.db.source.sha256=$TEMPLATE_SHA256" \
     --wait --timeout 10m >/dev/null
   kc wait --for=condition=Ready pod/lxc-db-0 --timeout=600s >/dev/null
+
+  assert_default_filter lxc-db-0
 
   step "asserting the lxc machine's volume"
   dbguest() { kc exec lxc-db-0 --container guest -- "$@"; }

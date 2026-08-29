@@ -191,6 +191,15 @@ spec:
                   - /bin/sh
                   - /.stateful-pods/bin/stop.sh
           securityContext:
+            # Declared, not omitted. A kubelet running with --seccomp-default=true
+            # gives every container that names no profile the runtime's default
+            # one, and that profile does not permit pivot_root - the call this
+            # container makes to become the machine. A machine that inherited it
+            # would render, seed its volume over several minutes and then die at
+            # the root change, on some clusters and not others. Naming the filter
+            # here is what makes the posture a property of these values rather
+            # than of a flag on the node.
+            {{- include "stateful-pods.machine.guestSeccompProfile" $ctx | nindent 12 }}
             {{- if eq $mode "privileged" }}
             privileged: true
             {{- else }}
