@@ -1,0 +1,142 @@
+suite: rendering - the scripts the init containers run
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: ships every script the init containers invoke
+    templates:
+      - scripts-configmap.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lab-web
+      - exists:
+          path: data["seed-oci.sh"]
+      - exists:
+          path: data["seed-lxc.sh"]
+      - exists:
+          path: data["prepare.sh"]
+      - exists:
+          path: data["lib-state.sh"]
+      - exists:
+          path: data["lib-seed.sh"]
+      - exists:
+          path: data["lib-oci.sh"]
+      - exists:
+          path: data["lib-lxc.sh"]
+
+  - it: mounts those scripts into both init containers, read only
+    templates:
+      - statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].configMap.name
+          value: lab-web
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts[1].mountPath
+          value: /scripts
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts[1].readOnly
+          value: true
+      - equal:
+          path: spec.template.spec.initContainers[1].volumeMounts[1].mountPath
+          value: /scripts
+      - equal:
+          path: spec.template.spec.initContainers[1].volumeMounts[1].readOnly
+          value: true
+
+  - it: passes every value through the environment, never into script text
+    templates:
+      - statefulset.yaml
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: "https://example.test/x.tar.zst;rm -rf /$(whoami)`id`"
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        hostname: "host;rm -rf /"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].env[6].name
+          value: SP_SOURCE_URL
+      - equal:
+          path: spec.template.spec.initContainers[0].env[6].value
+          value: "https://example.test/x.tar.zst;rm -rf /$(whoami)`id`"
+      - equal:
+          path: spec.template.spec.initContainers[0].command
+          value:
+            - /bin/bash
+            - /scripts/seed-lxc.sh
+
+  - it: keeps a hostile value out of the scripts themselves
+    templates:
+      - scripts-configmap.yaml
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: "https://example.test/x.tar.zst;rm -rf /"
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notMatchRegex:
+          path: data["seed-lxc.sh"]
+          pattern: 'example\.test'
+      - notMatchRegex:
+          path: data["lib-lxc.sh"]
+          pattern: 'example\.test'
+
+  - it: tells each step which machine and namespace it is acting for
+    templates:
+      - statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[1].env[1].name
+          value: SP_MACHINE
+      - equal:
+          path: spec.template.spec.initContainers[1].env[1].value
+          value: web
+      - equal:
+          path: spec.template.spec.initContainers[1].env[2].value
+          value: lab
+      - equal:
+          path: spec.template.spec.initContainers[1].env[3].valueFrom.fieldRef.fieldPath
+          value: metadata.namespace

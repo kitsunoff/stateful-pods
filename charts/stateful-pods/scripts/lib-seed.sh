@@ -1,0 +1,82 @@
+# shellcheck shell=sh
+#
+# The seeding driver: everything that is the same for both source kinds.
+#
+# A script that sources this defines sp_fill_rootfs() - which puts the source's
+# contents into the volume and returns non-zero if it cannot - and then calls
+# sp_seed_main. Both source kinds therefore share one decision, one set of
+# messages and one definition of "done", and only the fill differs.
+#
+# POSIX sh: this is sourced by the OCI seeding script, which runs inside the
+# machine's own source image, where bash may not exist.
+
+sp_log() {
+    echo "stateful-pods: $*"
+}
+
+sp_die() {
+    echo "stateful-pods: $*" >&2
+    exit 1
+}
+
+sp_require_env() {
+    eval "_sp_value=\${$1:-}"
+    [ -n "$_sp_value" ] || sp_die "$1 is not set; the chart must supply it"
+}
+
+# The directories the kernel, the runtime and the init system own at boot. Nothing
+# belongs to the volume here: whatever a source ships in them is stale by
+# definition, and a device node copied in is either ignored or wrong. They exist
+# so the guest's init has somewhere to mount over.
+SP_RUNTIME_DIRS="dev proc sys run tmp"
+
+sp_ensure_runtime_dirs() {
+    _sp_root="$1"
+    for _sp_dir in $SP_RUNTIME_DIRS; do
+        rm -rf "${_sp_root:?}/$_sp_dir" || return 1
+        mkdir -p "$_sp_root/$_sp_dir" || return 1
+    done
+    chmod 1777 "$_sp_root/tmp" "$_sp_root/run" 2>/dev/null || true
+    return 0
+}
+
+sp_seed_main() {
+    _sp_root="${SP_ROOTFS:-/mnt/rootfs}"
+    sp_require_env SP_MACHINE
+
+    [ -d "$_sp_root" ] || sp_die "the rootfs volume is not mounted at $_sp_root"
+
+    _sp_state="$(sp_state "$_sp_root")"
+    case "$_sp_state" in
+        MARKED)
+            sp_log "machine $SP_MACHINE: the root filesystem is already seeded, leaving it alone"
+            return 0
+            ;;
+        FOREIGN)
+            sp_die "machine $SP_MACHINE: the rootfs volume at $_sp_root already holds content that was not created by this chart, and it carries no seeding record. Nothing has been touched. Empty the volume if it should be seeded from the declared ${SP_SOURCE_KIND:-source}, or point the machine at the volume that already holds its root filesystem."
+            ;;
+        INTERRUPTED)
+            sp_log "machine $SP_MACHINE: a previous seeding did not finish; clearing the partial result and starting again"
+            sp_wipe "$_sp_root" || sp_die "machine $SP_MACHINE: could not clear the partial result at $_sp_root"
+            ;;
+        EMPTY)
+            ;;
+        *)
+            sp_die "machine $SP_MACHINE: could not tell what state the volume at $_sp_root is in"
+            ;;
+    esac
+
+    # Written before the first byte, and removed only once the marker replaces it.
+    # This is what makes a death half-way through recoverable instead of
+    # indistinguishable from someone else's data.
+    mkdir -p "$_sp_root/$SP_DIR_NAME" || sp_die "machine $SP_MACHINE: could not write to $_sp_root"
+    : > "$_sp_root/$SP_DIR_NAME/seeding" || sp_die "machine $SP_MACHINE: could not write to $_sp_root"
+
+    sp_log "machine $SP_MACHINE: seeding the root filesystem from ${SP_SOURCE_KIND:-source}"
+    sp_fill_rootfs "$_sp_root" || sp_die "machine $SP_MACHINE: could not seed the rootfs volume at $_sp_root from the declared ${SP_SOURCE_KIND:-source} ${SP_SOURCE_REFERENCE:-${SP_SOURCE_URL:-}}. The volume is left unseeded and will be seeded again on the next start; the cause is in the output above."
+
+    sp_ensure_runtime_dirs "$_sp_root" || sp_die "machine $SP_MACHINE: could not prepare the runtime directories on $_sp_root"
+
+    sp_log "machine $SP_MACHINE: the root filesystem has been seeded"
+    return 0
+}

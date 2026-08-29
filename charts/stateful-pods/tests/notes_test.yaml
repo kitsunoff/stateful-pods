@@ -33,3 +33,17 @@ tests:
     asserts:
       - matchRegexRaw:
           pattern: 'does not boot'
+
+  - it: says the root filesystem is seeded from the machine's source
+    asserts:
+      - matchRegexRaw:
+          pattern: 'filled from its oci source'
+      - matchRegexRaw:
+          pattern: 'once'
+
+  - it: still says the machine does not boot
+    asserts:
+      - matchRegexRaw:
+          pattern: 'does not boot'
+      - matchRegexRaw:
+          pattern: 'placeholder command that sleeps'

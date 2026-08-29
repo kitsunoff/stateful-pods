@@ -1,0 +1,134 @@
+suite: rendering - the seeding init containers
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders exactly two init containers, in the order they must run
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 2
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: seed
+      - equal:
+          path: spec.template.spec.initContainers[1].name
+          value: prepare
+
+  - it: mounts the machine's rootfs volume into both init containers
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts[0].name
+          value: lab-web
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts[0].mountPath
+          value: /mnt/rootfs
+      - equal:
+          path: spec.template.spec.initContainers[1].volumeMounts[0].name
+          value: lab-web
+      - equal:
+          path: spec.template.spec.initContainers[1].volumeMounts[0].mountPath
+          value: /mnt/rootfs
+
+  - it: seeds an oci machine from its own source image
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: docker.io/library/debian:13
+      - equal:
+          path: spec.template.spec.initContainers[0].command
+          value:
+            - /bin/sh
+            - /scripts/seed-oci.sh
+
+  - it: seeds an lxc machine from the chart's own image
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:test
+      - equal:
+          path: spec.template.spec.initContainers[0].command
+          value:
+            - /bin/bash
+            - /scripts/seed-lxc.sh
+
+  - it: always prepares from the chart's own image, whatever the source kind
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[1].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:test
+      - equal:
+          path: spec.template.spec.initContainers[1].command
+          value:
+            - /bin/bash
+            - /scripts/prepare.sh
+
+  - it: prepares an lxc machine from the chart's own image too
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/debian.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[1].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:test

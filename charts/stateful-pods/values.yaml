@@ -5,10 +5,22 @@
 # machine's PersistentVolume, seeded once from `machines.<name>.source`, so the two
 # are never the same reference.
 shim:
-  # Shim image reference. This version of the chart does not boot a machine, so the
-  # default is a deliberate placeholder and the guest container runs a placeholder
-  # command. Override it only if you are building your own shim.
-  image: ghcr.io/kitsunoff/stateful-pods-shim:placeholder
+  # Shim image reference. The chart runs all of its own containers from this one
+  # image: the step that fills a machine's root filesystem from a template, the
+  # step that records what the volume holds, and the guest container.
+  #
+  # The single exception is a kind: oci source, whose seeding step runs the
+  # machine's own source image, because copying an image faithfully needs a tool
+  # from inside it.
+  #
+  # Pinned by digest, not by tag. A machine is a pet whose disk must be
+  # reproducible, and a tag that silently comes to mean different content makes
+  # its own boot path unreproducible without anything in the release changing.
+  #
+  # This version of the chart still does not boot a machine: the guest container
+  # runs a placeholder command. Override this only if you are building your own
+  # shim.
+  image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:c0ddf59e2365dd5b78d19a2421063c48be9e0801a1ade473f45ca251db557fcb
 
 # Machines to run, keyed by machine name.
 #
@@ -25,10 +37,16 @@ shim:
 # A complete machine looks like this:
 #
 #   web:
-#     # Where the root filesystem is seeded from, once, when the volume is first
-#     # created. Mandatory: there is no sensible default operating system for
-#     # someone else's machine, and a wrong guess would be written to a persistent
-#     # volume and then never revisited.
+#     # Where the root filesystem is seeded from, once, the first time the
+#     # machine starts on an empty volume. Mandatory: there is no sensible default
+#     # operating system for someone else's machine, and a wrong guess would be
+#     # written to a persistent volume and then never revisited.
+#     #
+#     # Seeding happens exactly once in the life of the volume. Changing this
+#     # value afterwards changes nothing: the volume is the machine's operating
+#     # system from the moment it is filled, and re-applying a source over a
+#     # machine that has been running for a year would destroy it. To start from a
+#     # different source, create a new machine.
 #     #
 #     # The kind is always named explicitly rather than inferred from which fields
 #     # are present, so that a mistyped field name produces a message about the
@@ -39,6 +57,15 @@ shim:
 #
 #       # kind: oci - an image reference. Its integrity is established by the
 #       # container runtime, which is why no checksum input exists for this kind.
+#       #
+#       # This image is copied into the volume by a step that runs the image
+#       # itself, so it must provide a shell and GNU tar with extended-attribute
+#       # support. A busybox-based image (Alpine) provides neither and is rejected
+#       # rather than seeded badly - use kind: lxc for those distributions.
+#       #
+#       # The step runs on every pod start, even once there is nothing left to do,
+#       # so the reference must stay resolvable for the life of the machine.
+#       # Pinning by digest is the safe form.
 #       reference: docker.io/library/debian:13
 #
 #       # kind: lxc - a conventional LXC template tarball, as distributed by
@@ -72,6 +99,10 @@ shim:
 #
 #     rootfs:
 #       # Size of the root filesystem volume. Defaults to 8Gi when unset.
+#       #
+#       # It must hold the unpacked operating system. For a kind: lxc source, add
+#       # the compressed size of the template as well: it is downloaded onto this
+#       # volume, verified, unpacked and then deleted.
 #       size: 8Gi
 #
 #       # Optional: create the root filesystem from an existing VolumeSnapshot
@@ -110,3 +141,10 @@ machines: {}
 #
 #   * An init-system selector - the shim runs /sbin/init and detects the guest's
 #     init system at boot, so there is nothing to choose.
+#
+#   * A re-seeding or reprovisioning policy - a machine's root filesystem is
+#     seeded once and never again. Any option that could overwrite it would be an
+#     option that destroys a machine, and it does not exist. Recreating a machine
+#     from its source means deleting its volume deliberately.
+#
+#   * A way to skip the template checksum - see source.sha256 above.

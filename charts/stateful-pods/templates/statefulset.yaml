@@ -5,6 +5,7 @@
 {{- $objectName := include "stateful-pods.machine.name" $ctx }}
 {{- $rootfs := $machine.rootfs | default dict }}
 {{- $mode := $machine.security.mode }}
+{{- $source := $machine.source }}
 {{- $snapshot := dig "dataSource" "volumeSnapshotName" "" $rootfs | default "" }}
 ---
 apiVersion: apps/v1
@@ -64,6 +65,62 @@ spec:
       {{- with $machine.hostname }}
       hostname: {{ . }}
       {{- end }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $objectName }}
+            defaultMode: 0o755
+      # Both steps run on every pod start, because Kubernetes has no conditional
+      # init container. What makes seeding happen once is the record they keep on
+      # the volume, not the pod spec.
+      initContainers:
+        # Fills the volume from the machine's source, the first time only.
+        #
+        # For an oci source this container runs the machine's own source image:
+        # copying an image's filesystem faithfully needs a tool from inside that
+        # image, because a binary from the chart's image is linked against a
+        # different libc and cannot execute there. It exits before the machine
+        # starts and never becomes the machine.
+        - name: seed
+          {{- if eq $source.kind "oci" }}
+          image: {{ $source.reference | quote }}
+          command:
+            - /bin/sh
+            - /scripts/seed-oci.sh
+          {{- else }}
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /bin/bash
+            - /scripts/seed-lxc.sh
+          {{- end }}
+          env:
+            {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
+          securityContext:
+            {{- include "stateful-pods.machine.initSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: {{ $objectName }}
+              mountPath: /mnt/rootfs
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+        # Records what the volume holds and makes sure the machine's identity is
+        # its own. Always the chart's image, for both source kinds, so that the
+        # identity handling cannot differ per source image.
+        - name: prepare
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /bin/bash
+            - /scripts/prepare.sh
+          env:
+            {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
+          securityContext:
+            {{- include "stateful-pods.machine.initSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: {{ $objectName }}
+              mountPath: /mnt/rootfs
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
       containers:
         - name: guest
           # The shim, not the machine's operating system: that lives in the volume

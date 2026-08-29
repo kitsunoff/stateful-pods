@@ -1,0 +1,12 @@
+# A machine seeded from the integration test's own source image.
+# privileged mode, because a kind node is itself a container and user namespaces
+# nested inside one are unreliable - see docs/research/05-open-questions.md §12.
+machines:
+  web:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi

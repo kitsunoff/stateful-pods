@@ -1,0 +1,13 @@
+# A machine seeded from a template tarball. The URL and checksum are supplied by
+# the integration script; a template must be served over HTTPS, which is what the
+# chart enforces and what this case exists to exercise.
+machines:
+  db:
+    source:
+      kind: lxc
+      url: PLACEHOLDER_URL
+      sha256: PLACEHOLDER_SHA256
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi

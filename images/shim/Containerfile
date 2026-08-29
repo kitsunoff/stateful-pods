@@ -1,0 +1,44 @@
+# The image every container the chart runs starts from.
+#
+# It is a toolbox, not an application: it carries a shell and the archivers needed
+# to fill a machine's root filesystem, and nothing project-specific. The scripts
+# live in the chart and arrive as a mounted ConfigMap, so fixing one is a
+# `helm upgrade` rather than an image release.
+#
+# busybox provides the shell and the mount work. The four packages on top of it
+# are not optional, and each one is here for a verified reason:
+#
+#   zstd  - busybox has no zstd support whatsoever, and Proxmox distributes its
+#           templates as .tar.zst. A busybox-only image cannot open the single
+#           most common LXC template.
+#   tar   - busybox tar has no extended-attribute support, so it silently drops
+#           security.capability. The rootfs looks fine and an unprivileged `ping`
+#           fails forever after with nothing in the logs to explain it.
+#   xz    - the format linuxcontainers.org uses.
+#   bash  - the scripts are bash, because a machine that will not boot is
+#           debugged by reading the script that was supposed to boot it.
+FROM alpine:3.22
+
+# renovate: datasource=repology
+RUN apk add --no-cache \
+      bash \
+      tar \
+      xz \
+      zstd \
+      gzip \
+      curl \
+      ca-certificates \
+      jq \
+      coreutils \
+      libcap \
+ && rm -rf /var/cache/apk/*
+
+LABEL org.opencontainers.image.title="stateful-pods-shim" \
+      org.opencontainers.image.description="Toolbox image for the stateful-pods chart: seeds and prepares a machine's root filesystem" \
+      org.opencontainers.image.source="https://github.com/kitsunoff/stateful-pods" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="kitsunoff"
+
+# The chart always supplies an explicit command. This entrypoint exists so that a
+# container started by hand for debugging lands somewhere useful.
+ENTRYPOINT ["/bin/bash"]
