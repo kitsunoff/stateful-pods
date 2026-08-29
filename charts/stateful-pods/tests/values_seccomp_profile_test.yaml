@@ -137,6 +137,43 @@ tests:
       - failedTemplate:
           errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile:.*relative'
 
+  - it: rejects a path that steps back out of the kubelet's directory
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/../../etc/machine.json
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.seccompProfile\.localhostProfile:.*relative'
+
+  - it: accepts a file name that merely contains two dots
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/machine..v2.json
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Localhost
+            localhostProfile: profiles/machine..v2.json
+
   - it: rejects the runtime's default filter for the guest, naming what it withholds
     set:
       machines.web:

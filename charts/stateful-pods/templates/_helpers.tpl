@@ -286,7 +286,7 @@ Takes the root context.
 {{- if eq $type "Localhost" -}}
 {{- if eq $profilePath "" -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: not set. The \"Localhost\" form names a profile file the cluster has placed on its nodes, so it needs the path of one - relative to the kubelet's seccomp directory, which is /var/lib/kubelet/seccomp unless the kubelet was told otherwise. For example: profiles/stateful-pods-machine.json." $name) -}}
-{{- else if or (hasPrefix "/" $profilePath) (contains ".." $profilePath) -}}
+{{- else if or (hasPrefix "/" $profilePath) (has ".." (splitList "/" $profilePath)) -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.localhostProfile: %q must be a relative path, descending from the kubelet's seccomp directory. The kubelet resolves it under that directory itself, so an absolute path or one containing \"..\" is rejected by the API server, which surfaces as a machine that never starts a container. Give the part below the directory, for example profiles/stateful-pods-machine.json." $name $profilePath) -}}
 {{- end -}}
 {{- else if and (ne $profilePath "") (has $type (list "Unconfined" "RuntimeDefault")) -}}
