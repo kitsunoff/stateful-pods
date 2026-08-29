@@ -35,8 +35,12 @@ sp_ensure_runtime_dirs() {
     for _sp_dir in $SP_RUNTIME_DIRS; do
         rm -rf "${_sp_root:?}/$_sp_dir" || return 1
         mkdir -p "$_sp_root/$_sp_dir" || return 1
+        # 0755 for every one of them; /run world-writable would be a hole, and
+        # /proc and /sys get their real modes from the kernel when mounted over.
+        chmod 0755 "$_sp_root/$_sp_dir" || return 1
     done
-    chmod 1777 "$_sp_root/tmp" "$_sp_root/run" 2>/dev/null || true
+    # /tmp is the exception every Unix expects: world-writable with the sticky bit.
+    chmod 1777 "$_sp_root/tmp" || return 1
     return 0
 }
 

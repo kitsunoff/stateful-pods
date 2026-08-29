@@ -124,3 +124,13 @@ filled() { [ "$(cat "$FILL_MARKER")" = "filled" ]; }
     [ "$status" -ne 0 ]
     [[ "$output" == *"does-not-exist"* ]]
 }
+
+@test "the runtime directories are recreated with the modes a guest expects" {
+    just_seeded_fill() { mkdir -p "$1/usr"; }
+    run sp_seed_main
+    [ "$status" -eq 0 ]
+    # /run world-writable would be a hole; /tmp not sticky breaks every Unix.
+    [ "$(stat -c %a "$ROOTFS/run")" = "755" ]
+    [ "$(stat -c %a "$ROOTFS/dev")" = "755" ]
+    [ "$(stat -c %a "$ROOTFS/tmp")" = "1777" ]
+}

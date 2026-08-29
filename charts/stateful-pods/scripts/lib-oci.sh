@@ -53,13 +53,17 @@ sp_fill_rootfs() {
     _sp_err="$_sp_root/$SP_DIR_NAME/producer-status"
     rm -f "$_sp_err"
 
-    # The runtime directories are excluded rather than copied and cleared. Their
-    # contents are stale by definition, and copying a directory that changes while
-    # it is being read - /tmp and /run in a live container - makes tar report a
-    # failure for something that was never wanted in the first place.
+    # The runtime directories are excluded whole, not just their contents, and
+    # recreated empty afterwards.
+    #
+    # Excluding only the contents is not enough: tar still reads the mount point
+    # itself, and a live /sys or /proc changes while it is being read, which tar
+    # reports as a failure. Nothing in these directories was ever wanted, so the
+    # entry goes too and the copy stops depending on what the kernel does to a
+    # filesystem the machine will not keep.
     _sp_excludes=""
     for _sp_dir in $SP_RUNTIME_DIRS; do
-        _sp_excludes="$_sp_excludes --exclude=./$_sp_dir/*"
+        _sp_excludes="$_sp_excludes --exclude=./$_sp_dir"
     done
 
     # shellcheck disable=SC2086 # the flags are a word list on purpose

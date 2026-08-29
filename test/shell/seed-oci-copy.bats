@@ -112,3 +112,16 @@ fill() {
     run sh -c ". $SCRIPTS/lib-state.sh; sp_state $small"
     [ "$output" = "INTERRUPTED" ]
 }
+
+@test "a live kernel filesystem in the source does not fail the copy" {
+    # /proc and /sys are mounted in this container and change while they are read.
+    # Excluding only their contents leaves tar reading the mount point itself,
+    # which it reports as "file changed as we read it" and which fails the copy
+    # for something that was never wanted.
+    [ -d /proc/self ] || skip "no live kernel filesystem to read"
+    fill "$ROOTFS"
+    [ "$status" -eq 0 ]
+    # The mount point is not copied at all; the driver recreates it empty.
+    [ ! -e "$ROOTFS/sys" ]
+    [ ! -e "$ROOTFS/proc" ]
+}
