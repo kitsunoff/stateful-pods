@@ -33,6 +33,16 @@ KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 # An lxc template has to be fetched over HTTPS, which the chart enforces. Point
 # these at a reachable template to exercise that path; without them the lxc
 # assertions are skipped rather than silently passed.
+#
+# The URL may contain {arch}, which is replaced with the cluster node's own
+# architecture. A rootfs built for another one seeds perfectly and then cannot be
+# executed, so a single fixed URL passes on the machine it was chosen on and
+# crash-loops everywhere else.
+#
+# Leave the checksum empty to take it from the publisher's SHA256SUMS beside the
+# tarball, which is what a user would do and what makes one URL work for every
+# architecture. The chart still verifies it; this only decides what it is checked
+# against.
 TEMPLATE_URL="${TEMPLATE_URL:-}"
 TEMPLATE_SHA256="${TEMPLATE_SHA256:-}"
 
@@ -233,9 +243,22 @@ else
 fi
 
 # ---------------------------------------------------------------- lxc source ---
-if [[ -z "$TEMPLATE_URL" || -z "$TEMPLATE_SHA256" ]]; then
-  skip "the lxc assertions: set TEMPLATE_URL and TEMPLATE_SHA256 to an https template"
+if [[ -z "$TEMPLATE_URL" ]]; then
+  skip "the lxc assertions: set TEMPLATE_URL to an https template"
 else
+  node_arch="$(kubectl --context "$CONTEXT" get nodes \
+    --output "jsonpath={.items[0].status.nodeInfo.architecture}")"
+  TEMPLATE_URL="${TEMPLATE_URL//\{arch\}/$node_arch}"
+  if [[ -z "$TEMPLATE_SHA256" ]]; then
+    step "taking the template's checksum from its publisher"
+    sums_url="${TEMPLATE_URL%/*}/SHA256SUMS"
+    tarball_name="${TEMPLATE_URL##*/}"
+    sums="$(curl --silent --show-error --location --fail "$sums_url" || true)"
+    TEMPLATE_SHA256="$(awk -v name="$tarball_name" '$2 ~ name {print $1; exit}' <<< "$sums")"
+    [[ -n "$TEMPLATE_SHA256" ]] \
+      || fail "could not find $tarball_name in $sums_url; set TEMPLATE_SHA256 by hand"
+    pass "the template for $node_arch checksums to ${TEMPLATE_SHA256:0:12}..."
+  fi
   step "installing a machine with an lxc source"
   helm --kube-context "$CONTEXT" upgrade --install lxc "$CHART" \
     --namespace "$NAMESPACE" \

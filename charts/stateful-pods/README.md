@@ -51,14 +51,17 @@ really does nothing. Its template case needs a tarball served over HTTPS, becaus
 chart accepts:
 
 ```bash
-TEMPLATE_URL=https://.../rootfs.tar.xz \
-TEMPLATE_SHA256=<the digest from the publisher's SHA256SUMS> \
-  make integration-test
+TEMPLATE_URL='https://.../alpine/3.21/{arch}/default/<date>/rootfs.tar.xz' make integration-test
 ```
 
-Without those two the template case is skipped rather than silently passed. In CI they come from
-the `INTEGRATION_TEMPLATE_URL` and `INTEGRATION_TEMPLATE_SHA256` repository variables; distributors
-publish under dated paths, so those values need refreshing when a build is retired upstream.
+`{arch}` is replaced with the cluster node's own architecture, and the checksum is taken from the
+publisher's `SHA256SUMS` beside the tarball. Both matter: a rootfs built for another architecture
+seeds perfectly and then cannot be executed, so a fixed URL passes on the machine it was chosen on
+and crash-loops everywhere else. Set `TEMPLATE_SHA256` to check against a digest of your own instead.
+
+Without `TEMPLATE_URL` the template case is skipped rather than silently passed. In CI it comes from
+the `INTEGRATION_TEMPLATE_URL` repository variable; distributors publish under dated paths, so it
+needs refreshing when a build is retired upstream.
 
 ## Usage
 
