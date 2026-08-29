@@ -1,0 +1,6 @@
+# markdownlint configuration
+#
+# MD013 (line-length) is disabled: the documentation contains wide comparison
+# tables, long upstream URLs and quoted source snippets that cannot be wrapped
+# without hurting readability. Prose is wrapped at 100 columns by convention.
+MD013: false

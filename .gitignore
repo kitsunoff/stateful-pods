@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Helm
+*.tgz
+charts/*/charts/
+charts/*/Chart.lock
+
+# Local kubeconfig fragments produced by kubecm
+kubecm.config
+
+# Local scratch
+/tmp/

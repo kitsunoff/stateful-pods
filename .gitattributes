@@ -1,0 +1,5 @@
+# Research imported alongside the project, not authored as part of it.
+docs/research/** linguist-documentation
+
+# OpenSpec planning artifacts are documentation, not source.
+openspec/** linguist-documentation
