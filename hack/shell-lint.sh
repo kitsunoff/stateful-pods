@@ -9,7 +9,7 @@ set -o nounset
 set -o pipefail
 
 mapfile -t scripts < <(
-  find hack charts test -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null | sort
+  find hack images charts test -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null | sort
 )
 
 if [[ "${#scripts[@]}" -eq 0 ]]; then

@@ -65,34 +65,25 @@ spec:
       {{- with $machine.hostname }}
       hostname: {{ . }}
       {{- end }}
-      volumes:
-        - name: scripts
-          configMap:
-            name: {{ $objectName }}
-            defaultMode: 0o755
-      # Both steps run on every pod start, because Kubernetes has no conditional
-      # init container. What makes seeding happen once is the record they keep on
-      # the volume, not the pod spec.
+      # Every step below runs on every pod start, because Kubernetes has no
+      # conditional init container. What makes seeding happen once is the record
+      # they keep on the volume, not the pod spec.
       initContainers:
         # Fills the volume from the machine's source, the first time only.
         #
-        # For an oci source this container runs the machine's own source image:
-        # copying an image's filesystem faithfully needs a tool from inside that
-        # image, because a binary from the chart's image is linked against a
-        # different libc and cannot execute there. It exits before the machine
-        # starts and never becomes the machine.
+        # The chart's own image, for both source kinds. This step used to run the
+        # machine's own source image for an oci source, because copying an
+        # image's filesystem faithfully needed a tool from inside it; the step now
+        # fetches and flattens the image from here instead, so nothing from the
+        # source is ever executed and no source has to carry an archiver.
         - name: seed
-          {{- if eq $source.kind "oci" }}
-          image: {{ $source.reference | quote }}
-          command:
-            - /bin/sh
-            - /scripts/seed-oci.sh
-          {{- else }}
           image: {{ $root.Values.shim.image | quote }}
           command:
-            - /bin/bash
-            - /scripts/seed-lxc.sh
-          {{- end }}
+            {{- if eq $source.kind "oci" }}
+            - /usr/local/lib/stateful-pods/seed-oci.sh
+            {{- else }}
+            - /usr/local/lib/stateful-pods/seed-lxc.sh
+            {{- end }}
           env:
             {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
           securityContext:
@@ -100,17 +91,12 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
-            - name: scripts
-              mountPath: /scripts
-              readOnly: true
         # Records what the volume holds and makes sure the machine's identity is
-        # its own. Always the chart's image, for both source kinds, so that the
-        # identity handling cannot differ per source image.
+        # its own.
         - name: prepare
           image: {{ $root.Values.shim.image | quote }}
           command:
-            - /bin/bash
-            - /scripts/prepare.sh
+            - /usr/local/lib/stateful-pods/prepare.sh
           env:
             {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
           securityContext:
@@ -118,9 +104,6 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
-            - name: scripts
-              mountPath: /scripts
-              readOnly: true
         # Writes the files the chart maintains inside the machine. It runs here,
         # before the root change, because this is where the pod's own copies of
         # them are still reachable - after the change they are on the other side
@@ -128,8 +111,7 @@ spec:
         - name: customize
           image: {{ $root.Values.shim.image | quote }}
           command:
-            - /bin/bash
-            - /scripts/customize.sh
+            - /usr/local/lib/stateful-pods/customize.sh
           env:
             {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
           securityContext:
@@ -137,9 +119,6 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
-            - name: scripts
-              mountPath: /scripts
-              readOnly: true
       # Proxmox's own TimeoutStopSec. An operating system needs longer to stop
       # than an application does, and being killed at the end of it is an unclean
       # shutdown of a pet on every ordinary delete.
@@ -152,8 +131,7 @@ spec:
           # the volume, and then *becomes* the machine.
           image: {{ $root.Values.shim.image | quote }}
           command:
-            - /bin/bash
-            - /scripts/boot.sh
+            - /usr/local/lib/stateful-pods/boot.sh
           env:
             {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
           # A terminal is what gives the machine a /dev/console to bind, which is
@@ -194,7 +172,4 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
-            - name: scripts
-              mountPath: /scripts
-              readOnly: true
 {{- end }}

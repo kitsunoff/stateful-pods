@@ -7,7 +7,7 @@
 # kernel delivers it. The integration test on a real cluster covers that.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     FAKE="$(mktemp -d)"
     STUB_DIR="$(mktemp -d)"
     mkdir -p "$FAKE/run"

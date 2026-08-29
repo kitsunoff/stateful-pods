@@ -55,7 +55,7 @@ tests:
           path: spec.template.spec.initContainers[1].volumeMounts[0].mountPath
           value: /mnt/rootfs
 
-  - it: seeds an oci machine from its own source image
+  - it: seeds an oci machine from the chart's own image, never from the source
     set:
       shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
       machines.web:
@@ -69,12 +69,11 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.initContainers[0].image
-          value: docker.io/library/debian:13
+          value: ghcr.io/kitsunoff/stateful-pods-shim:test
       - equal:
           path: spec.template.spec.initContainers[0].command
           value:
-            - /bin/sh
-            - /scripts/seed-oci.sh
+            - /usr/local/lib/stateful-pods/seed-oci.sh
 
   - it: seeds an lxc machine from the chart's own image
     set:
@@ -95,8 +94,7 @@ tests:
       - equal:
           path: spec.template.spec.initContainers[0].command
           value:
-            - /bin/bash
-            - /scripts/seed-lxc.sh
+            - /usr/local/lib/stateful-pods/seed-lxc.sh
 
   - it: always prepares from the chart's own image, whatever the source kind
     set:
@@ -116,8 +114,7 @@ tests:
       - equal:
           path: spec.template.spec.initContainers[1].command
           value:
-            - /bin/bash
-            - /scripts/prepare.sh
+            - /usr/local/lib/stateful-pods/prepare.sh
 
   - it: prepares an lxc machine from the chart's own image too
     set:

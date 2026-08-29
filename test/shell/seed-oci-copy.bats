@@ -5,7 +5,7 @@
 # and each failure it guards against is invisible in the resulting filesystem.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"
     export SP_MACHINE=web

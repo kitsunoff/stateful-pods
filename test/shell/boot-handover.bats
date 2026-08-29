@@ -3,7 +3,7 @@
 # Device nodes, the refusals, and what the machine's init is handed.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     STUB_DIR="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"
@@ -112,7 +112,7 @@ EOF
 @test "the installed helpers reference no path that disappears with the root change" {
     sp_install_runtime_helpers "$ROOTFS" "$SCRIPTS"
     for helper in ready.sh stop.sh; do
-        run grep -c '/scripts/' "$ROOTFS/.stateful-pods/bin/$helper"
+        run grep -c '/usr/local/lib/stateful-pods/' "$ROOTFS/.stateful-pods/bin/$helper"
         [ "$output" = "0" ]
     done
 }

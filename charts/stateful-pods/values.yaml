@@ -5,13 +5,21 @@
 # machine's PersistentVolume, seeded once from `machines.<name>.source`, so the two
 # are never the same reference.
 shim:
-  # Shim image reference. The chart runs all of its own containers from this one
-  # image: the step that fills a machine's root filesystem from a template, the
-  # step that records what the volume holds, and the guest container.
+  # Shim image reference. The chart runs every one of its own containers from this
+  # one image, for both source kinds: the step that fills a machine's root
+  # filesystem, the step that records what the volume holds, the step that writes
+  # the files the chart maintains inside the machine, and the guest container.
   #
-  # The single exception is a kind: oci source, whose seeding step runs the
-  # machine's own source image, because copying an image faithfully needs a tool
-  # from inside it.
+  # This image also carries the chart's logic. The scripts those containers run
+  # are baked into it at /usr/local/lib/stateful-pods, so overriding this value
+  # replaces the behaviour and not merely the userland it runs in: the override
+  # MUST be an image built from this repository's `images/shim` context, at a
+  # version compatible with this chart. An image that merely carries bash and the
+  # archivers used to be enough and is not any more - a container whose command
+  # does not exist fails at once, naming the path it could not execute.
+  #
+  # The chart and this image are released together, so a fix to a script is an
+  # image release plus the digest below, not a `helm upgrade` on its own.
   #
   # Pinned by digest, not by tag. A machine is a pet whose disk must be
   # reproducible, and a tag that silently comes to mean different content makes
@@ -56,16 +64,18 @@ shim:
 #       kind: oci
 #
 #       # kind: oci - an image reference. Its integrity is established by the
-#       # container runtime, which is why no checksum input exists for this kind.
+#       # registry, which is why no checksum input exists for this kind.
 #       #
-#       # This image is copied into the volume by a step that runs the image
-#       # itself, so it must provide a shell and GNU tar with extended-attribute
-#       # support. A busybox-based image (Alpine) provides neither and is rejected
-#       # rather than seeded badly - use kind: lxc for those distributions.
+#       # The chart fetches this image itself and unpacks its flattened filesystem
+#       # into the volume, choosing the build that matches the node's own
+#       # architecture. Nothing from the image is ever executed, so any image can
+#       # be a source: an Alpine-, busybox- or distroless-based image needs no
+#       # shell and no archiver of its own.
 #       #
-#       # The step runs on every pod start, even once there is nothing left to do,
-#       # so the reference must stay resolvable for the life of the machine.
-#       # Pinning by digest is the safe form.
+#       # The registry is contacted only when there is something to seed, so the
+#       # reference has to resolve once, on the machine's first start, and never
+#       # again. Pinning by digest is still the safe form, because that first
+#       # start may happen long after the values were written.
 #       reference: docker.io/library/debian:13
 #
 #       # kind: lxc - a conventional LXC template tarball, as distributed by

@@ -7,11 +7,11 @@
 set -eu
 
 SP_SCRIPT_DIR="$(dirname "$0")"
-# shellcheck source=charts/stateful-pods/scripts/lib-state.sh
+# shellcheck source=images/shim/scripts/lib-state.sh
 . "$SP_SCRIPT_DIR/lib-state.sh"
-# shellcheck source=charts/stateful-pods/scripts/lib-seed.sh
+# shellcheck source=images/shim/scripts/lib-seed.sh
 . "$SP_SCRIPT_DIR/lib-seed.sh"
-# shellcheck source=charts/stateful-pods/scripts/lib-oci.sh
+# shellcheck source=images/shim/scripts/lib-oci.sh
 . "$SP_SCRIPT_DIR/lib-oci.sh"
 
 sp_seed_main

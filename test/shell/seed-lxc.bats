@@ -6,7 +6,7 @@
 # filesystem, and only then write anything.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     SERVE="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"

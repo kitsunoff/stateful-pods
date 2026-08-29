@@ -1,13 +1,11 @@
-suite: rendering - the scripts the init containers run
+suite: rendering - the scripts come from the image, not from a Kubernetes object
 release:
   name: lab
 capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: ships every script the init containers invoke
-    templates:
-      - scripts-configmap.yaml
+  - it: renders no object carrying the chart's own scripts
     set:
       machines.web:
         source:
@@ -18,27 +16,16 @@ tests:
         security:
           mode: userns
     asserts:
-      - isKind:
-          of: ConfigMap
-      - equal:
-          path: metadata.name
-          value: lab-web
-      - exists:
-          path: data["seed-oci.sh"]
-      - exists:
-          path: data["seed-lxc.sh"]
-      - exists:
-          path: data["prepare.sh"]
-      - exists:
-          path: data["lib-state.sh"]
-      - exists:
-          path: data["lib-seed.sh"]
-      - exists:
-          path: data["lib-oci.sh"]
-      - exists:
-          path: data["lib-lxc.sh"]
+      # Every template the chart has, with no `templates:` key to narrow it: no
+      # object anywhere in the release is a ConfigMap, and none carries a `data`
+      # section for scripts to live in.
+      - notMatchRegex:
+          path: kind
+          pattern: '^ConfigMap$'
+      - notExists:
+          path: data
 
-  - it: mounts those scripts into both init containers, read only
+  - it: runs every container from a script inside the image
     templates:
       - statefulset.yaml
     set:
@@ -52,20 +39,54 @@ tests:
           mode: userns
     asserts:
       - equal:
-          path: spec.template.spec.volumes[0].configMap.name
-          value: lab-web
+          path: spec.template.spec.initContainers[0].command
+          value:
+            - /usr/local/lib/stateful-pods/seed-oci.sh
       - equal:
-          path: spec.template.spec.initContainers[0].volumeMounts[1].mountPath
-          value: /scripts
+          path: spec.template.spec.initContainers[1].command
+          value:
+            - /usr/local/lib/stateful-pods/prepare.sh
       - equal:
-          path: spec.template.spec.initContainers[0].volumeMounts[1].readOnly
-          value: true
+          path: spec.template.spec.initContainers[2].command
+          value:
+            - /usr/local/lib/stateful-pods/customize.sh
       - equal:
-          path: spec.template.spec.initContainers[1].volumeMounts[1].mountPath
-          value: /scripts
+          path: spec.template.spec.containers[0].command
+          value:
+            - /usr/local/lib/stateful-pods/boot.sh
+
+  - it: mounts nothing but the machine's own volume into any container
+    templates:
+      - statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      # No pod-level volume at all: the rootfs arrives from the claim template,
+      # and the scripts arrive in the image.
+      - notExists:
+          path: spec.template.spec.volumes
+      - lengthEqual:
+          path: spec.template.spec.initContainers[0].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[1].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
       - equal:
-          path: spec.template.spec.initContainers[1].volumeMounts[1].readOnly
-          value: true
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /mnt/rootfs
 
   - it: passes every value through the environment, never into script text
     templates:
@@ -91,12 +112,11 @@ tests:
       - equal:
           path: spec.template.spec.initContainers[0].command
           value:
-            - /bin/bash
-            - /scripts/seed-lxc.sh
+            - /usr/local/lib/stateful-pods/seed-lxc.sh
 
-  - it: keeps a hostile value out of the scripts themselves
+  - it: keeps a hostile value out of the manifest's own commands
     templates:
-      - scripts-configmap.yaml
+      - statefulset.yaml
     set:
       machines.db:
         source:
@@ -109,10 +129,10 @@ tests:
           mode: privileged
     asserts:
       - notMatchRegex:
-          path: data["seed-lxc.sh"]
+          path: spec.template.spec.initContainers[0].command[0]
           pattern: 'example\.test'
       - notMatchRegex:
-          path: data["lib-lxc.sh"]
+          path: spec.template.spec.containers[0].command[0]
           pattern: 'example\.test'
 
   - it: tells each step which machine and namespace it is acting for

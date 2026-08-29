@@ -8,7 +8,7 @@
 # resolver, and a host name belonging to the image's build machine.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     POD="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"

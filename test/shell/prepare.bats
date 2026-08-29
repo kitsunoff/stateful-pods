@@ -9,7 +9,7 @@
 # silently sharing an identity.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"
     export SP_NAMESPACE=homelab

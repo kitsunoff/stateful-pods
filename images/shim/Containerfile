@@ -1,9 +1,14 @@
 # The image every container the chart runs starts from.
 #
-# It is a toolbox, not an application: it carries a shell and the archivers needed
-# to fill a machine's root filesystem, and nothing project-specific. The scripts
-# live in the chart and arrive as a mounted ConfigMap, so fixing one is a
-# `helm upgrade` rather than an image release.
+# It carries both the chart's logic and the tools that logic calls. A script and
+# the archiver it invokes are one artifact: delivering them separately - the
+# scripts used to arrive as a mounted ConfigMap - means a running machine can
+# have two different versions of itself, and it means every container in the pod
+# carries a copy of the chart's logic mounted into it.
+#
+# So this image is the unit that is released, and a `shim.image` override
+# supplies the behaviour rather than merely the userland it runs in. Fixing a
+# script is an image release plus the digest bump in values.yaml.
 #
 # busybox provides the shell and the mount work. The packages on top of it are
 # not optional, and each one is here for a verified reason:
@@ -37,6 +42,12 @@ RUN apk add --no-cache \
       libcap \
       crane \
  && rm -rf /var/cache/apk/*
+
+# The chart's logic, at the path its containers are told to run. Nothing here
+# reads a value: a script learns what machine it is acting for from the
+# environment, so nothing a user writes in values.yaml is ever parsed as shell.
+COPY scripts/ /usr/local/lib/stateful-pods/
+RUN chmod 0755 /usr/local/lib/stateful-pods/*.sh
 
 LABEL org.opencontainers.image.title="stateful-pods-shim" \
       org.opencontainers.image.description="Toolbox image for the stateful-pods chart: seeds and prepares a machine's root filesystem" \

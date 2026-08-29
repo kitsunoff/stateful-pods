@@ -6,7 +6,7 @@
 # nothing in the logs to explain it. Failing loudly is the whole point.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     STUB_DIR="$(mktemp -d)"
     ROOTFS="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"
