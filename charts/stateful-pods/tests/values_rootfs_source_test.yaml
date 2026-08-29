@@ -1,0 +1,133 @@
+suite: values validation - the rootfs source
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects a machine with no rootfs source
+    set:
+      machines.web:
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source: not declared.*oci.*lxc'
+
+  - it: rejects an unknown source kind, naming the offending value
+    set:
+      machines.web:
+        source:
+          kind: docker
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.kind: "docker" is not a supported source kind.*oci, lxc'
+
+  - it: rejects an unset source kind
+    set:
+      machines.web:
+        source:
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.kind: not set.*oci, lxc'
+
+  - it: rejects an oci source with no reference
+    set:
+      machines.web:
+        source:
+          kind: oci
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.reference: not set'
+
+  - it: rejects an lxc source with no url
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.url: not set'
+
+  - it: rejects an lxc source with no checksum and says verification cannot be skipped
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.sha256: not set.*no way to skip verification'
+
+  - it: rejects an lxc field on an oci source, naming the field and the kind it belongs to
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+          url: https://example.invalid/debian.tar.zst
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.url: does not belong to source kind "oci".*belongs to kind "lxc"'
+
+  - it: rejects an oci field on an lxc source, naming the field and the kind it belongs to
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.reference: does not belong to source kind "lxc".*belongs to kind "oci"'
+
+  - it: accepts a complete lxc source
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 1

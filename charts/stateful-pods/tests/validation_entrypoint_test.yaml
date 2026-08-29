@@ -1,0 +1,29 @@
+suite: values validation - a single entry point for every template
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: reports every violation in one message rather than aborting on the first
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian.tar.zst
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.mode: not set'
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.sha256: not set'
+
+  - it: emits no manifest at all when any input is rejected
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+    asserts:
+      - failedTemplate: {}

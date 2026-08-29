@@ -1,0 +1,95 @@
+suite: rendering - the posture depends on the named mode alone
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+tests:
+  - it: renders the userns posture identically on Kubernetes 1.33
+    capabilities:
+      majorVersion: 1
+      minorVersion: 33
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.hostUsers
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            capabilities:
+              add:
+                - SYS_ADMIN
+
+  - it: renders the userns posture identically on Kubernetes 1.99
+    capabilities:
+      majorVersion: 1
+      minorVersion: 99
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.hostUsers
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            capabilities:
+              add:
+                - SYS_ADMIN
+
+  - it: renders the privileged posture identically on Kubernetes 1.27
+    capabilities:
+      majorVersion: 1
+      minorVersion: 27
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.hostUsers
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            privileged: true
+
+  - it: renders the privileged posture identically on Kubernetes 1.99
+    capabilities:
+      majorVersion: 1
+      minorVersion: 99
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.hostUsers
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            privileged: true

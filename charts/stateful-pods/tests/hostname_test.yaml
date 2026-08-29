@@ -1,0 +1,38 @@
+suite: rendering - the machine's hostname
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: sets no explicit hostname when the machine declares none
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.hostname
+
+  - it: sets the declared hostname on the pod
+    set:
+      machines.web:
+        hostname: mail.example.com
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.hostname
+          value: mail.example.com

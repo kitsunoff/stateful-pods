@@ -1,0 +1,95 @@
+{{- include "stateful-pods.validate" . -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- $objectName := include "stateful-pods.machine.name" $ctx }}
+{{- $rootfs := $machine.rootfs | default dict }}
+{{- $mode := $machine.security.mode }}
+{{- $snapshot := dig "dataSource" "volumeSnapshotName" "" $rootfs | default "" }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $objectName }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+spec:
+  # A machine is one instance. At one replica the StatefulSet controller
+  # terminates the pod fully before creating its replacement, so an update never
+  # runs two instances mounting the same root filesystem.
+  replicas: 1
+  serviceName: {{ $objectName }}
+  selector:
+    matchLabels:
+      {{- include "stateful-pods.machine.selectorLabels" $ctx | nindent 6 }}
+  # Retain is already the default. It is stated here anyway, because the rootfs is
+  # everything that makes this machine a pet and its survival should not depend on
+  # a default staying a default.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: {{ $objectName }}
+        labels:
+          {{- include "stateful-pods.machine.labels" $ctx | nindent 10 }}
+      spec:
+        # A root filesystem can only be mounted by one instance at a time.
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ $rootfs.size | default "8Gi" | quote }}
+        {{- if not (kindIs "invalid" (index $rootfs "storageClassName")) }}
+        # An explicit "" means "no class" and disables dynamic provisioning, which
+        # is not the same as omitting the field; the difference is preserved.
+        storageClassName: {{ index $rootfs "storageClassName" | quote }}
+        {{- end }}
+        {{- if $snapshot }}
+        dataSource:
+          apiGroup: snapshot.storage.k8s.io
+          kind: VolumeSnapshot
+          name: {{ $snapshot }}
+        {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "stateful-pods.machine.labels" $ctx | nindent 8 }}
+    spec:
+      {{- if eq $mode "userns" }}
+      # The pod runs in its own user namespace, so the capability added below is
+      # void on the host.
+      hostUsers: false
+      {{- end }}
+      {{- with $machine.hostname }}
+      hostname: {{ . }}
+      {{- end }}
+      containers:
+        - name: guest
+          # The shim, not the machine's operating system: that lives in the volume
+          # mounted below, seeded from the machine's source.
+          image: {{ $root.Values.shim.image | quote }}
+          # PLACEHOLDER. The shim does not exist yet, so nothing boots. The change
+          # that implements it has to replace this deliberately.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "PLACEHOLDER: this version of the stateful-pods chart does not boot a machine."
+              echo "PLACEHOLDER: the rootfs volume is mounted at /mnt/rootfs and is empty."
+              exec sleep infinity
+          securityContext:
+            {{- if eq $mode "privileged" }}
+            privileged: true
+            {{- else }}
+            # SYS_ADMIN is what the shim needs for mount(2) and pivot_root(2).
+            # allowPrivilegeEscalation is deliberately left unset: setting it to
+            # false is incompatible with an added SYS_ADMIN.
+            capabilities:
+              add:
+                - SYS_ADMIN
+            {{- end }}
+          volumeMounts:
+            - name: {{ $objectName }}
+              mountPath: /mnt/rootfs
+{{- end }}

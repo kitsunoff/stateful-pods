@@ -1,0 +1,76 @@
+suite: values validation - the machines map
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects an absent machines map, stating that exactly one machine is required
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines: no machines declared.*[Ee]xactly one machine'
+
+  - it: shows the expected shape when no machine is declared
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines: no machines declared.*machines:.*source:.*security:'
+
+  - it: rejects an empty machines map
+    set:
+      machines: {}
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines: no machines declared.*[Ee]xactly one machine'
+
+  - it: accepts exactly one machine
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: rejects two machines as not implemented yet
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+      machines.db:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines: 2 machines declared.*not implemented yet.*own[^\n]*release'
+
+  - it: rejects a machines map that is not a map
+    set:
+      machines:
+        - web
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines: must be a map keyed by machine name'
+
+  - it: rejects a machine entry that is not a map
+    set:
+      machines.web: debian
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web: must be a map'

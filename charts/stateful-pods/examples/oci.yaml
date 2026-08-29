@@ -1,0 +1,12 @@
+# A machine seeded from an OCI image, running in its own user namespace.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/oci.yaml
+machines:
+  web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    security:
+      mode: userns
+    rootfs:
+      size: 8Gi

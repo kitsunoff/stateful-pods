@@ -1,0 +1,35 @@
+suite: rendering - NOTES.txt
+templates:
+  - NOTES.txt
+release:
+  name: lab
+  namespace: homelab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: names the machine and its object name
+    asserts:
+      - matchRegexRaw:
+          pattern: 'lab-web'
+      - matchRegexRaw:
+          pattern: 'web'
+
+  - it: gives the machine's in-cluster DNS name
+    asserts:
+      - matchRegexRaw:
+          pattern: 'lab-web-0\.lab-web\.homelab\.svc\.cluster\.local'
+
+  - it: says unambiguously that the machine does not boot yet
+    asserts:
+      - matchRegexRaw:
+          pattern: 'does not boot'

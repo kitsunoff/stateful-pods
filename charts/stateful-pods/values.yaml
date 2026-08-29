@@ -1,0 +1,112 @@
+# Image of the shim: the small program that mounts a machine's root filesystem and
+# hands control to the guest's init.
+#
+# This is NOT the machine's operating system. The operating system lives in the
+# machine's PersistentVolume, seeded once from `machines.<name>.source`, so the two
+# are never the same reference.
+shim:
+  # Shim image reference. This version of the chart does not boot a machine, so the
+  # default is a deliberate placeholder and the guest container runs a placeholder
+  # command. Override it only if you are building your own shim.
+  image: ghcr.io/kitsunoff/stateful-pods-shim:placeholder
+
+# Machines to run, keyed by machine name.
+#
+# Empty by default: there is no reasonable default machine, so installing the chart
+# with no values fails rather than quietly creating one.
+#
+# Exactly one machine per release is accepted for now. The map form is already in
+# place so that lifting that restriction renames nothing that already exists.
+#
+# Every object rendered for a machine is named `<release>-<machine>`, and that name
+# is permanent: the root filesystem lives in a PersistentVolumeClaim derived from
+# it, so renaming orphans the volume and recreates the machine empty.
+#
+# A complete machine looks like this:
+#
+#   web:
+#     # Where the root filesystem is seeded from, once, when the volume is first
+#     # created. Mandatory: there is no sensible default operating system for
+#     # someone else's machine, and a wrong guess would be written to a persistent
+#     # volume and then never revisited.
+#     #
+#     # The kind is always named explicitly rather than inferred from which fields
+#     # are present, so that a mistyped field name produces a message about the
+#     # missing field instead of silently switching the machine to the other kind.
+#     source:
+#       # Source kind: oci | lxc. Mandatory.
+#       kind: oci
+#
+#       # kind: oci - an image reference. Its integrity is established by the
+#       # container runtime, which is why no checksum input exists for this kind.
+#       reference: docker.io/library/debian:13
+#
+#       # kind: lxc - a conventional LXC template tarball, as distributed by
+#       # Proxmox's `pveam` and by linuxcontainers.org.
+#       # url: https://download.proxmox.com/images/system/debian-13-standard_13.0-1_amd64.tar.zst
+#
+#       # SHA-256 of that tarball. Mandatory for `lxc` and impossible to opt out
+#       # of: the tarball is fetched over the network and unpacked into what
+#       # becomes a privileged machine's root filesystem, and nothing about the
+#       # transport establishes that the bytes are the intended ones.
+#       # sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+#
+#     # The guest's hostname. Unset means the machine keeps the pod's own hostname,
+#     # which the kubelet already writes to /etc/hostname. Set it to override.
+#     hostname: null
+#
+#     security:
+#       # Privilege level of this machine: userns | privileged. Mandatory, per
+#       # machine, with no default and no autodetection - the chart will not weaken
+#       # a machine's isolation on your behalf.
+#       #
+#       #   userns     - the pod runs in its own user namespace (hostUsers: false)
+#       #                and the guest container is granted CAP_SYS_ADMIN, which is
+#       #                void on the host because it is scoped to that namespace.
+#       #                Requires Kubernetes >= 1.33 with user namespaces enabled,
+#       #                containerd >= 2.0 or CRI-O, Linux >= 6.3, and idmap-capable
+#       #                storage (not NFS).
+#       #   privileged - the guest container runs privileged. Works on any cluster
+#       #                and gives up almost all isolation from the node.
+#       mode: userns
+#
+#     rootfs:
+#       # Size of the root filesystem volume. Defaults to 8Gi when unset.
+#       size: 8Gi
+#
+#       # Optional: create the root filesystem from an existing VolumeSnapshot
+#       # instead of seeding it from `source`. Restoring into the same release keeps
+#       # the machine's identity; restoring into a new one regenerates it.
+#       dataSource:
+#         # Name of a VolumeSnapshot in the release's namespace. Unset provisions an
+#         # empty volume.
+#         volumeSnapshotName: null
+#
+#       # StorageClass for the root filesystem. Unset (null) omits the field
+#       # entirely, so the cluster's default StorageClass applies. An explicit ""
+#       # means "no class" and disables dynamic provisioning - these are different
+#       # things and the chart preserves the difference.
+#       storageClassName: null
+machines: {}
+
+# Deliberately not chart inputs
+# ----------------------------
+#
+# Users arriving from Proxmox look for these. They are absent on purpose, and the
+# chart rejects them rather than ignoring them silently:
+#
+#   * Per-guest network configuration - the Proxmox `ipconfig0`, bridge and VLAN
+#     options have no equivalent. A pod's addressing belongs to the cluster's CNI,
+#     not to the workload: the machine gets the pod's address and reaches the
+#     network through it, and it is addressable by other workloads through its
+#     headless Service rather than by a fixed address.
+#
+#   * Per-guest DNS - the Proxmox `nameserver` and `searchdomain` options have no
+#     equivalent, for the same reason. Resolver configuration is the cluster's DNS
+#     policy, applied to the pod by the kubelet.
+#
+#   * `replicas` at any level - a machine is a single instance by definition,
+#     because a second copy would mount the same root filesystem.
+#
+#   * An init-system selector - the shim runs /sbin/init and detects the guest's
+#     init system at boot, so there is nothing to choose.

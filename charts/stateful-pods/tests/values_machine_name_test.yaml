@@ -1,0 +1,65 @@
+suite: values validation - machine names
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects a machine name that is not a DNS-1123 label
+    set:
+      machines.WEB:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.WEB: "WEB" is not a valid machine name.*DNS-1123 label'
+
+  - it: rejects a machine name that starts with a hyphen
+    set:
+      machines:
+        "-web":
+          source:
+            kind: oci
+            reference: docker.io/library/debian:13
+          rootfs:
+            size: 8Gi
+          security:
+            mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'is not a valid machine name'
+
+  - it: rejects a combined name one character over the limit
+    set:
+      machines.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)lab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" is 62 characters, 1 over the 61-character limit'
+
+  - it: accepts a combined name exactly at the limit
+    set:
+      machines.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 1

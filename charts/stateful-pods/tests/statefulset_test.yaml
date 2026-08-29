@@ -1,0 +1,75 @@
+suite: rendering - the StatefulSet
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: is a StatefulSet with exactly one replica
+    asserts:
+      - isKind:
+          of: StatefulSet
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: selects its pod on the machine's identity labels
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: stateful-pods
+            app.kubernetes.io/instance: lab
+            stateful-pods.io/machine: web
+
+  - it: carries the object labels on its own metadata
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+      - equal:
+          path: metadata.labels["helm.sh/chart"]
+          value: stateful-pods-0.1.0
+      - equal:
+          path: metadata.labels["app.kubernetes.io/version"]
+          value: "0.1.0"
+
+  - it: runs the configured shim image on the guest container
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: guest
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+
+  - it: never runs two instances of a machine at once
+    asserts:
+      # A StatefulSet at one replica terminates the pod fully before creating its
+      # replacement. A Deployment-style rollout, which can overlap the two, would
+      # let both mount the same root filesystem.
+      - isKind:
+          of: StatefulSet
+      - equal:
+          path: spec.replicas
+          value: 1
+      - notExists:
+          path: spec.strategy
+      - notExists:
+          path: spec.podManagementPolicy

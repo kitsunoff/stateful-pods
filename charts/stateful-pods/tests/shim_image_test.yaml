@@ -1,0 +1,78 @@
+suite: rendering - no container image comes from the rootfs source
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: runs the shim, not the oci source, as the guest container's image
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: 'debian'
+      - notExists:
+          path: spec.template.spec.initContainers
+
+  - it: renders a complete pod for an lxc source with no image derived from the template url
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: 'example\.invalid|tar\.zst'
+      - notExists:
+          path: spec.template.spec.initContainers
+
+  - it: defaults the shim image to an obvious placeholder and runs a placeholder command
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: 'placeholder'
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'PLACEHOLDER'
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'does not boot'

@@ -1,0 +1,86 @@
+suite: values validation - per-machine security mode
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects an unset security mode, naming the machine
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.mode: not set'
+
+  - it: lists both accepted modes when the mode is unset
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.mode: not set.*userns.*privileged'
+
+  - it: summarises what each mode requires of the cluster when the mode is unset
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)userns.*Kubernetes >= 1\.33.*privileged.*any cluster'
+
+  - it: rejects an unknown security mode, naming the offending value
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: sysbox
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.mode: "sysbox" is not a supported mode.*userns, privileged'
+
+  - it: accepts the userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: accepts the privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - hasDocuments:
+          count: 1

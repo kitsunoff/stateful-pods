@@ -1,0 +1,22 @@
+apiVersion: v2
+name: stateful-pods
+description: Run a machine as a pet in a Kubernetes pod, with its root filesystem on a PersistentVolume
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+# 1.27 is the floor for persistentVolumeClaimRetentionPolicy being honoured.
+# The higher requirement of the `userns` security mode is enforced per machine
+# at render time, so a `privileged` machine still installs on an older cluster.
+kubeVersion: ">= 1.27.0-0"
+keywords:
+  - lxc
+  - proxmox
+  - statefulset
+  - vm
+home: https://github.com/kitsunoff/stateful-pods
+sources:
+  - https://github.com/kitsunoff/stateful-pods
+maintainers:
+  - name: Maxim Belyy
+    email: maximbel2003@gmail.com
+    url: https://github.com/kitsunoff

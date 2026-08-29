@@ -1,0 +1,58 @@
+suite: rendering - restoring the rootfs from a snapshot
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: provisions an empty volume when no snapshot is named
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.volumeClaimTemplates[0].spec.dataSource
+
+  - it: provisions an empty volume when the snapshot name is explicitly null
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+          dataSource:
+            volumeSnapshotName: null
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.volumeClaimTemplates[0].spec.dataSource
+
+  - it: references the named VolumeSnapshot when one is given
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+          dataSource:
+            volumeSnapshotName: web-nightly-2026-08-29
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.dataSource
+          value:
+            apiGroup: snapshot.storage.k8s.io
+            kind: VolumeSnapshot
+            name: web-nightly-2026-08-29

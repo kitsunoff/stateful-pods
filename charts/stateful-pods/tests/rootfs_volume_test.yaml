@@ -1,0 +1,84 @@
+suite: rendering - the rootfs volume claim template
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: requests a single-writer volume of the configured size, mounted at /mnt/rootfs
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 32Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.accessModes
+          value:
+            - ReadWriteOnce
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 32Gi
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].name
+          value: lab-web
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /mnt/rootfs
+
+  - it: omits storageClassName entirely when it is unset
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+
+  - it: renders an explicit storage class
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+          storageClassName: fast-ssd
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: fast-ssd
+
+  - it: preserves an explicit empty storage class as empty
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+          storageClassName: ""
+        security:
+          mode: userns
+    asserts:
+      - exists:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: ""

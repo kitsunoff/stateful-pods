@@ -1,0 +1,47 @@
+suite: rendering - the pod security posture
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders exactly the userns posture
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.hostUsers
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            capabilities:
+              add:
+                - SYS_ADMIN
+
+  - it: renders exactly the privileged posture
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.hostUsers
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            privileged: true

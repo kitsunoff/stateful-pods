@@ -1,0 +1,29 @@
+suite: rendering - the rootfs volume survives release deletion
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: retains the claim when the StatefulSet is deleted
+    asserts:
+      - equal:
+          path: spec.persistentVolumeClaimRetentionPolicy.whenDeleted
+          value: Retain
+
+  - it: retains the claim when the StatefulSet is scaled
+    asserts:
+      - equal:
+          path: spec.persistentVolumeClaimRetentionPolicy.whenScaled
+          value: Retain

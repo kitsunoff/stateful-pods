@@ -1,0 +1,49 @@
+suite: values validation - structural failures short-circuit the semantic ones
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: reports only the structural error for a machines map that is not a map
+    set:
+      machines:
+        - web
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines: must be a map keyed by machine name'
+      - not: true
+        failedTemplate:
+          errorPattern: 'security\.mode'
+      - not: true
+        failedTemplate:
+          errorPattern: 'source'
+
+  - it: reports only the count guard for two machines, not their individual problems
+    set:
+      machines.web: {}
+      machines.db: {}
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines: 2 machines declared'
+      - not: true
+        failedTemplate:
+          errorPattern: 'security\.mode'
+      - not: true
+        failedTemplate:
+          errorPattern: 'source: not declared'
+
+  - it: reports only the structural error for a machine entry that is not a map
+    set:
+      machines.web: debian
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web: must be a map'
+      - not: true
+        failedTemplate:
+          errorPattern: 'security\.mode'
+      - not: true
+        failedTemplate:
+          errorPattern: 'source: not declared'

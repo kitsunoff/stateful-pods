@@ -1,0 +1,54 @@
+suite: naming - the templates iterate the machines map
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: fails two valid machines on the count guard, not on a naming collision
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+      machines.db:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines: 2 machines declared'
+      - not: true
+        failedTemplate:
+          errorPattern: 'not a valid machine name'
+      - not: true
+        failedTemplate:
+          errorPattern: 'already defined|duplicate|collision'
+
+  - it: renders a machine whose name is not the first key alphabetically
+    set:
+      machines.zulu:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lab-zulu
+      - equal:
+          path: spec.selector.matchLabels["stateful-pods.io/machine"]
+          value: zulu

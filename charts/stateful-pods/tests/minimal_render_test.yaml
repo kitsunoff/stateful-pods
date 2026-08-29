@@ -1,0 +1,46 @@
+suite: rendering - a complete minimal release
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    security:
+      mode: userns
+tests:
+  - it: emits exactly one StatefulSet carrying exactly one volume claim template
+    templates:
+      - statefulset.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: StatefulSet
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 8Gi
+
+  - it: emits exactly one Service
+    templates:
+      - service.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Service
+
+  - it: emits no other manifest template
+    templates:
+      - statefulset.yaml
+      - service.yaml
+      - NOTES.txt
+    asserts:
+      - hasDocuments:
+          count: 1

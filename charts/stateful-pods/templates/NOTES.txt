@@ -1,0 +1,22 @@
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- $objectName := include "stateful-pods.machine.name" $ctx }}
+{{- $rootfs := $machine.rootfs | default dict }}
+Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root.Release.Namespace }}.
+
+  Object name:  {{ $objectName }}
+  DNS name:     {{ $objectName }}-0.{{ $objectName }}.{{ $root.Release.Namespace }}.svc.cluster.local
+  Root volume:  {{ $objectName }}-{{ $objectName }}-0 ({{ $rootfs.size | default "8Gi" }}, retained on uninstall)
+  Mode:         {{ $machine.security.mode }}
+
+WARNING: this machine does not boot. This version of the chart renders the objects a
+machine is made of and nothing else: the shim does not exist yet, the root filesystem is
+never seeded from {{ $machine.source.kind }}, and the guest container runs a placeholder
+command that sleeps. Do not expect a running operating system.
+
+The root volume is retained when the release is uninstalled. Deleting a machine's state is
+a separate, deliberate action:
+
+  kubectl --namespace {{ $root.Release.Namespace }} delete pvc {{ $objectName }}-{{ $objectName }}-0
+{{- end }}

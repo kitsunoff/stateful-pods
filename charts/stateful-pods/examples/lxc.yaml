@@ -1,0 +1,17 @@
+# A machine seeded from a conventional LXC template tarball, running privileged.
+#
+# The checksum is mandatory and cannot be skipped: the tarball is fetched over the
+# network and unpacked into what becomes this machine's root filesystem.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/lxc.yaml
+machines:
+  db:
+    source:
+      kind: lxc
+      url: https://download.proxmox.com/images/system/debian-13-standard_13.0-1_amd64.tar.zst
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    security:
+      mode: privileged
+    rootfs:
+      size: 16Gi
+      storageClassName: ""

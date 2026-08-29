@@ -1,0 +1,34 @@
+suite: rendering - the headless Service
+templates:
+  - service.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: is headless
+    asserts:
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.clusterIP
+          value: None
+
+  - it: selects the machine's pod on the same labels the StatefulSet does
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: stateful-pods
+            app.kubernetes.io/instance: lab
+            stateful-pods.io/machine: web

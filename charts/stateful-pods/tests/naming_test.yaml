@@ -1,0 +1,47 @@
+suite: naming - every object for a machine is named <release>-<machine>
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: names the StatefulSet lab-web
+    templates:
+      - statefulset.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lab-web
+
+  - it: names the volume claim template lab-web
+    templates:
+      - statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].metadata.name
+          value: lab-web
+
+  - it: names the Service lab-web
+    templates:
+      - service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lab-web
+
+  - it: points the StatefulSet at its own headless Service
+    templates:
+      - statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.serviceName
+          value: lab-web

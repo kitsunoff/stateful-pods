@@ -1,0 +1,16 @@
+{{- include "stateful-pods.validate" . -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stateful-pods.machine.name" $ctx }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "stateful-pods.machine.selectorLabels" $ctx | nindent 4 }}
+{{- end }}

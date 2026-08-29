@@ -1,0 +1,56 @@
+suite: values validation - per-mode cluster version check
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+tests:
+  - it: rejects userns on a cluster below the required version, naming version and alternative
+    capabilities:
+      majorVersion: 1
+      minorVersion: 29
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.security\.mode: "userns" requires Kubernetes >= 1\.33, but the target cluster reports v1\.29\.0.*set machines\.web\.security\.mode to "privileged"'
+
+  - it: renders privileged on that same cluster
+    capabilities:
+      majorVersion: 1
+      minorVersion: 29
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: accepts userns on a cluster at the required version
+    capabilities:
+      majorVersion: 1
+      minorVersion: 33
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 1

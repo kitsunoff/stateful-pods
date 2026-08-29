@@ -1,0 +1,116 @@
+suite: rendering - a mode grants nothing beyond what it names
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: marks no container privileged in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.privileged
+
+  - it: allows no privilege escalation in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+
+  - it: adds no capability beyond SYS_ADMIN in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          value:
+            - SYS_ADMIN
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+
+  - it: shares no host namespace in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.hostNetwork
+      - notExists:
+          path: spec.template.spec.hostPID
+      - notExists:
+          path: spec.template.spec.hostIPC
+
+  - it: sets no runtimeClassName in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+
+  - it: sets no runtimeClassName in privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+
+  - it: adds no capability and opts out of no user namespace in privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.hostUsers
