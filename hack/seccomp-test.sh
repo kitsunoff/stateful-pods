@@ -71,6 +71,19 @@ check() {
 
 kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 
+# wait_ready <pod>
+# A StatefulSet recreates a pod that was deleted, but not in the same instant.
+# `kubectl wait` landing in that gap fails with NotFound rather than waiting, so
+# the pod is waited into existence first and only then waited on.
+wait_ready() {
+  local pod="$1"
+  for _ in $(seq 1 60); do
+    kc get "pod/$pod" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  kc wait --for=condition=Ready "pod/$pod" --timeout=300s >/dev/null
+}
+
 on_exit() {
   local code=$?
   if [[ "$code" -ne 0 ]]; then
@@ -292,7 +305,7 @@ fi
 step "declaring the filter on the same machine, on the same volume"
 kc apply --filename "$MACHINE_MANIFEST" >/dev/null
 kc delete pod defect-web-0 --wait >/dev/null 2>&1 || true
-kc wait --for=condition=Ready pod/defect-web-0 --timeout=300s >/dev/null \
+wait_ready defect-web-0 \
   || fail "the machine did not start once its filter was declared"
 pass "the same machine, on the volume it had already seeded, started once it declared its filter"
 check "its own init is process 1" \
@@ -310,7 +323,7 @@ helm --kube-context "$CONTEXT" upgrade --install oci "$CHART" \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.web.source.reference=$SOURCE_REFERENCE" \
   --wait --timeout 5m >/dev/null
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 pass "the machine started on a cluster whose kubelet filters by default"
 
 guest() { kc exec oci-web-0 --container guest -- "$@"; }
@@ -371,7 +384,7 @@ helm --kube-context "$CONTEXT" upgrade oci "$CHART" \
   --set "machines.web.security.seccompProfile.type=Localhost" \
   --set "machines.web.security.seccompProfile.localhostProfile=$PROFILE_PATH" \
   --wait --timeout 5m >/dev/null
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 pass "the machine came back up naming the profile"
 named_filter="$(kc get pod oci-web-0 --output \
   "jsonpath={.spec.containers[?(@.name=='guest')].securityContext.seccompProfile.localhostProfile}")"
@@ -403,7 +416,7 @@ if [[ "$elapsed" -lt 100 ]]; then
 else
   fail "the machine took ${elapsed}s to stop, which means it was killed rather than asked"
 fi
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 pass "the machine booted again under the same values"
 
 echo
