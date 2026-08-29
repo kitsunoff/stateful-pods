@@ -121,20 +121,65 @@ spec:
             - name: scripts
               mountPath: /scripts
               readOnly: true
+        # Writes the files the chart maintains inside the machine. It runs here,
+        # before the root change, because this is where the pod's own copies of
+        # them are still reachable - after the change they are on the other side
+        # of it, which is the whole reason the machine needs its own.
+        - name: customize
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /bin/bash
+            - /scripts/customize.sh
+          env:
+            {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
+          securityContext:
+            {{- include "stateful-pods.machine.initSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: {{ $objectName }}
+              mountPath: /mnt/rootfs
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      # Proxmox's own TimeoutStopSec. An operating system needs longer to stop
+      # than an application does, and being killed at the end of it is an unclean
+      # shutdown of a pet on every ordinary delete.
+      terminationGracePeriodSeconds: 120
       containers:
         - name: guest
           # The shim, not the machine's operating system: that lives in the volume
-          # mounted below, seeded from the machine's source.
+          # mounted below, seeded from the machine's source. This container's
+          # process mounts what the machine's init expects, changes the root to
+          # the volume, and then *becomes* the machine.
           image: {{ $root.Values.shim.image | quote }}
-          # PLACEHOLDER. The shim does not exist yet, so nothing boots. The change
-          # that implements it has to replace this deliberately.
           command:
-            - /bin/sh
-            - -c
-            - |
-              echo "PLACEHOLDER: this version of the stateful-pods chart does not boot a machine."
-              echo "PLACEHOLDER: the rootfs volume is mounted at /mnt/rootfs and is empty."
-              exec sleep infinity
+            - /bin/bash
+            - /scripts/boot.sh
+          env:
+            {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
+          # A terminal is what gives the machine a /dev/console to bind, which is
+          # where an init system writes its boot sequence. Without it `kubectl
+          # logs` is empty, and empty logs are the first thing anyone checks when
+          # a machine does not come up.
+          tty: true
+          # Readiness only: it gates the Service endpoint without touching the
+          # machine. A liveness probe would reboot a pet because something inside
+          # it was briefly unresponsive, destroying the state that would have
+          # explained why.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - /.stateful-pods/bin/ready.sh
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - /.stateful-pods/bin/stop.sh
           securityContext:
             {{- if eq $mode "privileged" }}
             privileged: true
@@ -149,4 +194,7 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
 {{- end }}

@@ -7,7 +7,7 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: renders exactly two init containers, in the order they must run
+  - it: renders exactly three preparation steps, in the order they must run
     set:
       machines.web:
         source:
@@ -20,13 +20,16 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.template.spec.initContainers
-          count: 2
+          count: 3
       - equal:
           path: spec.template.spec.initContainers[0].name
           value: seed
       - equal:
           path: spec.template.spec.initContainers[1].name
           value: prepare
+      - equal:
+          path: spec.template.spec.initContainers[2].name
+          value: customize
 
   - it: mounts the machine's rootfs volume into both init containers
     set:

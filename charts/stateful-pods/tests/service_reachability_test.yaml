@@ -1,0 +1,29 @@
+suite: rendering - a machine is reachable while it is booting
+templates:
+  - service.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web:
+    source:
+      kind: oci
+      reference: docker.io/library/debian:13
+    rootfs:
+      size: 8Gi
+    security:
+      mode: userns
+tests:
+  - it: publishes the machine's address before it reports itself ready
+    asserts:
+      # An operating system takes minutes to boot. Without this the machine's
+      # stable name would stop resolving for exactly the period in which someone
+      # is most likely to be looking for it.
+      - equal:
+          path: spec.publishNotReadyAddresses
+          value: true
+      - equal:
+          path: spec.clusterIP
+          value: None
