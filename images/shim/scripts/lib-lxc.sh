@@ -11,9 +11,6 @@
 # The order is the point: verify the bytes are the ones the machine asked for,
 # then check they are a root filesystem, and only then write anything.
 
-# The same archive flags as the OCI path, for the same reasons. See lib-oci.sh.
-SP_TAR_FLAGS="--numeric-owner --acls --xattrs --xattrs-include=user.* --xattrs-include=security.capability --sparse --warning=no-file-ignored --warning=no-xattr-write"
-
 # Proxmox's check_tar_archive(): an archive that is not a root filesystem is
 # rejected before extraction rather than discovered afterwards.
 SP_MIN_ARCHIVE_MEMBERS=10

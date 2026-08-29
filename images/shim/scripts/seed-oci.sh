@@ -1,10 +1,13 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Seeds a machine's root filesystem from an OCI image.
 #
-# Runs inside the machine's own source image. See lib-oci.sh for why, and for
-# what that means about which shell features may be used here.
-set -eu
+# Runs in the chart's own image, which is where the registry client and the
+# archiver live. Nothing from the source image is executed, so the source is free
+# to carry no userland at all.
+set -o errexit
+set -o nounset
+set -o pipefail
 
 SP_SCRIPT_DIR="$(dirname "$0")"
 # shellcheck source=images/shim/scripts/lib-state.sh
