@@ -1,0 +1,109 @@
+suite: rendering - a filter the cluster provides reaches the guest and nothing else
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: applies a named filter to the guest container
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/stateful-pods-machine.json
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Localhost
+            localhostProfile: profiles/stateful-pods-machine.json
+
+  - it: leaves the mode's privilege on the guest untouched by the filter
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/stateful-pods-machine.json
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            seccompProfile:
+              type: Localhost
+              localhostProfile: profiles/stateful-pods-machine.json
+            capabilities:
+              add:
+                - SYS_ADMIN
+
+  - it: applies a named filter to no container other than the guest
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/stateful-pods-machine.json
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[1].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[2].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
+      - notExists:
+          path: spec.template.spec.securityContext
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 3
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+
+  - it: carries a named filter into privileged mode as well, where the runtime drops it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profiles/stateful-pods-machine.json
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            seccompProfile:
+              type: Localhost
+              localhostProfile: profiles/stateful-pods-machine.json
+            privileged: true

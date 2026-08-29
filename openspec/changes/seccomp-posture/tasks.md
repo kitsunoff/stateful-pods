@@ -21,22 +21,22 @@
 
 ## 3. The part an operator can opt into
 
-- [ ] 3.1 Write the validation suite first: an unknown filter form is rejected listing the accepted
+- [x] 3.1 Write the validation suite first: an unknown filter form is rejected listing the accepted
   ones, the form needing a path is rejected without one, a path supplied to a form that takes none
   is rejected, and the runtime default on the guest is rejected naming `pivot_root` and the
   `Localhost` form; verify `make test` fails on the current chart for each case
-- [ ] 3.2 Add `machines.<name>.security.seccompProfile` to the guest container and validate it in
+- [x] 3.2 Add `machines.<name>.security.seccompProfile` to the guest container and validate it in
   `stateful-pods.validate.semantics`; verify `make test` passes the suite from 3.1
-- [ ] 3.3 Assert that a named filter reaches the guest container and no other; verify with a render
+- [x] 3.3 Assert that a named filter reaches the guest container and no other; verify with a render
   test over every container in the pod
-- [ ] 3.4 Add the profile JSON to the repository — `defaultAction: SCMP_ACT_ALLOW` with
+- [x] 3.4 Add the profile JSON to the repository — `defaultAction: SCMP_ACT_ALLOW` with
   `kexec_load`, `open_by_handle_at`, `init_module`, `finit_module` and `delete_module` returning
   `EPERM`, and `umount2` filtered on `MNT_FORCE` — with a comment naming it as LXC's own list and
   why it is a denylist; verify it parses as a valid seccomp profile
 - [ ] 3.5 Document the three ways to place that file on nodes, in preference order, naming the
   DaemonSet form as a privileged workload; verify the documented path works end to end for at least
   one of them
-- [ ] 3.6 Document the new input in `values.yaml` with a comment above every key; verify `make docs`
+- [x] 3.6 Document the new input in `values.yaml` with a comment above every key; verify `make docs`
   passes
 
 ## 4. Prove the original defect is gone

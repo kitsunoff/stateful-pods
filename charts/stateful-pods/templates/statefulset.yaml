@@ -199,8 +199,7 @@ spec:
             # the root change, on some clusters and not others. Naming the filter
             # here is what makes the posture a property of these values rather
             # than of a flag on the node.
-            seccompProfile:
-              type: Unconfined
+            {{- include "stateful-pods.machine.guestSeccompProfile" $ctx | nindent 12 }}
             {{- if eq $mode "privileged" }}
             privileged: true
             {{- else }}

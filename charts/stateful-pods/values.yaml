@@ -152,6 +152,41 @@ shim:
 #       # to boot on them - it fails on a mount, naming the path.
 #       mode: userns
 #
+#       # Optional: the syscall filter the machine itself runs under. Unset means
+#       # Unconfined, which is what the guest container declares either way - the
+#       # chart never leaves the field out, because a kubelet running with
+#       # --seccomp-default=true would otherwise decide this machine's posture.
+#       #
+#       # Only two forms are accepted, and the runtime's own default is refused:
+#       # no default profile permits pivot_root, which is the call the guest
+#       # container makes to become the machine, so a machine that named it would
+#       # seed its volume over several minutes and then die at the root change.
+#       #
+#       # In privileged mode this input has no effect. Containerd drops the
+#       # profile a privileged container names before it builds the container, so
+#       # nothing the chart sets can confine that mode.
+#       seccompProfile:
+#         # Filter form: Unconfined | Localhost. Mandatory when seccompProfile is
+#         # declared at all.
+#         #
+#         #   Unconfined - no syscall filter.
+#         #   Localhost  - the profile at localhostProfile below, which the kubelet
+#         #                resolves under its own seccomp directory.
+#         type: Localhost
+#
+#         # Required by Localhost and rejected for any other form: the path of a
+#         # profile file, relative to the kubelet's seccomp directory
+#         # (/var/lib/kubelet/seccomp unless the kubelet was told otherwise).
+#         #
+#         # The file has to be on every node this machine can be scheduled to, and
+#         # the chart cannot put it there - a chart that wrote into a node's
+#         # kubelet directory would need a privileged DaemonSet, which is a strange
+#         # thing to add in the name of confinement. A profile suitable for a
+#         # machine ships in this chart at
+#         # profiles/stateful-pods-machine.json, and profiles/README.md documents
+#         # the three ways to place it.
+#         localhostProfile: profiles/stateful-pods-machine.json
+#
 #     rootfs:
 #       # Size of the root filesystem volume. Defaults to 8Gi when unset.
 #       #
