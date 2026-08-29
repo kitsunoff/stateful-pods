@@ -51,6 +51,7 @@ forbid() {
 forbid '^[[:space:]]*replicas?[Cc]?o?u?n?t?[[:space:]]*:' 'a replica count'
 forbid '^[[:space:]]*(init)[[:space:]]*:' 'an init-system selector'
 forbid '(skipVerify|insecureSkipVerify|noVerify|skipChecksum|verify[[:space:]]*:)' 'a way to skip checksum verification'
+forbid '^[[:space:]]*(username|password|registryToken|token|auth|dockerconfigjson)[[:space:]]*:' 'a registry credential as a value rather than a Secret reference'
 
 if [[ "$status" -eq 0 ]]; then
   echo "values.yaml documentation checks passed"

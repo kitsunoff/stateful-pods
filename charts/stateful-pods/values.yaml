@@ -78,6 +78,24 @@ shim:
 #       # start may happen long after the values were written.
 #       reference: docker.io/library/debian:13
 #
+#       # kind: oci, optional - the name of a `kubernetes.io/dockerconfigjson`
+#       # Secret in this release's namespace, for a source that needs
+#       # authentication. Only the seeding step is given it; the guest container
+#       # a user execs into never sees it. No username, password or token is a
+#       # chart input: a value is stored in the release, printed by `helm get
+#       # values` and usually committed, and a reference cannot leak what it
+#       # names.
+#       #
+#       # The ServiceAccount's `imagePullSecrets` are NOT consulted for this
+#       # fetch. The chart performs it itself rather than the kubelet, so a
+#       # machine with a private source has to name its Secret here.
+#       #
+#       # The Secret must carry a static `auths` entry. A docker configuration
+#       # that delegates to a credential helper (`credsStore`, `credHelpers`)
+#       # will not work: no helper binary exists in the shim, and adding one
+#       # would mean shipping a cloud provider's SDK.
+#       # pullSecretName: registry-credentials
+#
 #       # kind: lxc - a conventional LXC template tarball, as distributed by
 #       # Proxmox's `pveam` and by linuxcontainers.org.
 #       # url: https://download.proxmox.com/images/system/debian-13-standard_13.0-1_amd64.tar.zst
@@ -168,3 +186,7 @@ machines: {}
 #     from its source means deleting its volume deliberately.
 #
 #   * A way to skip the template checksum - see source.sha256 above.
+#
+#   * A registry username, password, token or docker configuration - a machine
+#     with a private OCI source names a Secret instead, at
+#     `machines.<name>.source.pullSecretName`.
