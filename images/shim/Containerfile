@@ -5,8 +5,8 @@
 # live in the chart and arrive as a mounted ConfigMap, so fixing one is a
 # `helm upgrade` rather than an image release.
 #
-# busybox provides the shell and the mount work. The four packages on top of it
-# are not optional, and each one is here for a verified reason:
+# busybox provides the shell and the mount work. The packages on top of it are
+# not optional, and each one is here for a verified reason:
 #
 #   zstd  - busybox has no zstd support whatsoever, and Proxmox distributes its
 #           templates as .tar.zst. A busybox-only image cannot open the single
@@ -17,6 +17,10 @@
 #   xz    - the format linuxcontainers.org uses.
 #   bash  - the scripts are bash, because a machine that will not boot is
 #           debugged by reading the script that was supposed to boot it.
+#   crane - an oci source is fetched and flattened from here rather than run as a
+#           container, so the image needs a registry client of its own. `crane
+#           export` applies the layers, including their whiteouts, and writes the
+#           result as a tar stream that GNU tar above extracts.
 FROM alpine:3.22
 
 # renovate: datasource=repology
@@ -31,6 +35,7 @@ RUN apk add --no-cache \
       jq \
       coreutils \
       libcap \
+      crane \
  && rm -rf /var/cache/apk/*
 
 LABEL org.opencontainers.image.title="stateful-pods-shim" \
