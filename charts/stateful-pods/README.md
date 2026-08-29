@@ -37,13 +37,14 @@ make docs        # the guarantees values.yaml makes about itself
 make test        # helm unittest
 make shell-test  # bats, inside a Linux container
 make conform     # kubeconform against the Kubernetes API schemas
-make image-test  # the toolbox image's archive guarantees
+make image-test  # the toolbox image's archive and registry guarantees
 make render      # helm template
 ```
 
 `make shell-test` and `make image-test` need a container engine: the scripts manipulate another
 system's root filesystem, and ownership, extended attributes and file capabilities only exist on
-Linux.
+Linux. `make image-test` additionally runs a throwaway registry on a container network of its own,
+because an `oci` source is fetched from a registry rather than run.
 
 `make integration-test` seeds a machine end to end on a throwaway `kind` cluster. It is the only
 test that can tell whether a copy really preserved a file capability, or whether a second start
@@ -84,6 +85,12 @@ machines:
 helm install lab charts/stateful-pods --values my-machine.yaml
 ```
 
+> **Until the next release, name the shim image explicitly.** The default
+> `shim.image` still points at an image published before the chart's scripts
+> moved into it, so a default install renders containers whose command does not
+> exist. Add `--set shim.image=<an image built from images/shim in this
+> repository>` until the release that bumps the default lands.
+
 Every object the release renders for that machine is named `<release>-<machine>` — `lab-web` for
 the example above. **That name is permanent**: the machine's root filesystem lives in a
 PersistentVolumeClaim derived from it, so renaming a machine or a release orphans its rootfs and
@@ -106,21 +113,49 @@ to another node, upgrading the chart.
 
 | | `oci` | `lxc` |
 | --- | --- | --- |
-| Filled by | a step running the source image itself | a step running the chart's own image |
-| The source must provide | a shell and GNU `tar` with extended-attribute support | nothing; it is a tarball |
-| Integrity | the container runtime, via the image's digest | the mandatory `sha256`, checked before anything is unpacked |
+| Filled by | a step running the chart's own image | a step running the chart's own image |
+| Obtained with | `crane`, which flattens the image's layers into a tar stream | `curl`, over HTTPS |
+| The source must provide | nothing; it is never executed | nothing; it is a tarball |
+| Integrity | the registry, via the image's digest | the mandatory `sha256`, checked before anything is unpacked |
 | Formats | any image | `.tar.zst`, `.tar.xz`, `.tar.gz` |
 
-**An Alpine or other busybox-based image cannot be an `oci` source.** Its `tar` has no
-extended-attribute support, so the copy would silently drop `security.capability` and an
-unprivileged `ping` inside the machine would fail forever after with nothing in the logs to explain
-it. The chart probes for this and refuses to seed rather than seeding badly; use a `lxc` source for
-those distributions. An image with no shell at all — distroless, scratch — cannot be a source
-either, and has no init system to be a machine with.
+**Any OCI image can be a source.** Nothing from it is executed, so an Alpine-, busybox- or
+distroless-based image is an ordinary source — it needs no shell and no archiver of its own. What it
+does need, to be a *machine*, is an init system for the boot to hand over to; an image with none is
+refused at boot, naming that.
 
-**An `oci` source must stay pullable for the life of the machine.** The seeding step runs on every
-pod start, even once it has nothing left to do, so a machine whose upstream tag was deleted will not
-start on a node that has not cached the image. Pin the source by digest.
+**An `oci` source only has to resolve once.** The volume's state is read before anything touches the
+network, so a machine that has been seeded makes no registry request on any later start, and a
+reference that stops resolving afterwards does not stop the machine. Pinning by digest is still the
+safe form, because a machine's first start may happen long after its values were written.
+
+**The seeded filesystem matches the node's architecture.** The chart resolves a multi-architecture
+reference to the architecture of the node the machine runs on, rather than to a fixed default. A
+source that offers no build for it fails at seeding, naming the architecture, instead of filling the
+volume with an operating system that cannot execute its own init.
+
+### A private source
+
+A machine whose source needs authentication names a `kubernetes.io/dockerconfigjson` Secret in the
+release's namespace:
+
+```yaml
+machines:
+  web:
+    source:
+      kind: oci
+      reference: registry.example.com/private/debian:13
+      pullSecretName: registry-credentials
+```
+
+The Secret is mounted into the seeding step alone — the guest container a user execs into never sees
+it — and no username, password or token is a chart input, because a value is stored in the release,
+printed by `helm get values` and usually committed.
+
+The ServiceAccount's `imagePullSecrets` are **not** consulted: the chart performs this fetch itself
+rather than the kubelet, so the credentials the cluster would have supplied for an image it pulls are
+not available to it. A docker configuration that delegates to a credential helper (`credsStore`,
+`credHelpers`) is not supported; the Secret has to carry a static `auths` entry.
 
 ### Sizing the volume
 
@@ -304,6 +339,9 @@ below are files under `tests/`.
 | LXC source without a URL is rejected | `values_rootfs_source_test.yaml` |
 | Missing checksum is rejected | `values_rootfs_source_test.yaml` |
 | There is no way to disable verification | `hack/check-values-docs.sh` |
+| A credential value is not accepted | `hack/check-values-docs.sh` |
+| A pull secret on a source kind that does not fetch an image is rejected | `values_rootfs_source_test.yaml` |
+| An empty pull secret reference is rejected | `values_rootfs_source_test.yaml` |
 | An input that was designed away is rejected | `values_rejected_inputs_test.yaml` |
 | An omitted Proxmox-equivalent option is explained | `hack/check-values-docs.sh` |
 
@@ -325,14 +363,24 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The record identifies the source | `prepare.bats` |
 | The record is readable by a later version | `prepare.bats` |
 | An OCI-sourced volume is filled | `seed-oci-copy.bats`, `hack/integration-test.sh` |
-| File capabilities survive the copy | `seed-oci-copy.bats`, `hack/integration-test.sh` |
-| The image cannot copy itself faithfully | `seed-oci-probe.bats` |
+| File capabilities survive the copy | `seed-oci-copy.bats`, `hack/image-test.sh`, `hack/integration-test.sh` |
+| A source that carries no userland is still usable | `seed-oci-copy.bats`, `hack/integration-test.sh` |
+| Layer removals are honoured | `hack/image-test.sh` |
+| An unreachable image is a failure, not an empty machine | `seed-oci-copy.bats` |
+| A multi-architecture source seeds the node's architecture | `seed-oci-copy.bats`, `hack/integration-test.sh` |
+| A source with no build for the node is refused | `seed-oci-copy.bats` |
+| A restart makes no request to the source | `hack/integration-test.sh` |
+| A source that stops resolving does not stop the machine | `hack/integration-test.sh` |
+| A named credential is used | `source_pull_secret_test.yaml` |
+| No credential named means an anonymous fetch | `source_pull_secret_test.yaml` |
+| The credentials reach only the seeding step | `source_pull_secret_test.yaml` |
+| A rejected credential fails with a usable message | `seed-oci-copy.bats` |
 | A matching checksum is unpacked | `seed-lxc.bats` |
 | A mismatched checksum is refused | `seed-lxc.bats` |
 | An unreachable template is a failure, not an empty machine | `seed-lxc.bats` |
 | An archive that is not a root filesystem is rejected | `seed-lxc.bats` |
 | A multi-part archive is rejected | `seed-lxc.bats` |
-| Device nodes are not copied | `seed-oci-copy.bats`, `hack/integration-test.sh` |
+| Device nodes are not copied | `seed-oci-copy.bats` |
 | Runtime directories are present but empty | `seed-driver.bats`, `hack/integration-test.sh` |
 | A failed seeding does not start a guest | `seed-driver.bats`, `seed-oci-copy.bats` |
 | The cause is visible where a user will look | `seed-driver.bats`, `seed-lxc.bats` |
@@ -353,8 +401,13 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | Scenario | Covered by |
 | --- | --- |
 | A release refers to one chart-supplied image | `init_containers_test.yaml` |
+| No container runs a machine's source | `shim_image_test.yaml`, `hack/integration-test.sh` |
+| Every command is a path inside the image | `init_scripts_test.yaml` |
+| No rendered object carries script content | `init_scripts_test.yaml` |
+| The helpers that run inside the machine come from the image | `boot-handover.bats`, `hack/integration-test.sh` |
 | The most common template format can be opened | `hack/image-test.sh`, `seed-lxc.bats` |
 | Attributes survive unpacking | `hack/image-test.sh`, `seed-lxc.bats` |
+| Attributes survive a flattened image | `hack/image-test.sh`, `hack/integration-test.sh` |
 | The default reference is immutable | `shim_image_test.yaml` |
 | The image is available for the architectures the audience runs | `.github/workflows/ci.yaml` (multi-architecture build) |
 | Preparation is done by writing files | `prepare.bats`, `seed-oci-copy.bats` |
@@ -415,7 +468,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | --- | --- |
 | The guest container runs the shim | `shim_image_test.yaml`, `statefulset_test.yaml` |
 | An LXC template source renders without a container image of its own | `shim_image_test.yaml` |
-| An OCI source is a container image only where it is copied | `shim_image_test.yaml`, `init_containers_test.yaml` |
+| An OCI source is never a container image | `shim_image_test.yaml`, `init_containers_test.yaml`, `hack/integration-test.sh` |
 | The guest container alone is privileged | `init_security_test.yaml` |
 | The guest container alone is granted the mode's capability | `init_security_test.yaml` |
 | Preparation steps are ordinary containers | `init_security_test.yaml` |

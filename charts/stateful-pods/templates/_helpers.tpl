@@ -103,8 +103,9 @@ already does.
 
 Running as the container's root user is not privilege in that sense - it is what
 writing another system's file ownership requires, and under `userns` it is not
-root on the node at all. It is set explicitly because a source image may declare a
-non-root user of its own, and extraction would then fail.
+root on the node at all. It is stated rather than left to the image, so that the
+posture a machine gets is the one the chart chose and not one a `shim.image`
+override could change by declaring a user of its own.
 
 Takes the same machine context as the other helpers.
 */}}
@@ -238,6 +239,19 @@ Takes the root context.
 {{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind \"lxc\". Remove the field, or set machines.%s.source.kind to \"lxc\"." $name $field $name) -}}
 {{- end -}}
 {{- end -}}
+{{- /* The credentials for a private source are named, never spelled out: a value
+       is stored in the release, printed by `helm get values` and usually
+       committed, so a credential that can be put there will be. */ -}}
+{{- $pullSecret := index $source "pullSecretName" -}}
+{{- if not (kindIs "invalid" $pullSecret) -}}
+{{- if not (kindIs "string" $pullSecret) -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: must be the name of a Secret, but is of type %s. Name a single Secret in this release's namespace - and quote it if the name is one YAML reads as something else, such as an unquoted no, off or a number." $name (kindOf $pullSecret)) -}}
+{{- else if eq ($pullSecret | toString) "" -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: is empty. Name the Secret in this release's namespace that holds the registry credentials, or remove the field entirely to fetch the source anonymously." $name) -}}
+{{- else if or (gt (len ($pullSecret | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($pullSecret | toString))) -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: %q is not a valid Secret name. It must be a DNS-1123 subdomain: at most 253 lowercase alphanumeric characters, '-' or '.', with each dot-separated part starting and ending with an alphanumeric character." $name ($pullSecret | toString)) -}}
+{{- end -}}
+{{- end -}}
 {{- else if eq $kind "lxc" -}}
 {{- if eq ($source.url | default "") "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.url: not set. An \"lxc\" source requires the HTTPS URL of the template tarball, for example https://download.proxmox.com/images/system/debian-13-standard_13.0-1_amd64.tar.zst." $name) -}}
@@ -245,8 +259,10 @@ Takes the root context.
 {{- if eq ($source.sha256 | default "" | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.sha256: not set. An \"lxc\" source requires the SHA-256 checksum of the template tarball, and there is no way to skip verification. The tarball is fetched over the network and unpacked into what becomes a privileged machine's root filesystem, and nothing about the transport establishes that the bytes are the intended ones." $name) -}}
 {{- end -}}
-{{- if not (kindIs "invalid" (index $source "reference")) -}}
-{{- $errors = append $errors (printf "machines.%s.source.reference: does not belong to source kind \"lxc\"; it belongs to kind \"oci\". Remove the field, or set machines.%s.source.kind to \"oci\"." $name $name) -}}
+{{- range $field := list "reference" "pullSecretName" -}}
+{{- if not (kindIs "invalid" (index $source $field)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind \"oci\". Remove the field, or set machines.%s.source.kind to \"oci\"." $name $field $name) -}}
+{{- end -}}
 {{- end -}}
 {{- else -}}
 {{- $errors = append $errors (printf "machines.%s.source.kind: %q is not a supported source kind. Accepted kinds: oci, lxc." $name $kind) -}}

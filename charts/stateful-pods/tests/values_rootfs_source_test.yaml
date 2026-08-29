@@ -131,3 +131,80 @@ tests:
     asserts:
       - hasDocuments:
           count: 1
+
+  - it: rejects a pull secret on an lxc source, naming the kind it belongs to
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.test/debian.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          pullSecretName: registry-credentials
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.pullSecretName: does not belong to source kind "lxc".*belongs to kind "oci"'
+
+  - it: rejects an empty pull secret reference rather than rendering a pod that cannot start
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: registry.example.test/private/debian:13
+          pullSecretName: ""
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.pullSecretName: is empty'
+
+  - it: rejects a pull secret reference that is not a valid object name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: registry.example.test/private/debian:13
+          pullSecretName: Registry_Credentials
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.pullSecretName:.*DNS-1123 subdomain'
+
+  - it: accepts a pull secret on an oci source
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: registry.example.test/private/debian:13
+          pullSecretName: registry-credentials
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: rejects a pull secret that YAML parsed as something other than a name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: registry.example.test/private/debian:13
+          # Unquoted, this is a boolean. Rendering it would drop the reference
+          # silently and fetch the private source anonymously.
+          pullSecretName: false
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.pullSecretName: must be the name of a Secret.*is of type bool.*quote it'

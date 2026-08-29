@@ -1,12 +1,17 @@
 # The image every container the chart runs starts from.
 #
-# It is a toolbox, not an application: it carries a shell and the archivers needed
-# to fill a machine's root filesystem, and nothing project-specific. The scripts
-# live in the chart and arrive as a mounted ConfigMap, so fixing one is a
-# `helm upgrade` rather than an image release.
+# It carries both the chart's logic and the tools that logic calls. A script and
+# the archiver it invokes are one artifact: delivering them separately - the
+# scripts used to arrive as a mounted ConfigMap - means a running machine can
+# have two different versions of itself, and it means every container in the pod
+# carries a copy of the chart's logic mounted into it.
 #
-# busybox provides the shell and the mount work. The four packages on top of it
-# are not optional, and each one is here for a verified reason:
+# So this image is the unit that is released, and a `shim.image` override
+# supplies the behaviour rather than merely the userland it runs in. Fixing a
+# script is an image release plus the digest bump in values.yaml.
+#
+# busybox provides the shell and the mount work. The packages on top of it are
+# not optional, and each one is here for a verified reason:
 #
 #   zstd  - busybox has no zstd support whatsoever, and Proxmox distributes its
 #           templates as .tar.zst. A busybox-only image cannot open the single
@@ -17,6 +22,10 @@
 #   xz    - the format linuxcontainers.org uses.
 #   bash  - the scripts are bash, because a machine that will not boot is
 #           debugged by reading the script that was supposed to boot it.
+#   crane - an oci source is fetched and flattened from here rather than run as a
+#           container, so the image needs a registry client of its own. `crane
+#           export` applies the layers, including their whiteouts, and writes the
+#           result as a tar stream that GNU tar above extracts.
 FROM alpine:3.22
 
 # renovate: datasource=repology
@@ -31,7 +40,23 @@ RUN apk add --no-cache \
       jq \
       coreutils \
       libcap \
+      crane \
  && rm -rf /var/cache/apk/*
+
+# The chart's logic, at the path its containers are told to run. Nothing here
+# reads a value: a script learns what machine it is acting for from the
+# environment, so nothing a user writes in values.yaml is ever parsed as shell.
+COPY scripts/ /usr/local/lib/stateful-pods/
+# The entry points are executed by name; the lib-*.sh files carry no shebang and
+# are only ever sourced, so they are readable and not executable.
+RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
+ && chmod 0755 /usr/local/lib/stateful-pods/boot.sh \
+      /usr/local/lib/stateful-pods/customize.sh \
+      /usr/local/lib/stateful-pods/prepare.sh \
+      /usr/local/lib/stateful-pods/ready.sh \
+      /usr/local/lib/stateful-pods/seed-lxc.sh \
+      /usr/local/lib/stateful-pods/seed-oci.sh \
+      /usr/local/lib/stateful-pods/stop.sh
 
 LABEL org.opencontainers.image.title="stateful-pods-shim" \
       org.opencontainers.image.description="Toolbox image for the stateful-pods chart: seeds and prepares a machine's root filesystem" \

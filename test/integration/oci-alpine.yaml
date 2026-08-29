@@ -1,0 +1,12 @@
+# A machine seeded from an Alpine image: no bash, no GNU tar, nothing the chart
+# could have executed inside it. The reference is set by the test, which pushes
+# the image to the registry running in the cluster.
+machines:
+  tiny:
+    source:
+      kind: oci
+      reference: replaced-by-the-test
+    security:
+      mode: privileged
+    rootfs:
+      size: 1Gi

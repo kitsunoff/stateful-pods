@@ -31,7 +31,7 @@ docs:
 test:
 	$(HELM) unittest $(CHART)
 
-## shell-test: run the bats suites for the chart's shell scripts
+## shell-test: run the bats suites for the shim image's shell scripts
 shell-test:
 	./hack/shell-test.sh
 
@@ -39,7 +39,7 @@ shell-test:
 image-build:
 	docker build --tag $(IMAGE) --file $(IMAGE_CONTEXT)/Containerfile $(IMAGE_CONTEXT)
 
-## image-test: assert the toolbox image's archive guarantees against a busybox control
+## image-test: assert the toolbox image's archive and registry guarantees
 image-test: image-build
 	IMAGE=$(IMAGE) ./hack/image-test.sh
 

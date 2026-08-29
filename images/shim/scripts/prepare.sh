@@ -3,11 +3,11 @@
 # Records what the volume holds, and makes sure the machine's identity is its own.
 #
 # This runs after the seeding step, in the chart's own image, for both source
-# kinds. Two reasons it is a separate step rather than the tail of the seed
-# script: the marker must be written by something that runs *after* the fill, so
-# that a fill which died half-way cannot leave one behind; and an OCI seed runs
-# inside the machine's source image, which cannot be relied on for anything past
-# a shell and tar.
+# kinds. It is a separate step rather than the tail of the seed script because
+# the marker must be written by something that runs *after* the fill, so that a
+# fill which died half-way cannot leave one behind. A step of its own is also
+# what makes the record the same for both source kinds: it is written by one
+# piece of code, and neither fill can decide what a seeded volume looks like.
 #
 # It runs on every pod start, and on all but the first it has only one job: to
 # notice that this volume was seeded for a different machine.
@@ -16,9 +16,9 @@ set -o nounset
 set -o pipefail
 
 SP_SCRIPT_DIR="$(dirname "$0")"
-# shellcheck source=charts/stateful-pods/scripts/lib-state.sh
+# shellcheck source=images/shim/scripts/lib-state.sh
 . "$SP_SCRIPT_DIR/lib-state.sh"
-# shellcheck source=charts/stateful-pods/scripts/lib-seed.sh
+# shellcheck source=images/shim/scripts/lib-seed.sh
 . "$SP_SCRIPT_DIR/lib-seed.sh"
 
 SP_MARKER_SCHEMA_VERSION=1

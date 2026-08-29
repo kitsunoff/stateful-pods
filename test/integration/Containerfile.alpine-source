@@ -1,0 +1,20 @@
+# The source image that was impossible before the scripts moved into the shim.
+#
+# Alpine provides busybox tar and no bash. The seeding step used to run inside
+# the source image and copy it out with the image's own archiver, so this image
+# was refused outright: busybox tar drops security.capability silently, and a
+# rootfs that looks correct and is not is worse than no rootfs at all.
+#
+# Nothing from the source is executed any more, so what the image carries is its
+# own business. It is an ordinary source.
+FROM alpine:3.22
+
+# A pod has no ttys to respawn a getty on, and openrc's sysinit is not what is
+# under test here. What is under test is that busybox init - the machine's own,
+# from the seeded volume - comes up as process 1.
+RUN printf '%s\n' \
+      '::sysinit:/bin/busybox true' \
+      '::ctrlaltdel:/sbin/reboot' \
+      '::shutdown:/bin/busybox true' \
+      > /etc/inittab \
+ && echo "seeded-from-alpine" > /etc/sp-alpine-marker

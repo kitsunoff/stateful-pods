@@ -1,4 +1,4 @@
-# Test environment for the chart's shell scripts. Not shipped, not published:
+# Test environment for the shim image's shell scripts. Not shipped, not published:
 # it exists so that a developer on a non-Linux host runs the same tests CI does.
 FROM debian:13-slim
 

@@ -7,8 +7,12 @@
 # sp_seed_main. Both source kinds therefore share one decision, one set of
 # messages and one definition of "done", and only the fill differs.
 #
-# POSIX sh: this is sourced by the OCI seeding script, which runs inside the
-# machine's own source image, where bash may not exist.
+# POSIX sh, still. Nothing sources this from a foreign image any more, so the
+# constraint that produced the dialect is gone; it is left as it is because
+# rewriting it would change no behaviour and would bury this file's actual
+# content under a dialect change. It applies here and in lib-state.sh only:
+# ready.sh and stop.sh keep POSIX sh permanently, because they genuinely do run
+# inside the machine, where bash may not exist.
 
 sp_log() {
     echo "stateful-pods: $*"
@@ -23,6 +27,22 @@ sp_require_env() {
     eval "_sp_value=\${$1:-}"
     [ -n "$_sp_value" ] || sp_die "$1 is not set; the chart must supply it"
 }
+
+# The flags every fill extracts with, whatever the source kind. They are Proxmox's
+# for exactly this job (@PVE::Storage::Plugin::COMMON_TAR_FLAGS), minus the
+# creation-only ones, and each earns its place:
+#
+#   --numeric-owner     the guest's /etc/passwd is not this container's
+#   --acls --xattrs     an ACL or attribute lost here is lost forever
+#   security.capability the quiet one: drop it and an unprivileged ping fails
+#                       with a permission error that nothing explains
+#   --sparse            a sparse file in the source should not balloon on disk
+#
+# One definition, so that the properties the project asserts about an extraction
+# are asserted about every extraction.
+#
+# shellcheck disable=SC2034 # read by whichever fill the sourcing script defines
+SP_TAR_FLAGS="--numeric-owner --acls --xattrs --xattrs-include=user.* --xattrs-include=security.capability --sparse --warning=no-file-ignored --warning=no-xattr-write"
 
 # The directories the kernel, the runtime and the init system own at boot. Nothing
 # belongs to the volume here: whatever a source ships in them is stale by

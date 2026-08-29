@@ -6,7 +6,7 @@
 # choose between destroying data and getting permanently stuck.
 
 setup() {
-    LIB="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts/lib-state.sh"
+    LIB="${BATS_TEST_DIRNAME}/../../images/shim/scripts/lib-state.sh"
     ROOTFS="$(mktemp -d)"
     # shellcheck disable=SC1090
     . "$LIB"

@@ -28,16 +28,23 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].image
           pattern: 'debian'
-      # The source is a container image in exactly one place: the step that
-      # copies it. That step exits before the machine starts.
+      # The source is not a container image anywhere, at any stage. The step
+      # that seeds the volume fetches and unpacks it from the chart's own image
+      # instead of running it.
       - equal:
           path: spec.template.spec.initContainers[0].name
           value: seed
       - equal:
           path: spec.template.spec.initContainers[0].image
-          value: docker.io/library/debian:13
+          value: ghcr.io/kitsunoff/stateful-pods-shim:v1.2.3
+      - notMatchRegex:
+          path: spec.template.spec.initContainers[0].image
+          pattern: 'debian'
       - notMatchRegex:
           path: spec.template.spec.initContainers[1].image
+          pattern: 'debian'
+      - notMatchRegex:
+          path: spec.template.spec.initContainers[2].image
           pattern: 'debian'
 
   - it: renders a complete pod for an lxc source with no image derived from the template url

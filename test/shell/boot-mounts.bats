@@ -8,7 +8,7 @@
 # test on a real cluster is for.
 
 setup() {
-    SCRIPTS="${BATS_TEST_DIRNAME}/../../charts/stateful-pods/scripts"
+    SCRIPTS="${BATS_TEST_DIRNAME}/../../images/shim/scripts"
     ROOTFS="$(mktemp -d)"
     STUB_DIR="$(mktemp -d)"
     export SP_ROOTFS="$ROOTFS"

@@ -7,8 +7,10 @@
 # be a decision made at runtime from state on the volume - the only thing that
 # outlives the pod, the release and the cluster.
 #
-# This library is POSIX sh on purpose. It is sourced by the OCI seeding script,
-# which executes inside the machine's own source image, where bash may not exist.
+# This library is POSIX sh for historical reasons: it was sourced by the OCI
+# seeding script back when that ran inside the machine's own source image. It
+# runs only in the chart's own image now, so the dialect is no longer required
+# here - see lib-seed.sh for why it is kept anyway.
 
 # Where the chart keeps its own state on the volume. Visible to the guest as
 # /.stateful-pods, the way Proxmox's /.pve-ignore.* markers are.

@@ -126,8 +126,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The full history, because one assertion installs the previous chart
+      # revision and upgrades to this one. At the default depth of 1 the
+      # revision to upgrade from does not resolve and that assertion skips
+      # itself in silence.
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Helm
         uses: azure/setup-helm@v4

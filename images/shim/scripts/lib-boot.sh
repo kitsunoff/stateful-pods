@@ -75,11 +75,12 @@ sp_bind_devices() {
     ln -sf /proc/self/fd/2 "$root/dev/stderr" 2>/dev/null || true
 }
 
-# The helpers that have to run after the root change cannot stay in the mounted
-# ConfigMap: the probe and the stop hook run in this container's mount namespace,
-# which by then is the machine's root, and /scripts is on the other side of the
-# change. The volume is the one thing present in both roots, so they are copied
-# onto it and referenced at a path that is valid once the machine is up.
+# The helpers that have to run after the root change cannot stay in the image:
+# the probe and the stop hook run in this container's mount namespace, which by
+# then is the machine's root, and everything the image carries is on the other
+# side of the change. The volume is the one thing present in both roots, so they
+# are copied onto it and referenced at a path that is valid once the machine is
+# up.
 sp_install_runtime_helpers() {
     local root="$1" script_dir="$2" helper
     mkdir -p "$root/$SP_DIR_NAME/bin" \
