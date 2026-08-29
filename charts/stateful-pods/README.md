@@ -38,6 +38,7 @@ make test        # helm unittest
 make shell-test  # bats, inside a Linux container
 make conform     # kubeconform against the Kubernetes API schemas
 make image-test  # the toolbox image's archive and registry guarantees
+make seccomp-test # the syscall filter, on a cluster whose kubelet filters by default
 make render      # helm template
 ```
 
@@ -46,7 +47,10 @@ system's root filesystem, and ownership, extended attributes and file capabiliti
 Linux. `make image-test` additionally runs a throwaway registry on a container network of its own,
 because an `oci` source is fetched from a registry rather than run.
 
-`make integration-test` seeds a machine end to end on a throwaway `kind` cluster. It is the only
+`make integration-test` seeds a machine end to end on a throwaway `kind` cluster, and then runs
+`make seccomp-test`, which builds a second one whose kubelet applies a default syscall filter to
+every container that declares none — the configuration under which a machine that named no filter
+would not boot. It is the only
 test that can tell whether a copy really preserved a file capability, or whether a second start
 really does nothing. Its template case needs a tarball served over HTTPS, because that is what the
 chart accepts:

@@ -6,7 +6,7 @@ HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
 
-.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test
+.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
 
 all: lint shell-lint docs test shell-test conform
 
@@ -43,9 +43,15 @@ image-build:
 image-test: image-build
 	IMAGE=$(IMAGE) ./hack/image-test.sh
 
-## integration-test: seed a machine end to end on a throwaway kind cluster
+## integration-test: seed a machine end to end on a throwaway kind cluster, then
+#  assert the syscall filter on a second one whose kubelet filters by default
 integration-test:
 	./hack/integration-test.sh
+	./hack/seccomp-test.sh
+
+## seccomp-test: the syscall filter assertions alone, on their own kind cluster
+seccomp-test:
+	./hack/seccomp-test.sh
 
 ## render: render the chart from the first example to stdout
 render:

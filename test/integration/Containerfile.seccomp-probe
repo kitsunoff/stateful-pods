@@ -1,0 +1,15 @@
+# The probe that reports what a container may call.
+#
+# Statically linked, so the image it runs in is irrelevant to the answer: a
+# dynamic loader reaching for a library is one more thing a filter could stop,
+# and it would be indistinguishable from the call under test failing.
+FROM alpine:3.22 AS build
+
+RUN apk add --no-cache build-base
+COPY seccomp-probe.c /build/seccomp-probe.c
+RUN gcc -static -O2 -Wall -Werror -o /build/seccomp-probe /build/seccomp-probe.c
+
+FROM alpine:3.22
+
+COPY --from=build /build/seccomp-probe /usr/local/bin/seccomp-probe
+ENTRYPOINT ["/usr/local/bin/seccomp-probe"]
