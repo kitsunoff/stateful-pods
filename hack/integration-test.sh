@@ -8,6 +8,13 @@
 # shuts the machine down or kills it. Those are the assertions here, and they are
 # the only ones that can fail in a way the unit tests would not notice.
 #
+# An oci source is fetched by the chart's own image from a registry, so the test
+# runs one inside the cluster and pushes to it through a port forward. `kind
+# load` puts an image where containerd can see it and where a registry client in
+# a pod cannot, so it is no longer enough on its own - it is kept only for the
+# release that exercises the upgrade from the previous chart revision, which
+# still runs an oci source as a container image.
+#
 # privileged mode throughout: a kind node is itself a container, so user
 # namespaces nested inside one are unreliable and would make this test flaky for
 # reasons that have nothing to do with what it is testing.
@@ -28,7 +35,29 @@ NAMESPACE="${NAMESPACE:-stateful-pods-it-$(date +%s)}"
 CHART="${CHART:-charts/stateful-pods}"
 SHIM_IMAGE="${SHIM_IMAGE:-stateful-pods-shim:dev}"
 SOURCE_IMAGE="${SOURCE_IMAGE:-stateful-pods-test-source:integration}"
+ALPINE_SOURCE_IMAGE="${ALPINE_SOURCE_IMAGE:-stateful-pods-test-alpine:integration}"
+REGISTRY_IMAGE="${REGISTRY_IMAGE:-registry:2}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
+
+# The chart revision to upgrade from, for the one assertion that is about the
+# migration rather than about the chart: that the per-machine ConfigMap the
+# previous revision rendered disappears without touching a seeded volume. It
+# skips itself once that revision no longer renders one, which is what it should
+# do after this change has been on the default branch for a release.
+PREVIOUS_CHART_REF="${PREVIOUS_CHART_REF:-origin/main}"
+
+# Where the pod fetches an oci source from. An in-cluster Service name, because
+# a registry client inside a pod cannot read the node's image store: `kind load`
+# puts an image exactly where crane cannot see it. The name ends in `.local`, so
+# go-containerregistry speaks plain HTTP to it and neither the chart nor this
+# test needs a certificate or an insecure-registry option.
+REGISTRY_IN_CLUSTER="registry.${NAMESPACE}.svc.cluster.local:5000"
+# The same registry seen from this host, through a port forward. A registry
+# stores by repository path and not by the host it was reached on, so an image
+# pushed here is the image pulled there.
+REGISTRY_LOCAL="localhost:${REGISTRY_PORT:-5000}"
+PORT_FORWARD_PID=""
+PREVIOUS_CHART_WORKTREE=""
 
 # An lxc template has to be fetched over HTTPS, which the chart enforces. Point
 # these at a reachable template to exercise that path; without them the lxc
@@ -69,6 +98,12 @@ on_exit() {
       kc logs --selector stateful-pods.io/machine --container "$container" --tail 40 >&2 2>&1 || true
     done
   fi
+  if [[ -n "$PORT_FORWARD_PID" ]]; then
+    kill "$PORT_FORWARD_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$PREVIOUS_CHART_WORKTREE" ]]; then
+    git worktree remove --force "$PREVIOUS_CHART_WORKTREE" >/dev/null 2>&1 || true
+  fi
   if [[ "$KEEP_CLUSTER" == "1" ]]; then
     echo "cluster $CLUSTER kept; this run's namespace is $NAMESPACE"
     echo "remove the run with: kubectl --context $CONTEXT delete namespace $NAMESPACE"
@@ -83,6 +118,9 @@ trap on_exit EXIT
 step "building the images"
 docker build --tag "$SHIM_IMAGE" --file images/shim/Containerfile images/shim >/dev/null
 docker build --tag "$SOURCE_IMAGE" --file test/integration/Containerfile.source test/integration >/dev/null
+docker build --tag "$ALPINE_SOURCE_IMAGE" --file test/integration/Containerfile.alpine-source \
+  test/integration >/dev/null
+docker pull --quiet "$REGISTRY_IMAGE" >/dev/null
 
 step "creating the cluster $CLUSTER"
 existing_clusters="$(kind get clusters 2>/dev/null || true)"
@@ -90,9 +128,39 @@ if ! grep --quiet --line-regexp "$CLUSTER" <<< "$existing_clusters"; then
   kind create cluster --name "$CLUSTER" --wait 120s
 fi
 kind load docker-image "$SHIM_IMAGE" --name "$CLUSTER"
+kind load docker-image "$REGISTRY_IMAGE" --name "$CLUSTER"
+# The source image is loaded onto the node as well, for the upgrade assertion
+# alone: the previous chart revision runs an oci source as a container image, so
+# that release needs it where the kubelet looks. Every other release fetches it
+# from the registry below, which is the only place the current chart looks.
 kind load docker-image "$SOURCE_IMAGE" --name "$CLUSTER"
 kubectl --context "$CONTEXT" create namespace "$NAMESPACE" --dry-run=client --output yaml \
   | kubectl --context "$CONTEXT" apply --filename - >/dev/null
+
+step "starting a registry the pod can reach"
+kc apply --filename test/integration/registry.yaml >/dev/null
+kc rollout status deployment/registry --timeout=180s >/dev/null
+kubectl --context "$CONTEXT" --namespace "$NAMESPACE" \
+  port-forward service/registry "${REGISTRY_PORT:-5000}:5000" >/dev/null 2>&1 &
+PORT_FORWARD_PID=$!
+registry_reachable=0
+for _ in $(seq 1 30); do
+  if curl --silent --show-error --fail "http://$REGISTRY_LOCAL/v2/" >/dev/null 2>&1; then
+    registry_reachable=1
+    break
+  fi
+  sleep 1
+done
+[[ "$registry_reachable" -eq 1 ]] || fail "the in-cluster registry never became reachable"
+pass "the in-cluster registry is reachable through a port forward"
+
+SOURCE_REFERENCE="$REGISTRY_IN_CLUSTER/${SOURCE_IMAGE}"
+ALPINE_SOURCE_REFERENCE="$REGISTRY_IN_CLUSTER/${ALPINE_SOURCE_IMAGE}"
+step "pushing the source images to it"
+docker tag "$SOURCE_IMAGE" "$REGISTRY_LOCAL/${SOURCE_IMAGE}"
+docker tag "$ALPINE_SOURCE_IMAGE" "$REGISTRY_LOCAL/${ALPINE_SOURCE_IMAGE}"
+docker push --quiet "$REGISTRY_LOCAL/${SOURCE_IMAGE}" >/dev/null
+docker push --quiet "$REGISTRY_LOCAL/${ALPINE_SOURCE_IMAGE}" >/dev/null
 
 # ---------------------------------------------------------------- oci source ---
 step "installing a machine with an oci source"
@@ -100,8 +168,20 @@ helm --kube-context "$CONTEXT" upgrade --install oci "$CHART" \
   --namespace "$NAMESPACE" \
   --values test/integration/oci.yaml \
   --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.web.source.reference=$SOURCE_REFERENCE" \
   --wait --timeout 5m >/dev/null
 kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+
+step "asserting the machine's source is nowhere in its pod"
+images="$(kc get pod oci-web-0 --output \
+  "jsonpath={.spec.initContainers[*].image} {.spec.containers[*].image}")"
+if grep --quiet -- "$SOURCE_REFERENCE" <<< "$images"; then
+  fail "a container in the pod runs the machine's source: $images"
+else
+  pass "no container in the pod runs the machine's source"
+fi
+check "the release renders no ConfigMap of scripts" \
+  bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap oci-web"
 
 step "asserting the oci machine's volume"
 # After the root change this lands inside the machine, not in the chart's image.
@@ -127,6 +207,30 @@ if [[ "$caps" == *cap_net_raw* ]]; then
   pass "the file capability survived the copy"
 else
   fail "security.capability was lost in the copy: got '${caps:-nothing}'"
+fi
+
+# The container runtime used to pick the right variant of a multi-architecture
+# image invisibly. The chart makes that choice itself now, and getting it wrong
+# seeds a rootfs that unpacks perfectly and cannot execute its own init - a
+# failure that surfaces at boot, far from its cause.
+node_architecture="$(kubectl --context "$CONTEXT" get nodes \
+  --output "jsonpath={.items[0].status.nodeInfo.architecture}")"
+case "$node_architecture" in
+  amd64) expected_elf_machine="3e" ;;
+  arm64) expected_elf_machine="b7" ;;
+  *)     expected_elf_machine="" ;;
+esac
+if [[ -z "$expected_elf_machine" ]]; then
+  skip "the architecture assertion: no ELF machine is claimed for $node_architecture"
+else
+  # Byte 18 of an ELF header is e_machine, which is what an operating system
+  # built for the wrong architecture gets wrong.
+  elf_machine="$(guest od -An -t x1 -j 18 -N 1 /bin/true | tr -d ' \n')"
+  if [[ "$elf_machine" == "$expected_elf_machine" ]]; then
+    pass "the seeded root filesystem is built for the node's own $node_architecture"
+  else
+    fail "the volume holds binaries for ELF machine 0x$elf_machine, but the node is $node_architecture"
+  fi
 fi
 
 # ------------------------------------------------------------------- booting ---
@@ -240,6 +344,92 @@ if [[ "$(guest cat /.stateful-pods/provisioned)" == "$before" ]]; then
   pass "the seeding record is unchanged by an ordinary restart"
 else
   fail "the seeding record was rewritten on an ordinary restart"
+fi
+
+# ------------------------------------------------------- a source with no shell ---
+step "installing a machine whose source carries no shell and no GNU tar"
+helm --kube-context "$CONTEXT" upgrade --install alpine "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/oci-alpine.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.tiny.source.reference=$ALPINE_SOURCE_REFERENCE" \
+  --wait --timeout 5m >/dev/null
+kc wait --for=condition=Ready pod/alpine-tiny-0 --timeout=300s >/dev/null
+
+step "asserting the machine the old seeding path refused"
+tiny() { kc exec alpine-tiny-0 --container guest -- "$@"; }
+check "the volume carries a seeding record" tiny test -f /.stateful-pods/provisioned
+check "the source image's content is on the volume" tiny test -f /etc/sp-alpine-marker
+# The two properties that made this image unusable as a source before: the old
+# seeding step executed inside it and copied it out with its own archiver.
+check "the source really provides no bash" tiny sh -c 'test ! -e /bin/bash'
+check "the source's own tar really is busybox" \
+  tiny sh -c 'tar --version 2>&1 | grep -q busybox'
+check "the machine's own init is process 1" \
+  tiny sh -c '[ "$(cat /proc/1/comm)" != "boot.sh" ] && [ "$(cat /proc/1/comm)" != "bash" ]'
+check "the machine has the pod's host name" \
+  tiny sh -c '[ "$(cat /etc/hostname)" = "alpine-tiny-0" ]'
+
+# ------------------------------------------------- the source after seeding ---
+# A machine's source is a seed, not a runtime dependency. Taking the registry
+# away is the only way to prove that: a machine that still reached for its
+# source on every start would depend for its whole life on a reference someone
+# else controls, and would pay for a full transfer of its operating system every
+# time it was rescheduled.
+step "taking the registry away and restarting both seeded machines"
+kc scale deployment/registry --replicas=0 >/dev/null
+kc wait --for=delete pod --selector app=registry --timeout=120s >/dev/null
+kc delete pod oci-web-0 alpine-tiny-0 --wait >/dev/null
+if kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null \
+   && kc wait --for=condition=Ready pod/alpine-tiny-0 --timeout=300s >/dev/null; then
+  pass "both machines came back up with no registry to reach"
+else
+  fail "a seeded machine could not start once its source was unreachable"
+fi
+check "the guest's own file survived the registry going away" \
+  guest sh -c '[ "$(cat /etc/guest-state)" = "written by the guest" ]'
+kc scale deployment/registry --replicas=1 >/dev/null
+
+# ------------------------------------------------------------- the upgrade ---
+# The one assertion here that is about the migration rather than about the
+# chart: the per-machine ConfigMap the previous revision rendered is
+# release-owned, so `helm upgrade` deletes it, and no machine's volume is
+# touched by that. It retires itself once the previous revision no longer
+# renders a ConfigMap.
+step "upgrading a machine installed by the previous chart revision"
+previous_sha="$(git rev-parse --verify --quiet "$PREVIOUS_CHART_REF^{commit}" || true)"
+if [[ -z "$previous_sha" ]]; then
+  skip "the upgrade assertion: $PREVIOUS_CHART_REF does not resolve"
+elif ! git cat-file -e "$previous_sha:charts/stateful-pods/templates/scripts-configmap.yaml" 2>/dev/null; then
+  skip "the upgrade assertion: $PREVIOUS_CHART_REF renders no ConfigMap to migrate from"
+else
+  PREVIOUS_CHART_WORKTREE="$(mktemp -d)"
+  git worktree add --detach --force "$PREVIOUS_CHART_WORKTREE" "$previous_sha" >/dev/null 2>&1
+  helm --kube-context "$CONTEXT" upgrade --install migrated \
+    "$PREVIOUS_CHART_WORKTREE/charts/stateful-pods" \
+    --namespace "$NAMESPACE" \
+    --values test/integration/oci.yaml \
+    --set "shim.image=$SHIM_IMAGE" \
+    --wait --timeout 5m >/dev/null
+  kc wait --for=condition=Ready pod/migrated-web-0 --timeout=300s >/dev/null
+  check "the previous revision rendered a ConfigMap of scripts" kc get configmap migrated-web
+  kc exec migrated-web-0 --container guest -- \
+    sh -c 'echo "written before the upgrade" > /etc/before-upgrade' >/dev/null
+
+  helm --kube-context "$CONTEXT" upgrade migrated "$CHART" \
+    --namespace "$NAMESPACE" \
+    --values test/integration/oci.yaml \
+    --set "shim.image=$SHIM_IMAGE" \
+    --set "machines.web.source.reference=$SOURCE_REFERENCE" \
+    --wait --timeout 5m >/dev/null
+  kc wait --for=condition=Ready pod/migrated-web-0 --timeout=300s >/dev/null
+  check "the upgrade removed the ConfigMap" \
+    bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap migrated-web"
+  check "the machine's own file survived the upgrade" \
+    kc exec migrated-web-0 --container guest -- \
+      sh -c '[ "$(cat /etc/before-upgrade)" = "written before the upgrade" ]'
+  check "the volume was not re-seeded by the upgrade" \
+    kc exec migrated-web-0 --container guest -- test -f /.stateful-pods/provisioned
 fi
 
 # ---------------------------------------------------------------- lxc source ---

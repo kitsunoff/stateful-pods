@@ -1,0 +1,40 @@
+# An image registry inside the cluster.
+#
+# The chart's own image fetches an oci source itself now, so the source has to be
+# somewhere a pod can reach. `kind load` puts an image where containerd can see
+# it and where a registry client inside a pod cannot, so it stops being enough.
+#
+# Plain HTTP, with no certificate and no insecure-registry option anywhere:
+# go-containerregistry speaks http to a registry whose name ends in `.local`,
+# which every in-cluster Service name does.
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+spec:
+  selector:
+    app: registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          ports:
+            - containerPort: 5000
