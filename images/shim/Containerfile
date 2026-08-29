@@ -47,7 +47,16 @@ RUN apk add --no-cache \
 # reads a value: a script learns what machine it is acting for from the
 # environment, so nothing a user writes in values.yaml is ever parsed as shell.
 COPY scripts/ /usr/local/lib/stateful-pods/
-RUN chmod 0755 /usr/local/lib/stateful-pods/*.sh
+# The entry points are executed by name; the lib-*.sh files carry no shebang and
+# are only ever sourced, so they are readable and not executable.
+RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
+ && chmod 0755 /usr/local/lib/stateful-pods/boot.sh \
+      /usr/local/lib/stateful-pods/customize.sh \
+      /usr/local/lib/stateful-pods/prepare.sh \
+      /usr/local/lib/stateful-pods/ready.sh \
+      /usr/local/lib/stateful-pods/seed-lxc.sh \
+      /usr/local/lib/stateful-pods/seed-oci.sh \
+      /usr/local/lib/stateful-pods/stop.sh
 
 LABEL org.opencontainers.image.title="stateful-pods-shim" \
       org.opencontainers.image.description="Toolbox image for the stateful-pods chart: seeds and prepares a machine's root filesystem" \

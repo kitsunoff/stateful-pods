@@ -172,10 +172,12 @@ if in_image '
 set -eu
 set -o pipefail
 rm -rf /work/out-oci && mkdir -p /work/out-oci
+# The flags the chart itself extracts with, taken from the image rather than
+# repeated here: a copy of them could drift from what a machine really gets
+# while this assertion went on passing.
+. /usr/local/lib/stateful-pods/lib-seed.sh
 crane export "$REGISTRY/fixture:v1" - \
-  | tar -C /work/out-oci -xp --numeric-owner --acls --xattrs \
-        --xattrs-include=user.* --xattrs-include=security.capability --sparse \
-        --warning=no-file-ignored --warning=no-xattr-write -f -
+  | tar -C /work/out-oci -xp $SP_TAR_FLAGS -f -
 getcap /work/out-oci/sbin/probe | grep -q cap_net_raw
 test -f /work/out-oci/etc/sp-kept
 test ! -e /work/out-oci/etc/sp-removed
