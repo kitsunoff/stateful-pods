@@ -35,6 +35,18 @@ teardown() {
     rm -rf "$ROOTFS" "$STUB_DIR" "$FIXTURE_DIR"
 }
 
+# Packs a tree the way `crane export` writes one.
+#
+# The member names are the point. go-containerregistry cleans every header name,
+# so a flattened image is `dev` and `etc/os-release` and never `./dev` - a
+# fixture built with `tar -cf out .` produces a shape crane cannot emit, and an
+# exclusion asserted against it would pass while excluding nothing.
+pack_like_crane() {
+    local src="$1" out="$2"
+    ( cd "$src" && tar --numeric-owner --xattrs \
+        --xattrs-include=security.capability -cf "$out" -- * )
+}
+
 # A rootfs that looks like a real one: an init, an os-release, and a file
 # carrying a capability, which is the attribute the whole seeding path exists to
 # preserve.
@@ -46,8 +58,7 @@ make_image_tar() {
     cp /bin/true "$src/usr/local/bin/sp-probe"
     setcap cap_net_raw+ep "$src/usr/local/bin/sp-probe"
     echo 'ID=debian' > "$src/etc/os-release"
-    tar -C "$src" --numeric-owner --xattrs --xattrs-include=security.capability \
-        -cf "$FIXTURE_DIR/image.tar" .
+    pack_like_crane "$src" "$FIXTURE_DIR/image.tar"
 }
 
 # A source that carries no userland at all: no shell, no archiver, nothing that
@@ -59,7 +70,7 @@ make_bare_image_tar() {
     mkdir -p "$src/etc" "$src/app"
     echo 'ID=distroless' > "$src/etc/os-release"
     printf 'not a shell\n' > "$src/app/server"
-    tar -C "$src" --numeric-owner -cf "$FIXTURE_DIR/bare.tar" .
+    pack_like_crane "$src" "$FIXTURE_DIR/bare.tar"
 }
 
 # Stands in for the registry client. It records the arguments it was called with,
@@ -223,7 +234,7 @@ expected_platform() {
     make_image_tar
     # Bigger than the 8M /small, so the extraction cannot finish.
     dd if=/dev/urandom of="$FIXTURE_DIR/src/blob" bs=1M count=32 status=none
-    tar -C "$FIXTURE_DIR/src" --numeric-owner -cf "$FIXTURE_DIR/image.tar" .
+    pack_like_crane "$FIXTURE_DIR/src" "$FIXTURE_DIR/image.tar"
     stub_crane "$FIXTURE_DIR/image.tar"
     small="/small/rootfs"
     rm -rf "$small"
@@ -252,7 +263,7 @@ expected_platform() {
     mkdir -p "$FIXTURE_DIR/src/dev"
     mknod "$FIXTURE_DIR/src/dev/null" c 1 3 2>/dev/null \
         || skip "this environment cannot create a device node to seed from"
-    tar -C "$FIXTURE_DIR/src" --numeric-owner -cf "$FIXTURE_DIR/image.tar" .
+    pack_like_crane "$FIXTURE_DIR/src" "$FIXTURE_DIR/image.tar"
     stub_crane "$FIXTURE_DIR/image.tar"
 
     # A device node cannot be recreated in a machine's own user namespace at
@@ -267,14 +278,18 @@ expected_platform() {
 @test "the kernel and runtime directories are not taken from the source" {
     make_image_tar
     mkdir -p "$FIXTURE_DIR/src/proc" "$FIXTURE_DIR/src/sys" "$FIXTURE_DIR/src/run"
+    mkdir -p "$FIXTURE_DIR/src/usr/local/dev"
     echo stale > "$FIXTURE_DIR/src/run/leftover"
     echo stale > "$FIXTURE_DIR/src/proc/leftover"
-    tar -C "$FIXTURE_DIR/src" --numeric-owner -cf "$FIXTURE_DIR/image.tar" .
+    echo kept > "$FIXTURE_DIR/src/usr/local/dev/keep-me"
+    pack_like_crane "$FIXTURE_DIR/src" "$FIXTURE_DIR/image.tar"
     stub_crane "$FIXTURE_DIR/image.tar"
     run sp_fill_rootfs "$ROOTFS"
     [ "$status" -eq 0 ]
     [ ! -e "$ROOTFS/run/leftover" ]
     [ ! -e "$ROOTFS/proc/leftover" ]
+    # Excluding `dev` must not also exclude a directory that merely ends in it.
+    [ -e "$ROOTFS/usr/local/dev/keep-me" ]
 }
 
 @test "a rejected credential names the secret that was used" {
@@ -307,4 +322,37 @@ JSON
     run sp_fill_rootfs "$ROOTFS"
     [ "$status" -ne 0 ]
     [[ "$output" != *secret* ]]
+}
+
+@test "a producer signalled after the unpack finished is not a failed fetch" {
+    make_image_tar
+    # tar closes the pipe at the end-of-archive marker, so a producer still
+    # writing is killed with SIGPIPE. The seed succeeded; the signal is only how
+    # the pipeline ended.
+    cat > "$STUB_DIR/crane" <<EOF
+#!/bin/sh
+cat "$FIXTURE_DIR/image.tar"
+exit 141
+EOF
+    chmod +x "$STUB_DIR/crane"
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ -e "$ROOTFS/etc/os-release" ]
+}
+
+@test "a volume that cannot hold the image is reported as an unpack, not a fetch" {
+    [ -d /small ] || skip "no size-limited filesystem available"
+    make_image_tar
+    dd if=/dev/urandom of="$FIXTURE_DIR/src/blob" bs=1M count=32 status=none
+    pack_like_crane "$FIXTURE_DIR/src" "$FIXTURE_DIR/image.tar"
+    stub_crane "$FIXTURE_DIR/image.tar"
+    small="/small/rootfs3"
+    rm -rf "$small"
+    mkdir -p "$small"
+    run sp_fill_rootfs "$small"
+    [ "$status" -ne 0 ]
+    # The registry did nothing wrong, and saying it did sends the reader to the
+    # wrong place entirely.
+    [[ "$output" == *unpacking* ]]
+    [[ "$output" != *"failed with status 141"* ]]
 }

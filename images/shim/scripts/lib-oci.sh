@@ -52,10 +52,16 @@ sp_fill_rootfs() {
     # one whatever it is granted. tar would fail with EPERM and take the whole
     # seed down over content that is discarded a moment later - the driver wipes
     # and recreates all five of them empty as soon as the fill returns.
-    local -a excludes=()
+    #
+    # The names must match what the producer actually writes. go-containerregistry
+    # cleans every header name, so `crane export` emits `dev` and `etc/os-release`
+    # and never a `./` prefix - a pattern written the other way matches nothing
+    # and excludes nothing. Both shapes are listed so that neither depends on
+    # that, and --anchored keeps `dev` from also matching `usr/local/dev`.
+    local -a excludes=(--anchored)
     local runtime_dir
     for runtime_dir in $SP_RUNTIME_DIRS; do
-        excludes+=("--exclude=./$runtime_dir")
+        excludes+=("--exclude=$runtime_dir" "--exclude=./$runtime_dir")
     done
 
     # Both halves of the pipeline are checked. A tar that exits cleanly on a
@@ -70,12 +76,28 @@ sp_fill_rootfs() {
         piped=("${PIPESTATUS[@]}")
     } || true
 
-    if [ "${piped[0]}" -ne 0 ]; then
-        sp_log "fetching ${SP_SOURCE_REFERENCE:-} for $platform failed with status ${piped[0]}${SP_SOURCE_PULL_SECRET:+, using the credentials in secret $SP_SOURCE_PULL_SECRET}"
+    local fetch_status="${piped[0]}" unpack_status="${piped[1]}"
+    # 141 is SIGPIPE. tar closes the pipe as soon as it stops reading - at the
+    # end-of-archive marker, or because it failed - so a producer that was still
+    # writing is signalled. That is a consequence of how the pipeline ended and
+    # never a cause: reporting it would blame the registry for a full volume, or
+    # fail a seed that finished.
+    if [ "$fetch_status" -eq 141 ]; then
+        fetch_status=0
+    fi
+
+    if [ "$unpack_status" -ne 0 ]; then
+        # A fetch that died leaves tar reading a truncated stream, so when both
+        # failed the fetch is the cause and the one worth naming.
+        if [ "$fetch_status" -ne 0 ]; then
+            sp_log "fetching ${SP_SOURCE_REFERENCE:-} for $platform failed with status $fetch_status${SP_SOURCE_PULL_SECRET:+, using the credentials in secret $SP_SOURCE_PULL_SECRET}"
+        else
+            sp_log "unpacking ${SP_SOURCE_REFERENCE:-} into $root failed with status $unpack_status"
+        fi
         return 1
     fi
-    if [ "${piped[1]}" -ne 0 ]; then
-        sp_log "unpacking ${SP_SOURCE_REFERENCE:-} into $root failed with status ${piped[1]}"
+    if [ "$fetch_status" -ne 0 ]; then
+        sp_log "fetching ${SP_SOURCE_REFERENCE:-} for $platform failed with status $fetch_status${SP_SOURCE_PULL_SECRET:+, using the credentials in secret $SP_SOURCE_PULL_SECRET}"
         return 1
     fi
     return 0

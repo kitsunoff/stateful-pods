@@ -103,8 +103,9 @@ already does.
 
 Running as the container's root user is not privilege in that sense - it is what
 writing another system's file ownership requires, and under `userns` it is not
-root on the node at all. It is set explicitly because a source image may declare a
-non-root user of its own, and extraction would then fail.
+root on the node at all. It is stated rather than left to the image, so that the
+posture a machine gets is the one the chart chose and not one a `shim.image`
+override could change by declaring a user of its own.
 
 Takes the same machine context as the other helpers.
 */}}

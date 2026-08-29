@@ -374,7 +374,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | An unreachable template is a failure, not an empty machine | `seed-lxc.bats` |
 | An archive that is not a root filesystem is rejected | `seed-lxc.bats` |
 | A multi-part archive is rejected | `seed-lxc.bats` |
-| Device nodes are not copied | `seed-oci-copy.bats`, `hack/integration-test.sh` |
+| Device nodes are not copied | `seed-oci-copy.bats` |
 | Runtime directories are present but empty | `seed-driver.bats`, `hack/integration-test.sh` |
 | A failed seeding does not start a guest | `seed-driver.bats`, `seed-oci-copy.bats` |
 | The cause is visible where a user will look | `seed-driver.bats`, `seed-lxc.bats` |
