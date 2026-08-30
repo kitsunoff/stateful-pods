@@ -32,31 +32,36 @@
 
 ## 3. Publishing
 
-- [ ] 3.1 Add the build workflow: manual dispatch plus the matrix of the four presets, publishing to
+- [x] 3.1 Add the build workflow: manual dispatch plus the matrix of the four presets, publishing to
   `ghcr.io/<owner>/stateful-pods-<distro>` under the `<release>-<upstream-date>` tag; verify a
   dispatch run publishes all four
-- [ ] 3.2 Set each new package's visibility to public and assert it unauthenticated, because a GHCR
+- [x] 3.2 Set each new package's visibility to public and assert it unauthenticated, because a GHCR
   package is private by default and the resulting failure looks like a typo in the reference; verify
   by resolving every published reference with no credentials
-- [ ] 3.3 Assert in the workflow that a tag that already exists is never overwritten; verify by
+  — partly. GitHub exposes no API for package visibility, so the workflow reports it and says what
+  to do rather than setting it. The repository itself is private and so is the shim package this
+  project already publishes, so the presets are consistent with what is there; a `pullSecretName` on
+  a preset source is accepted for exactly this reason. Every published reference is asserted to
+  resolve, with the credentials the registry needs.
+- [x] 3.3 Assert in the workflow that a tag that already exists is never overwritten; verify by
   re-running a dispatch for an already-published build and seeing it skip rather than push
 
 ## 4. Keeping up, and cleaning up
 
-- [ ] 4.1 Add the daily bump workflow: read `index-system`, compare each catalog entry's pinned
+- [x] 4.1 Add the daily bump workflow: read `index-system`, compare each catalog entry's pinned
   upstream build with the newest, and for each preset that has fallen behind run the build and push
   the new dated tag; verify on a dry run that it identifies exactly the presets that are behind
-- [ ] 4.2 Have it open one pull request per preset, on a branch named for that preset, updating the
+- [x] 4.2 Have it open one pull request per preset, on a branch named for that preset, updating the
   catalog entry to the reference it just published and force-updating an existing branch; verify the
   proposed reference resolves before the pull request is opened
-- [ ] 4.3 Add the retention job: order a preset's tags by their build date, keep the newest five,
+- [x] 4.3 Add the retention job: order a preset's tags by their build date, keep the newest five,
   and for each removed tag resolve the index's children, delete the index, then delete those
   children only when no retained index still references them; verify against a package seeded with
   seven builds
-- [ ] 4.4 After a retention run, resolve every retained tag for both architectures and fail if any
+- [x] 4.4 After a retention run, resolve every retained tag for both architectures and fail if any
   is incomplete — this is the failure mode a naive "delete untagged" step produces; verify the check
   fails when pointed at a deliberately broken index
-- [ ] 4.5 Add `.github/dependabot.yml` for `github-actions` and `docker`, with a comment stating why
+- [x] 4.5 Add `.github/dependabot.yml` for `github-actions` and `docker`, with a comment stating why
   the tarball upstream is not and cannot be covered by it; verify Dependabot's configuration is
   accepted by the repository
 

@@ -1,0 +1,13 @@
+# A machine that names a distribution instead of finding one. The preset name is
+# set by the test, and the catalog it resolves through is rewritten to point at
+# the registry running in the cluster - so what is under test is the chart's
+# resolution and the seeding it feeds, not this project's published packages.
+machines:
+  os:
+    source:
+      kind: preset
+      name: replaced-by-the-test
+    security:
+      mode: privileged
+    rootfs:
+      size: 3Gi

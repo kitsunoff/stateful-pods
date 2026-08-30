@@ -119,13 +119,53 @@ to another node, upgrading the chart.
 
 ### What each source kind needs
 
-| | `oci` | `lxc` |
-| --- | --- | --- |
-| Filled by | a step running the chart's own image | a step running the chart's own image |
-| Obtained with | `crane`, which flattens the image's layers into a tar stream | `curl`, over HTTPS |
-| The source must provide | nothing; it is never executed | nothing; it is a tarball |
-| Integrity | the registry, via the image's digest | the mandatory `sha256`, checked before anything is unpacked |
-| Formats | any image | `.tar.zst`, `.tar.xz`, `.tar.gz` |
+| | `preset` | `oci` | `lxc` |
+| --- | --- | --- | --- |
+| You write | a name | an image reference | a URL and a checksum |
+| Filled by | a step running the chart's own image | a step running the chart's own image | a step running the chart's own image |
+| Obtained with | `crane`, after the name resolves to a reference | `crane`, which flattens the image's layers into a tar stream | `curl`, over HTTPS |
+| The source must provide | nothing; it is never executed | nothing; it is never executed | nothing; it is a tarball |
+| Integrity | the upstream's GPG signature over its published checksums, verified at build time against a key pinned in this repository | the registry, via the image's digest | the mandatory `sha256`, checked before anything is unpacked |
+| Formats | not your problem | any image | `.tar.zst`, `.tar.xz`, `.tar.gz` |
+
+### Naming a distribution instead of finding one
+
+Declaring a source is the hardest part of installing this chart, and it is hard for a reason that
+has nothing to do with machines: an `lxc` source needs a URL and a checksum found by hand from an
+index that publishes a new dated build every day, and an `oci` source needs an image that happens to
+be a whole operating system, which most published images are not.
+
+A `preset` is a name for one this project publishes:
+
+```yaml
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+```
+
+The names, and the digest-pinned reference each resolves to, are in `presets.yaml` beside this file.
+Today they are `debian-trixie`, `ubuntu-noble`, `alpine-3.24` and `void-current`. An unknown name
+fails rendering and lists the ones that exist.
+
+A preset is stronger than an `lxc` source rather than merely shorter. Each one is an upstream
+distribution's own root filesystem, packaged unmodified — the archive that was verified *is* the
+image's layer, so there is no extraction for an extended attribute to be lost in — and it is
+packaged only after the detached GPG signature the upstream publishes over its checksums verifies
+against a key fingerprint pinned in this repository. A checksum you found yourself establishes that
+the bytes did not change in transit from whoever served them, and nothing more.
+
+What a name resolves to is decided while the chart renders and at no later point, so the manifest
+you review carries the same source the pod will use. The catalog moves only through a reviewed
+change, even though the builds behind it are published automatically: a newer upstream build is
+almost certainly better, but what the chart points at is still a decision.
+
+The presets carry a `pullSecretName` like any other source, because the registry serving them may
+want credentials — a preset is a name for a reference, not a promise about who may fetch it.
+
+Presets are not extensible through values. A user who wants their own image already has `kind: oci`,
+which is the honest way to say "an image I chose".
 
 **Any OCI image can be a source.** Nothing from it is executed, so an Alpine-, busybox- or
 distroless-based image is an ordinary source — it needs no shell and no archiver of its own. What it
@@ -638,3 +678,34 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A path supplied to a form that takes none is rejected | `values_seccomp_profile_test.yaml` |
 | The runtime default is rejected for the machine | `values_seccomp_profile_test.yaml` |
 | The rejection does not apply to the preparation steps | `values_seccomp_profile_test.yaml` |
+
+### distro-presets
+
+| Scenario | Covered by |
+| --- | --- |
+| The contents are the upstream's | `hack/preset-build.sh` compares the published layer's `diff_id` against the checksum of the archive that was verified |
+| A preset carries no configuration of ours | `crane mutate` sets a platform and labels and nothing else |
+| An unsigned or wrongly signed checksum list stops the build | `test/presets/verification.bats` |
+| A checksum mismatch stops the build | `test/presets/verification.bats` |
+| What was verified is recorded | the `io.stateful-pods.preset.upstream.*` labels |
+| One reference serves both architectures | `hack/preset-build.sh`, asserted in `preset-publish.yaml` |
+| A preset with an incomplete upstream is not published | `test/presets/verification.bats` |
+| A published tag keeps its content | `test/presets/verification.bats`, and the build skips a tag that exists |
+| No tag tracks the newest build | every tag names an upstream build date |
+| A named preset renders as a pinned reference | `values_preset_source_test.yaml` |
+| The table is part of the chart | `.Files.Get`, exercised from a package |
+| The five newest builds of a preset remain | `test/presets/retention.bats` |
+| Retention is per preset | `hack/preset-retention.sh` runs per package |
+| A kept build stays whole | `test/presets/retention.bats`, and asserted after every run |
+| A newer upstream build is proposed | `preset-bump.yaml`, `test/presets/bump.bats` |
+| An unchanged upstream proposes nothing | `test/presets/bump.bats` |
+| A proposal names a reference that already exists | `preset-bump.yaml` publishes before it proposes |
+
+### values-validation (added by distro-presets)
+
+| Scenario | Covered by |
+| --- | --- |
+| A missing preset name is rejected | `values_preset_source_test.yaml` |
+| An unknown preset name is rejected with the alternatives | `values_preset_source_test.yaml` |
+| A preset name is never substituted | `values_preset_source_test.yaml` |
+| A field belonging to another kind is rejected | `values_preset_source_test.yaml` |
