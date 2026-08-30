@@ -60,6 +60,19 @@ cloud-init installed and switched off, in which case a seed alone changes nothin
 - **WHEN** the chosen backend cannot run
 - **THEN** the chart fails rather than provisioning by some other means
 
+#### Scenario: The message describes a fix that actually works
+
+- **WHEN** the message tells a user how to recover
+- **THEN** it names every step required, including replacing the machine's pod — changing the value
+  alone leaves the failing pod in place, because a StatefulSet does not replace a pod that never
+  became ready
+
+#### Scenario: A failed check leaves nothing behind
+
+- **WHEN** the check refuses an image
+- **THEN** nothing has been written into the machine, so a later start on a backend that can run
+  finds the root filesystem as its source left it
+
 #### Scenario: An image that ships the backend disabled is not treated as able to run it
 
 - **WHEN** a root filesystem carries cloud-init together with the marker its distribution uses to
@@ -132,6 +145,17 @@ one file means whichever ran last wins.
 
 - **WHEN** a machine is provisioned by cloud-init
 - **THEN** its host name, host table and resolver are the ones the chart writes on every boot
+
+#### Scenario: Which datasource a machine uses does not depend on its surroundings
+
+- **WHEN** a machine is provisioned by cloud-init
+- **THEN** the datasource it uses is the seed the chart wrote, and is not chosen by probing what
+  happens to be reachable from the node at that moment
+
+#### Scenario: The machine is provisioned whatever init system it runs
+
+- **WHEN** a machine's root filesystem starts cloud-init through something other than systemd
+- **THEN** it is provisioned in the same way and from the same seed
 
 ### Requirement: A changed configuration is re-applied and an unchanged one is not
 

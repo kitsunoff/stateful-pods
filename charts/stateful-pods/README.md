@@ -1171,6 +1171,8 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | An unrecognised backend is refused | `values_provisioning_test.yaml` |
 | A machine on an image with no cloud-init does not boot silently | `provision.bats`, `hack/integration-test.sh` |
 | The check never switches backend on the machine's behalf | `provision.bats` |
+| The message describes a fix that actually works | `provision.bats`, and `hack/integration-test.sh` follows the instruction rather than working around it |
+| A failed check leaves nothing behind | `provision.bats`, `hack/integration-test.sh` |
 | An image that ships the backend disabled is not treated as able to run it | `provision.bats`, `hack/integration-test.sh` |
 | An input given inline reaches the machine | `provisioning_volume_test.yaml`, `hack/integration-test.sh` |
 | An input given by reference reaches the machine | `provisioning_volume_test.yaml` |
@@ -1179,6 +1181,8 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A machine reads the configuration it was given | `hack/integration-test.sh`, which logs in over SSH as the provisioned user |
 | Provisioning does not take the machine's address away | `provision.bats`, `hack/integration-test.sh` |
 | Provisioning does not fight the files the chart maintains | `provision.bats`, `hack/integration-test.sh` |
+| Which datasource a machine uses does not depend on its surroundings | `provision.bats` asserts the drop-in pins it; `hack/integration-test.sh` asserts the machine used it |
+| The machine is provisioned whatever init system it runs | `provision.bats` for OpenRC and systemd; the Alpine preset stage of `hack/integration-test.sh` for a booted OpenRC machine |
 | Changing the configuration re-applies it | `provision.bats` |
 | Restarting with no change re-applies nothing | `provision.bats` |
 | A clone into another release is a different instance | `provision.bats` |
