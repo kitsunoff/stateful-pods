@@ -73,6 +73,10 @@ OWN_WORK_DIR=0
 # nothing to do today; a person running the build by hand sees why.
 EXIT_UPSTREAM_NOT_READY=3
 
+# Short flags on `rm` and `mkdir` throughout, against this repository's usual
+# rule and for the reason hack/seccomp-test.sh gives: BSD rm and BSD mkdir reject
+# the long forms, and this script runs on a developer's Mac as readily as on the
+# runner. A cleanup that silently does nothing is worse than an ugly flag.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname -- "$SCRIPT_DIR")"
 KEY_FILE="$ROOT_DIR/images/presets/signing-key.asc"
@@ -380,7 +384,7 @@ package_arch() {
       "  verified archive: $expected")"
   fi
 
-  rm --force "$tarball"
+  rm -f "$tarball"
 }
 
 # --- one preset ---------------------------------------------------------------
@@ -451,7 +455,7 @@ build_preset() {
   for position in "${!arches[@]}"; do
     arch="${arches[$position]}"
     directory="$WORK_DIR/$preset/$arch"
-    mkdir --parents "$directory"
+    mkdir -p "$directory"
     upstream_url="$MIRROR${paths[$position]%/}"
 
     note "$preset/$arch: verifying $upstream_url"
@@ -461,7 +465,7 @@ build_preset() {
     package_arch "$repository:$tag-$arch" "$directory/rootfs.tar.xz" \
       "linux/$arch" "$preset" "$upstream_url" "$build" "$checksum" "$directory"
     children+=("--manifest" "$repository:$tag-$arch")
-    rm --recursive --force "$directory"
+    rm -rf "$directory"
   done
 
   note "$preset: combining into $repository:$tag"
@@ -473,7 +477,7 @@ build_preset() {
 # --- entry point --------------------------------------------------------------
 
 cleanup() {
-  [[ "$OWN_WORK_DIR" == "1" ]] && rm --recursive --force "$WORK_DIR"
+  [[ "$OWN_WORK_DIR" == "1" ]] && rm -rf "$WORK_DIR"
   return 0
 }
 

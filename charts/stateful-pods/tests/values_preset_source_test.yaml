@@ -1,0 +1,224 @@
+suite: values validation - a preset source
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  # The reference is asserted by shape rather than by value. The catalog is
+  # updated by a bot every time an upstream rebuilds, and a test that pinned the
+  # digest would fail on every one of those bumps while proving nothing about
+  # what the chart does with it.
+  - it: renders the pinned reference the named preset resolves to
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.initContainers[0].env[6].value
+          pattern: '^ghcr\.io/[^/]+/stateful-pods-debian-trixie@sha256:[0-9a-f]{64}$'
+      - equal:
+          path: spec.template.spec.initContainers[0].env[6].name
+          value: SP_SOURCE_REFERENCE
+
+  # The scripts never learn that presets exist. A preset is a name for an image,
+  # and the step that fetches an image is the one that already exists.
+  - it: seeds through the oci path, with no new kind reaching the scripts
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: preset
+          name: alpine-3.24
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].command[0]
+          value: /usr/local/lib/stateful-pods/seed-oci.sh
+      - equal:
+          path: spec.template.spec.initContainers[0].env[5].name
+          value: SP_SOURCE_KIND
+      - equal:
+          path: spec.template.spec.initContainers[0].env[5].value
+          value: oci
+
+  # Without this the volume records a digest and nothing else, and "which preset
+  # was this machine made from" becomes unanswerable exactly when it matters.
+  - it: tells the preparation step which preset the machine was made from
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: preset
+          name: void-current
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].env[7].name
+          value: SP_SOURCE_PRESET
+      - equal:
+          path: spec.template.spec.initContainers[0].env[7].value
+          value: void-current
+      - equal:
+          path: spec.template.spec.initContainers[1].env[7].name
+          value: SP_SOURCE_PRESET
+      - equal:
+          path: spec.template.spec.initContainers[1].env[7].value
+          value: void-current
+
+  - it: leaves SP_SOURCE_PRESET out entirely for a source that is not a preset
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers[0].env
+          count: 7
+
+  - it: rejects a preset source that names no preset, listing the ones there are
+    set:
+      machines.web:
+        source:
+          kind: preset
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.name: not set.*debian-trixie.*void-current'
+
+  - it: rejects a preset this chart does not ship, listing the ones it does
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name: debian-forky
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.name: "debian-forky" is not a preset this chart ships.*alpine-3\.24.*debian-trixie.*ubuntu-noble.*void-current'
+
+  - it: rejects a preset name that is not a string
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name:
+            - debian-trixie
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.name: must be the name of a preset'
+
+  # Two intentions, one of which would be discarded - and the discarded one may
+  # be the one the user believed was in effect.
+  - it: rejects a preset source that also carries an oci reference
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.reference: does not belong to source kind "preset".*"oci"'
+
+  - it: rejects a preset source that also carries an lxc url
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+          url: https://example.test/rootfs.tar.zst
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.url: does not belong to source kind "preset".*"lxc"'
+
+  - it: rejects a preset source that also carries an lxc checksum
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+          sha256: 0000000000000000000000000000000000000000000000000000000000000000
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.sha256: does not belong to source kind "preset".*"lxc"'
+
+  # The catalog is what this project publishes, and what it publishes is private
+  # to it. A preset is a name for a reference, not a promise that the reference
+  # needs no credentials.
+  - it: lets a preset name the credentials its registry needs
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+          pullSecretName: registry-credentials
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].secret.secretName
+          value: registry-credentials
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts[1].mountPath
+          value: /etc/stateful-pods/registry-auth
+
+  - it: names preset among the accepted kinds when the kind is wrong
+    set:
+      machines.web:
+        source:
+          kind: docker
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.kind: "docker" is not a supported source kind.*oci, lxc, preset'

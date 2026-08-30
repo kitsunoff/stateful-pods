@@ -21,9 +21,9 @@ KUBE_VERSION ?= 1.33.0
 KUBE_VERSION_FLOOR ?= $(shell sed -n 's/^kubeVersion: ">= \(.*\)-0"$$/\1/p' $(CHART)/Chart.yaml)
 FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
-.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test preset-test preset-build
+.PHONY: all lint shell-lint test shell-test render conform docs presets image-build image-test integration-test seccomp-test preset-test preset-build
 
-all: lint shell-lint docs test shell-test preset-test conform
+all: lint shell-lint docs presets test shell-test preset-test conform
 
 ## lint: run helm lint in strict mode against every example
 #  The chart's default values declare no machine on purpose, so linting has to be
@@ -41,6 +41,10 @@ shell-lint:
 ## docs: check the documentation guarantees values.yaml makes
 docs:
 	./hack/check-values-docs.sh $(CHART)/values.yaml
+
+## presets: check the catalog the chart ships against what the project builds
+presets:
+	./hack/check-presets.sh $(CHART)/presets.yaml images/presets/presets.list
 
 ## test: run the helm unittest suites
 test:
