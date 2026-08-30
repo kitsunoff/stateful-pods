@@ -15,8 +15,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
-    # One at a time. A batch of action bumps in a single pull request is a batch
-    # nobody reviews, and this repository's workflows publish images.
+    # A ceiling on how many of these can be open at once. Dependabot already
+    # opens one pull request per action; this is what stops a quiet month from
+    # producing a wall of them, in a repository whose workflows publish images.
     open-pull-requests-limit: 5
 
   # The base image the shim is built from. The only FROM in the repository that

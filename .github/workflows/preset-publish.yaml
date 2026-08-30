@@ -73,13 +73,28 @@ jobs:
           PRESETS: ${{ inputs.presets }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
-          set -o errexit -o nounset -o pipefail
+          set -o nounset -o pipefail
           # Unquoted on purpose: this is a list of preset names, and an empty
           # value has to become no arguments rather than one empty argument.
           # shellcheck disable=SC2086
           ./hack/preset-build.sh \
             --repository "ghcr.io/$REPOSITORY_OWNER/stateful-pods-" \
-            $PRESETS | tee published.tsv
+            $PRESETS > published.tsv
+          status=$?
+          cat published.tsv
+          # 3 is "the upstream has not finished this build for every
+          # architecture yet", which the daily bump already treats as a wait
+          # rather than news - and an upstream can start rebuilding in the hour
+          # between that survey and this. Failing here would throw away the
+          # presets that did publish and skip the proposal for all of them. Any
+          # other non-zero status is something being wrong.
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+            exit "$status"
+          fi
+          if [ ! -s published.tsv ]; then
+            echo "nothing was published" >&2
+            exit "$status"
+          fi
           {
             echo 'published<<PUBLISHED_EOF'
             cat published.tsv

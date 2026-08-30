@@ -502,6 +502,7 @@ require_tools() {
 
 main() {
   local -a presets=()
+  local name
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -530,7 +531,11 @@ main() {
   [[ "$RESOLVE_ONLY" == "1" ]] || require_tools gpgv sed sha256sum crane jq xz
 
   if [[ "${#presets[@]}" -eq 0 ]]; then
-    mapfile -t presets < <(catalog_names)
+    # A read loop rather than mapfile, which is bash 4 and this repository's
+    # macOS bash is 3.2. The same reason the flags above are the short ones.
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && presets+=("$name")
+    done < <(catalog_names)
   fi
   [[ "${#presets[@]}" -gt 0 ]] || die "the catalog at $CATALOG_FILE lists no presets"
 
