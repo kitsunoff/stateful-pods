@@ -170,9 +170,11 @@ the tarballs, and the two do not overlap.
   unauthenticated.
 - **The upstream index is a scrape, not an API** → A format change breaks parsing. The workflow
   fails loudly on a line it cannot parse rather than proposing whatever it managed to read.
-- **Alpine and Void are unusable until `shim-owned-scripts` lands** → Their root filesystems provide
-  busybox tar, which today's OCI seeding path rejects. Sequenced in the migration plan; do not start
-  this change before that one is merged.
+- **Alpine and Void are unusable until `shim-owned-scripts` lands** → Half right, and checked: the
+  Alpine root filesystem provides only busybox tar, which the previous OCI seeding path rejected.
+  Void turns out to ship GNU tar 1.35, so it was never blocked on that; what makes it worth building
+  is that its init is runit, the only non-systemd, non-busybox init this project boots. Sequenced in
+  the migration plan either way; do not start this change before that one is merged.
 - **Retention is only safe after `shim-owned-scripts`** → Until a seeded machine stops fetching its
   source on every start, deleting an old build breaks a running machine that was seeded from it and
   is then rescheduled. Same sequencing.

@@ -92,8 +92,12 @@ not_ready() {
   exit "$EXIT_UPSTREAM_NOT_READY"
 }
 
+# Progress goes to stderr, because stdout is the result: one line per preset,
+# tab separated, which the publishing workflow and the integration test both
+# read. A script whose output another script consumes has no business narrating
+# on the same channel.
 note() {
-  echo "==> $*"
+  echo "==> $*" >&2
 }
 
 usage() {

@@ -55,7 +55,14 @@ REGISTRY_IN_CLUSTER="registry.${NAMESPACE}.svc.cluster.local:5000"
 # The same registry seen from this host, through a port forward. A registry
 # stores by repository path and not by the host it was reached on, so an image
 # pushed here is the image pulled there.
-REGISTRY_LOCAL="localhost:${REGISTRY_PORT:-5000}"
+#
+# The loopback address rather than `localhost`, because `kubectl port-forward`
+# binds 127.0.0.1 and a client that resolves `localhost` to ::1 first - which Go
+# does on a Mac - gets connection refused from a forward that is working
+# perfectly. Naming what the forward actually listens on removes the question.
+# Every client here treats a loopback registry as plain HTTP, which is what makes
+# the forward usable without a certificate.
+REGISTRY_LOCAL="127.0.0.1:${REGISTRY_PORT:-5000}"
 PORT_FORWARD_PID=""
 PREVIOUS_CHART_WORKTREE=""
 # A copy of the chart whose catalog points at this cluster's registry, so that a
@@ -559,10 +566,14 @@ fi
 # the same path through the chart and the same path through the seeding step as
 # the oci machine above already does - a GNU-tar systemd root filesystem from a
 # registry - and each is another 100 MB of download and another 700 MB on the
-# node for no path that is not already covered. Alpine and Void are the ones
-# that are new: both provide only busybox tar, which the seeding step refused
-# outright until it stopped using the source's own archiver, and Void's init is
-# not systemd. If either of those is going to break, it breaks here.
+# node for no path that is not already covered.
+#
+# Alpine and Void are the ones that are new, though not for the same reason the
+# proposal expected. Alpine provides only busybox tar, which is the case the
+# seeding step refused outright until it stopped using the source's own
+# archiver. Void turns out to ship GNU tar 1.35 - so its interest is its init,
+# which is runit: the only machine anywhere in this suite that boots something
+# other than systemd or busybox init.
 #
 # The catalog is rewritten to point at the in-cluster registry. What is being
 # asserted is that a name resolves and that what it resolves to boots; that this
@@ -651,8 +662,17 @@ else
       fi
     fi
 
-    check "the source really provides no GNU tar" \
-      osguest sh -c 'tar --version 2>&1 | grep -q busybox || test ! -x /bin/tar'
+    # What each of these two is here to prove, which is not the same thing.
+    case "$preset" in
+      alpine-3.24)
+        check "the source really provides only busybox tar" \
+          osguest sh -c 'tar --version 2>&1 | grep -q busybox'
+        ;;
+      void-current)
+        check "the machine booted an init that is neither systemd nor busybox" \
+          osguest sh -c '[ "$(cat /proc/1/comm)" = "runit" ]'
+        ;;
+    esac
     check "the machine has the pod's host name" \
       osguest sh -c "[ \"\$(cat /etc/hostname)\" = \"$pod\" ]"
   done
