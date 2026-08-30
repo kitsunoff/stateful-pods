@@ -98,6 +98,6 @@
 
 ## 7. Green at the final commit
 
-- [ ] 7.1 Run `make all`; verify green
-- [ ] 7.2 Run `make image-test`, `make seccomp-test` and `make integration-test`; verify green, and
+- [x] 7.1 Run `make all`; verify green
+- [x] 7.2 Run `make image-test`, `make seccomp-test` and `make integration-test`; verify green, and
   state in the report which targets ran, at which commit, and what could not run
