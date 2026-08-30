@@ -585,7 +585,20 @@ check "the marker that would have made the seed a no-op is gone" \
 
 # That cloud-init ran is not the same as that it succeeded. `status` reports the
 # difference, and a machine whose modules all failed would still have "run".
-provision_status="$(ci cloud-init status --long 2>&1 | tr -d '\r' || true)"
+#
+# Waited for rather than read once. Readiness is the machine's init system
+# reporting that it finished starting, which happens while cloud-init's later
+# stages are still going - so reading the status at that moment finds "running"
+# on a machine that goes on to succeed. `--wait` would block with no bound, and
+# a suite that hangs is worse than one that fails.
+provision_status=""
+for _ in $(seq 1 90); do
+  provision_status="$(ci cloud-init status --long 2>&1 | tr -d '\r' || true)"
+  case "$provision_status" in
+    *"status: done"*|*"status: error"*|*"status: degraded"*) break ;;
+  esac
+  sleep 5
+done
 if grep --quiet '^status: done' <<< "$provision_status"; then
   pass "cloud-init reports the run as done rather than merely started"
 else
@@ -611,10 +624,19 @@ check "the commands the user-data asked for ran" ci test -f /etc/provisioned-by-
 # that the key authenticates and not merely that a file with the right bytes in
 # it is on disk.
 step "logging into the machine over SSH with the key the user-data supplied"
-login="$(ci sh -c 'ssh -i /root/fixture-key \
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o BatchMode=yes -o ConnectTimeout=10 \
-    maxim@127.0.0.1 "id -un"' 2>&1 | tr -d '\r' || true)"
+# Retried, for the same reason the status above is waited for: cloud-init
+# regenerates this machine's SSH host keys as part of provisioning it, and the
+# server is restarted around that. A single attempt would be a race between the
+# assertion and the thing it is asserting.
+login=""
+for _ in $(seq 1 30); do
+  login="$(ci sh -c 'ssh -i /root/fixture-key \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o BatchMode=yes -o ConnectTimeout=10 \
+      maxim@127.0.0.1 "id -un"' 2>&1 | tr -d '\r' || true)"
+  grep --quiet --line-regexp maxim <<< "$login" && break
+  sleep 5
+done
 if grep --quiet --line-regexp maxim <<< "$login"; then
   pass "an SSH login as the provisioned user, authenticated by the provisioned key, succeeds"
 else
