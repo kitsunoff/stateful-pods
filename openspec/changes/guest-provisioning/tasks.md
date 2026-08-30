@@ -69,16 +69,16 @@
 
 ## 5. Prove both halves on a cluster, as a user
 
-- [ ] 5.1 Add the positive assertion to `hack/integration-test.sh`: a machine whose `userData`
+- [x] 5.1 Add the positive assertion to `hack/integration-test.sh`: a machine whose `userData`
   creates a user with an SSH public key, asserting inside the booted machine that the user exists,
   that the key is in its `authorized_keys`, and that cloud-init reports the run as successful rather
   than merely having started
-- [ ] 5.2 Add the negative assertion: a machine on a root filesystem that cannot run cloud-init and
+- [x] 5.2 Add the negative assertion: a machine on a root filesystem that cannot run cloud-init and
   declares no backend must fail, and the assertion must match the message the design demands rather
   than merely observing that the pod is unhealthy; verify it fails if the message changes
-- [ ] 5.3 Add the assertion that the same machine boots once it names `guest.provisioning: native`,
+- [x] 5.3 Add the assertion that the same machine boots once it names `guest.provisioning: native`,
   so the fix the message offers is the fix that works
-- [ ] 5.4 Run the whole suite on kind against a machine seeded from a preset carrying cloud-init;
+- [x] 5.4 Run the whole suite on kind against a machine seeded from a preset carrying cloud-init;
   verify the user it created can be logged into over SSH from inside the cluster, using the key that
   was supplied
 

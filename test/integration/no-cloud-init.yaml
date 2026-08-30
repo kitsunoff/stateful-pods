@@ -1,0 +1,20 @@
+# A machine that declares no provisioning backend, on an image that cannot run
+# the default one.
+#
+# The failure this whole capability exists to prevent, made to happen on purpose.
+# Without the refusal this machine would seed a volume, write a seed nothing
+# reads, boot with no users and no keys, and look exactly like a successful
+# install. The suite asserts the message rather than merely that the pod is
+# unhealthy, because the message is the feature.
+#
+# The Alpine source image is used because it genuinely has no cloud-init, rather
+# than being made to look as though it has none.
+machines:
+  broken:
+    source:
+      kind: oci
+      reference: stateful-pods-test-alpine:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 1Gi

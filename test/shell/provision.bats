@@ -108,6 +108,26 @@ seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
     [[ "$output" == *"guest.provisioning: native"* ]]
 }
 
+# Changing the value is not enough on its own, which was found on a cluster
+# rather than by reading: a StatefulSet does not replace a pod that never became
+# ready, so the new backend sits in the object while the old pod goes on failing.
+# A fix that does not work when followed is worse than no fix at all.
+@test "the message says the pod has to be deleted for the fix to take effect" {
+    run sp_provision "$ROOTFS"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"delete this pod"* ]]
+    [[ "$output" == *"never became ready"* ]]
+}
+
+@test "the message about an image that cannot start cloud-init says so too" {
+    mkdir -p "$ROOTFS/usr/bin"
+    printf '#!/usr/bin/python3\n' > "$ROOTFS/usr/bin/cloud-init"
+    chmod 0755 "$ROOTFS/usr/bin/cloud-init"
+    run sp_provision "$ROOTFS"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"delete this pod"* ]]
+}
+
 @test "the message names the machine and what was looked for" {
     run sp_provision "$ROOTFS"
     [ "$status" -ne 0 ]

@@ -212,7 +212,7 @@ on_exit() {
   if [[ "$code" -ne 0 ]]; then
     echo "--- pods ---" >&2
     kc get pods >&2 2>&1 || true
-    for container in seed prepare; do
+    for container in seed prepare provision; do
       echo "--- $container logs ---" >&2
       kc logs --selector stateful-pods.io/machine --container "$container" --tail 40 >&2 2>&1 || true
     done
@@ -546,6 +546,156 @@ if [[ "$(guest cat /.stateful-pods/provisioned)" == "$before" ]]; then
 else
   fail "the seeding record was rewritten on an ordinary restart"
 fi
+
+# ------------------------------------------------------- guest provisioning ---
+# The capability's headline, and the failure it exists to prevent, one after the
+# other. Both are here rather than in the unit suites because neither can be
+# proved by rendering: whether cloud-init inside a real machine read the seed the
+# chart wrote, and whether a machine on an image that cannot run it stops instead
+# of booting with no way in.
+step "installing a machine provisioned by cloud-init from raw user-data"
+helm --kube-context "$CONTEXT" upgrade --install cloudinit "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/cloudinit.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.web.source.reference=$SOURCE_REFERENCE" \
+  --wait --timeout 10m >/dev/null
+wait_ready cloudinit-web-0
+
+assert_default_filter cloudinit-web-0
+
+step "asserting the machine was provisioned"
+ci() { kc exec cloudinit-web-0 --container guest -- "$@"; }
+
+# The seed, where cloud-init's NoCloud datasource looks for it. Asserted on the
+# machine's own filesystem, after the root change, so this is the volume and not
+# a directory in the chart's image.
+check "the seed is in the machine's own root filesystem" \
+  ci test -f /var/lib/cloud/seed/nocloud/user-data
+check "the seed carries an instance identity" \
+  ci test -f /var/lib/cloud/seed/nocloud/meta-data
+check "the drop-in the chart owns is in the machine" \
+  ci test -f /etc/cloud/cloud.cfg.d/99-stateful-pods.cfg
+# The marker the upstream builder writes into every LXC image it publishes, which
+# the fixture carries on purpose. With it in place every unit's condition fails
+# and every OpenRC script warns and stops, so a chart that wrote a seed and left
+# it would provision nothing while looking like it had.
+check "the marker that would have made the seed a no-op is gone" \
+  ci test ! -e /etc/cloud/cloud-init.disabled
+
+# That cloud-init ran is not the same as that it succeeded. `status` reports the
+# difference, and a machine whose modules all failed would still have "run".
+provision_status="$(ci cloud-init status --long 2>&1 | tr -d '\r' || true)"
+if grep --quiet '^status: done' <<< "$provision_status"; then
+  pass "cloud-init reports the run as done rather than merely started"
+else
+  echo "--- what cloud-init reported ---" >&2
+  echo "$provision_status" >&2
+  fail "cloud-init did not finish successfully inside the machine"
+fi
+if grep --quiet 'DataSourceNoCloud' <<< "$provision_status"; then
+  pass "cloud-init read the seed the chart wrote, and not some other datasource"
+else
+  fail "cloud-init did not use the NoCloud seed: $provision_status"
+fi
+
+step "asserting the user-data produced a user somebody can log in as"
+check "the user the user-data asked for exists" ci id maxim
+check "the key the user-data supplied is the user's" \
+  ci sh -c 'grep -q "stateful-pods-integration-fixture" /home/maxim/.ssh/authorized_keys'
+check "the commands the user-data asked for ran" ci test -f /etc/provisioned-by-cloud-init
+
+# The assertion that is a login rather than a claim that one would work. From
+# inside the machine to itself, over its own SSH server, with the private half of
+# the pair whose public half went in through user-data - so what is proved is
+# that the key authenticates and not merely that a file with the right bytes in
+# it is on disk.
+step "logging into the machine over SSH with the key the user-data supplied"
+login="$(ci sh -c 'ssh -i /root/fixture-key \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o BatchMode=yes -o ConnectTimeout=10 \
+    maxim@127.0.0.1 "id -un"' 2>&1 | tr -d '\r' || true)"
+if grep --quiet --line-regexp maxim <<< "$login"; then
+  pass "an SSH login as the provisioned user, authenticated by the provisioned key, succeeds"
+else
+  fail "the SSH login did not land as maxim: ${login:-nothing}"
+fi
+
+# The chart still owns the three files it writes on every boot, and the CNI still
+# owns the address. cloud-init writing either would be the dangerous half of the
+# division of labour, and the drop-in is what keeps it away from them.
+step "asserting provisioning did not take the machine's own configuration away"
+check "the machine still has the pod's host name" \
+  ci sh -c '[ "$(cat /etc/hostname)" = "cloudinit-web-0" ]'
+check "the machine can still resolve names" ci sh -c 'grep -q nameserver /etc/resolv.conf'
+check "the machine still has the address the cluster gave it" \
+  ci sh -c 'ip -brief addr show eth0 | grep -q "10\\."'
+
+# ------------------------------------------- the failure the design forbids ---
+# The most important assertion in this file. On an image without cloud-init the
+# seed is written, nothing reads it, and the machine boots with no users, no keys
+# and no way in - which looks exactly like a successful install. The message is
+# matched rather than the pod merely being observed unhealthy, because the
+# message is the whole of what makes this failure survivable.
+step "installing a machine whose image cannot run the backend it defaults to"
+helm --kube-context "$CONTEXT" upgrade --install nocloudinit "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/no-cloud-init.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.broken.source.reference=$ALPINE_SOURCE_REFERENCE" \
+  --timeout 5m >/dev/null 2>&1 || true
+
+provision_message=""
+for _ in $(seq 1 90); do
+  provision_message="$(kc logs nocloudinit-broken-0 --container provision 2>/dev/null || true)"
+  [[ -n "$provision_message" ]] && break
+  sleep 2
+done
+
+step "asserting it failed, and said what to do about it"
+if [[ -z "$provision_message" ]]; then
+  kc get pod nocloudinit-broken-0 --output wide >&2 2>&1 || true
+  fail "the provisioning step never produced any output at all"
+fi
+# Every part of the message the design demands, checked separately so that a
+# failure says which part went missing.
+for expected in \
+    "does not carry cloud-init" \
+    "guest.provisioning: native" \
+    "Nothing has been written into the machine" \
+    "delete this pod"; do
+  if grep --quiet --fixed-strings "$expected" <<< "$provision_message"; then
+    pass "the message says: $expected"
+  else
+    echo "--- what the step said ---" >&2
+    echo "$provision_message" >&2
+    fail "the message does not say: $expected"
+  fi
+done
+check "the machine did not start" \
+  bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get pod nocloudinit-broken-0 \
+    --output jsonpath='{.status.containerStatuses[?(@.name==\"guest\")].ready}' | grep -q true"
+step "asserting the fix the message offers is the fix that works"
+helm --kube-context "$CONTEXT" upgrade nocloudinit "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/no-cloud-init.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.broken.source.reference=$ALPINE_SOURCE_REFERENCE" \
+  --set "machines.broken.guest.provisioning=native" \
+  --timeout 5m >/dev/null 2>&1 || true
+# Deleted rather than waited for, which is exactly what the message tells the
+# user to do: a StatefulSet does not replace a pod that never became ready, so
+# the new value sits in the object while the old pod goes on failing. This step
+# is what proves that instruction is right.
+kc delete pod nocloudinit-broken-0 --wait=false >/dev/null 2>&1 || true
+wait_ready nocloudinit-broken-0
+pass "the machine boots once it names the backend the message named"
+# The same volume the failed run had. A seed left behind by a check that refused
+# is the state that looks like success, so its absence is asserted here rather
+# than in the run that could not be exec'd into at all.
+check "the machine carries no cloud state, because nothing provisioned it" \
+  bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' exec nocloudinit-broken-0 \
+    --container guest -- test -d /var/lib/cloud"
 
 # ------------------------------------------------------- a source with no shell ---
 step "installing a machine whose source carries no shell and no GNU tar"

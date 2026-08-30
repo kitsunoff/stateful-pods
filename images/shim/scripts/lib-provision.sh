@@ -157,6 +157,12 @@ sp_check_material() {
 # release series - and a check that guessed wrong would refuse an image that
 # works. These two are true of every image that can run cloud-init and false of
 # every image that cannot.
+#
+# Both messages end by naming the pod deletion, because changing the value is not
+# enough on its own: a StatefulSet will not replace a pod that never became
+# ready, so the new value sits in the object while the old pod goes on failing.
+# Verified on a cluster, and a fix that does not work when followed is worse than
+# no fix at all.
 sp_check_cloud_init() {
     _sp_root="$1"
     _sp_binary=""
@@ -167,7 +173,7 @@ sp_check_cloud_init() {
         fi
     done
     if [ -z "$_sp_binary" ]; then
-        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem does not carry cloud-init. Looked for: $SP_CLOUD_INIT_BINARIES (under $_sp_root). Nothing has been written into the machine. Either seed it from an image that carries cloud-init - the distributions publish a 'cloud' variant for exactly this - or set machines.${SP_MACHINE:-<name>}.guest.provisioning: native, which provisions nothing beyond the host name, host table and resolver the chart maintains on every boot and works with any image."
+        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem does not carry cloud-init. Looked for: $SP_CLOUD_INIT_BINARIES (under $_sp_root). Nothing has been written into the machine. Either seed it from an image that carries cloud-init - the distributions publish a 'cloud' variant for exactly this - or set machines.${SP_MACHINE:-<name>}.guest.provisioning: native, which provisions nothing beyond the host name, host table and resolver the chart maintains on every boot and works with any image. Then delete this pod: a StatefulSet does not replace a pod that never became ready, so the new value will sit in the object while this pod goes on failing."
     fi
 
     _sp_unit=""
@@ -178,7 +184,7 @@ sp_check_cloud_init() {
         fi
     done
     if [ -z "$_sp_unit" ]; then
-        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem carries $_sp_binary but nothing that would start it. Looked for: $SP_CLOUD_INIT_UNITS (under $_sp_root). A seed written into an image whose init system never runs cloud-init is read by nothing, so nothing has been written. Set machines.${SP_MACHINE:-<name>}.guest.provisioning: native, or report this image: the check is deliberately narrow and the paths above are what it searched."
+        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem carries $_sp_binary but nothing that would start it. Looked for: $SP_CLOUD_INIT_UNITS (under $_sp_root). A seed written into an image whose init system never runs cloud-init is read by nothing, so nothing has been written. Set machines.${SP_MACHINE:-<name>}.guest.provisioning: native and then delete this pod - a StatefulSet does not replace a pod that never became ready. Or report this image: the check is deliberately narrow, and the paths above are what it searched."
     fi
 
     sp_log "machine ${SP_MACHINE:-?}: the machine can run cloud-init ($_sp_binary, started by $_sp_unit)"
