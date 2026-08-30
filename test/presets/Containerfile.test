@@ -1,0 +1,49 @@
+# Test environment for the preset build. Not shipped, not published.
+#
+# Separate from the shim's test image on purpose. That one is the userland the
+# machine-preparation scripts run in, and adding a signature verifier and a
+# registry client to it would say those scripts may use them. Nothing about a
+# preset happens inside a machine: it is built, verified and published before
+# any of this ever runs on a cluster.
+#
+# Debian rather than Alpine because the build runs on the CI runner, which is
+# Debian-shaped, and a verification that passes here has to be the verification
+# that runs there.
+FROM debian:13-slim
+
+# gnupg for the signature check - gpgv does the verifying, gpg turns the pinned
+# armoured key into a keyring it can read, and the tests generate a throwaway key
+# to prove a build refuses one that is not the pinned one.
+RUN apt-get update \
+ && apt-get install --assume-yes --no-install-recommends \
+      bats \
+      ca-certificates \
+      coreutils \
+      curl \
+      gnupg \
+      gpgv \
+      jq \
+      xz-utils \
+ && rm --recursive --force /var/lib/apt/lists/*
+
+# The registry client the build packages with. Pinned, and its checksum checked,
+# because a test environment that fetches an unverified binary to test a
+# verification is not a serious test environment.
+ARG CRANE_VERSION=v0.20.6
+ARG CRANE_SHA256_X86_64=c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127
+ARG CRANE_SHA256_ARM64=fc0515857bc38e4ddd2d37a5ab03fb5959449c7b2d4ad759bcc1174ac0cad91b
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) crane_arch=x86_64; crane_sha256="$CRANE_SHA256_X86_64" ;; \
+      arm64) crane_arch=arm64;  crane_sha256="$CRANE_SHA256_ARM64" ;; \
+      *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl --silent --show-error --location --fail \
+      --output /tmp/crane.tar.gz \
+      "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_${crane_arch}.tar.gz"; \
+    echo "${crane_sha256}  /tmp/crane.tar.gz" | sha256sum --check --strict -; \
+    tar --extract --gzip --file /tmp/crane.tar.gz --directory /usr/local/bin crane; \
+    rm --force /tmp/crane.tar.gz; \
+    crane version
+
+WORKDIR /src

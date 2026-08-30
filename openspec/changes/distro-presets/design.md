@@ -81,10 +81,13 @@ three attributes identically, because the tarball is never extracted: the archiv
 is the archive that becomes the layer, which is the only form in which "their contents are
 identical" is a claim rather than a hope.
 
-The assertion is kept, and widened to every extended attribute rather than `security.capability`
-alone - the narrow one is precisely what missed this. It compares the xattr inventory of the
-upstream archive against the inventory of the layer pulled back from the registry, so what is
-checked is what was published rather than an intermediate nobody serves.
+Making the layer the archive also makes the assertion better than the inventory this design first
+proposed. The published layer's `diff_id` is the SHA-256 of its uncompressed content, so comparing
+it against the checksum of the archive that was verified proves the two are the same bytes - every
+extended attribute, every mode, every ordering decision included. An inventory can only assert the
+properties someone thought to enumerate, which is exactly how the ACLs were nearly missed. The
+check reads the config back from the registry, so what it compares is what was published rather
+than an intermediate nobody serves.
 
 Dropping the builder drops the QEMU and buildx machinery with it. Packaging a foreign
 architecture's root filesystem never executes it, so there was never anything for emulation to do.
@@ -156,8 +159,8 @@ the tarballs, and the two do not overlap.
 
 - **An extraction-based build drops extended attributes** → Measured, not assumed: `ADD` keeps
   `security.capability` but loses the POSIX ACLs on `/var/log/journal`. Settled by making the layer
-  the upstream archive itself, and asserted after publication by comparing the full xattr inventory
-  of the archive against the inventory of the published layer.
+  the upstream archive itself, and asserted after publication by requiring the published layer's
+  `diff_id` to equal the checksum of the archive that was verified.
 - **A retention job can break a retained multi-architecture image** → Addressed by the algorithm
   above rather than by an off-the-shelf "delete untagged" step. Verified by resolving every retained
   tag for both architectures after a retention run.

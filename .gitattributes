@@ -3,3 +3,13 @@ docs/research/** linguist-documentation
 
 # OpenSpec planning artifacts are documentation, not source.
 openspec/** linguist-documentation
+
+# A signature is over exact bytes. These fixtures are a real upstream checksum
+# list and its detached signature, so any normalisation git might apply - line
+# endings above all - would turn a passing verification into a failing one and
+# the test into a check of git's behaviour rather than the build's.
+test/presets/fixtures/SHA256SUMS      -text
+test/presets/fixtures/SHA256SUMS.asc  -text
+
+# The pinned upstream signing key, for the same reason.
+images/presets/signing-key.asc -text

@@ -21,9 +21,9 @@ KUBE_VERSION ?= 1.33.0
 KUBE_VERSION_FLOOR ?= $(shell sed -n 's/^kubeVersion: ">= \(.*\)-0"$$/\1/p' $(CHART)/Chart.yaml)
 FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
-.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
+.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test preset-test preset-build
 
-all: lint shell-lint docs test shell-test conform
+all: lint shell-lint docs test shell-test preset-test conform
 
 ## lint: run helm lint in strict mode against every example
 #  The chart's default values declare no machine on purpose, so linting has to be
@@ -49,6 +49,31 @@ test:
 ## shell-test: run the bats suites for the shim image's shell scripts
 shell-test:
 	./hack/shell-test.sh
+
+## preset-test: assert what the preset build refuses
+#  In `all`, and not in `image-test` or `integration-test`, because it needs
+#  neither a registry nor a cluster: it runs against a mirror on the local
+#  filesystem. What it covers is the reason a preset is worth more than an `lxc`
+#  source - that the upstream's signature was checked against the key this
+#  repository pins - and that guarantee is only worth as much as the failures
+#  around it, so they are checked on every run rather than on the ones that
+#  happen to have a registry.
+preset-test:
+	./hack/preset-test.sh
+
+## preset-build: verify and publish the preset images
+#  Publishing, not building: there is nothing to build. The verified upstream
+#  archive becomes the image's single layer, so this needs a registry to push to
+#  rather than a builder to run.
+#
+#  Takes arguments through PRESET_ARGS, because what it does depends entirely on
+#  them - `PRESET_ARGS=--resolve-only` reports what the upstream offers and
+#  touches nothing, and naming presets builds only those:
+#
+#    make preset-build PRESET_ARGS="--resolve-only"
+#    make preset-build PRESET_ARGS="--repository localhost:5000/preset- alpine-3.24"
+preset-build:
+	./hack/preset-build.sh $(PRESET_ARGS)
 
 ## image-build: build the toolbox image for the host architecture
 image-build:
