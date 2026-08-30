@@ -288,10 +288,20 @@ sed -e '/^      hostUsers: false$/d' "$RAW_MANIFEST" > "$MACHINE_MANIFEST"
 # an assertion that passes for no reason.
 sed -e '/^ *seccompProfile:$/{N;/type: "Unconfined"/d;}' \
   "$MACHINE_MANIFEST" > "$DEFECTIVE_MANIFEST"
-[[ "$(grep --count 'Unconfined' "$DEFECTIVE_MANIFEST" || true)" -eq 0 ]] \
-  || fail "the guest's declared filter was not removed, so the defect case is not the defect"
-[[ "$(grep --count 'seccompProfile:' "$DEFECTIVE_MANIFEST" || true)" -eq 3 ]] \
-  || fail "removing the guest's filter also removed a preparation step's"
+# Three filters left, and none of them the guest's: the preparation steps declare
+# RuntimeDefault, and the guest is the only container in this manifest that
+# declares Unconfined. Checked by shape rather than by counting the word, because
+# the guest declares an access-control profile that is Unconfined as well.
+[[ "$(grep --count '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" || true)" -eq 3 ]] \
+  || fail "removing the guest's filter removed the wrong number of filters"
+if grep --after-context=1 '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" | grep --quiet 'Unconfined'; then
+  fail "the guest's declared filter was not removed, so the defect case is not the defect"
+fi
+# That access-control profile stays. It is not what is under test here, and on a
+# node where AppArmor is supported, taking it away would stop this machine at the
+# first mount instead of at the root change - the wrong failure entirely.
+grep --quiet 'appArmorProfile:' "$DEFECTIVE_MANIFEST" \
+  || fail "the guest's access-control profile was removed too, which would fail the machine for another reason"
 pass "the machine renders in both shapes: one declaring its filter and one leaving it to the cluster"
 
 step "starting the machine that leaves its filter to the cluster"

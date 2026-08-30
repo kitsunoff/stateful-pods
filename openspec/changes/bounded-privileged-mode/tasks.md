@@ -32,11 +32,11 @@
 
 ## 3. Prove a machine still works
 
-- [ ] 3.1 Run the full integration suite in this mode, which is what it already uses; verify seeding,
+- [x] 3.1 Run the full integration suite in this mode, which is what it already uses; verify seeding,
   booting, the readiness transition and the shutdown-within-grace-period assertion all still hold
-- [ ] 3.2 Assert that a machine in this mode now honours a named syscall filter, which is the second
+- [x] 3.2 Assert that a machine in this mode now honours a named syscall filter, which is the second
   reason for the change; verify one of the denied system calls fails from inside a running machine
-- [ ] 3.3 Assert the machine no longer has what the mode gave up — that loading a kernel module
+- [x] 3.3 Assert the machine no longer has what the mode gave up — that loading a kernel module
   fails and that the node's block devices are not present in the machine; verify from inside a
   running machine
 
