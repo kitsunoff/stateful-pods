@@ -15,28 +15,46 @@
 # `void-current` to a person and publishes into `stateful-pods-void`, and nothing
 # should have to know either of those rules twice.
 #
-# The package is per distribution and the tag is per release, which is how a
-# distribution names its own images. Two releases of one distribution therefore
-# share a package and are told apart by their tags - so the retention job's unit
-# of work is a release, not a package, and it is written that way even though
-# every package holds exactly one release today.
+# The package is per distribution and variant, and the tag is per release, which
+# is how a distribution names its own images. Two releases of one distribution
+# therefore share a package and are told apart by their tags - so the retention
+# job's unit of work is a release, not a package, and it is written that way even
+# though every package holds exactly one release today.
+#
+# The variant is in the package rather than in the tag because two variants of one
+# release carry the same upstream serial: debian trixie cloud and debian trixie
+# default are both built as 20260830_05:17. A tag naming only the release and the
+# serial would therefore name two different root filesystems, and the build's
+# "this dated tag is already published, leave it alone" path would quietly keep
+# whichever was published first. The tag could have carried the variant instead,
+# but the retention planner reads a release out of a tag as the text before the
+# first dash, so a release segment with a dash in it is a rewrite of the planner
+# and its suite rather than a line here.
 #
 # This file is the single source of truth for what exists. The build matrix, the
 # daily bump, the retention job and `hack/check-presets.sh` all read it, so a
 # preset added here and nowhere else is built, published, kept up to date and
 # checked against the shipped catalog without any of them being edited.
 #
-# The variant is `default` for every preset and is written out anyway. The
-# upstream also publishes `cloud` and `tinycloud` variants, which carry cloud-init
-# that this chart does not drive, and Void publishes a `musl` variant. Leaving the
-# field implicit would make adding one of those look like a smaller decision than
-# it is.
+# The variant is `cloud` wherever the upstream publishes one, because the chart's
+# default provisioning backend is cloud-init and an image without it fails a
+# default install. An earlier revision of this file said the opposite - that the
+# `cloud` variants "carry cloud-init that this chart does not drive" - and that
+# clause is what stopped being true.
+#
+# Void is the exception, and not by preference: the upstream publishes only
+# `default` and `musl` for it. Its preset therefore carries no cloud-init and
+# serves the `native` backend only.
+#
+# Alpine also publishes `tinycloud`, which is tiny-cloud rather than cloud-init.
+# It is a different implementation with a different configuration surface, so it
+# would not answer the same values the other three do.
 #
 # Adding a release is a line. Removing one is a line and a catalog entry, and
 # stops the daily bump proposing it - it does not withdraw what is already
 # published, because a machine's source has to stay resolvable, and it leaves
 # that release's rolling tag behind in a package other releases may still use.
-debian-trixie;debian;trixie;default;debian
-ubuntu-noble;ubuntu;noble;default;ubuntu
-alpine-3.24;alpine;3.24;default;alpine
+debian-trixie;debian;trixie;cloud;debian-cloud
+ubuntu-noble;ubuntu;noble;cloud;ubuntu-cloud
+alpine-3.24;alpine;3.24;cloud;alpine-cloud
 void-current;voidlinux;current;default;void

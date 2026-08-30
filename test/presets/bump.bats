@@ -10,7 +10,7 @@
 bats_require_minimum_version 1.5.0
 
 BUMP="hack/preset-bump.sh"
-NEWER="ghcr.io/kitsunoff/stateful-pods-debian@sha256:0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff"
+NEWER="ghcr.io/kitsunoff/stateful-pods-debian-cloud@sha256:0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff"
 
 setup() {
   CATALOG="$BATS_TEST_TMPDIR/presets.yaml"
@@ -66,7 +66,7 @@ entry() {
 }
 
 @test "a reference that is not pinned by digest is refused" {
-  bump debian-trixie ghcr.io/kitsunoff/stateful-pods-debian:trixie-20260830_0524
+  bump debian-trixie ghcr.io/kitsunoff/stateful-pods-debian-cloud:trixie-20260830_0524
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"not pinned by digest"* ]]
   [ "$(entry debian-trixie)" = "$PINNED" ]

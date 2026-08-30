@@ -54,15 +54,21 @@ check() {
 
 # The package is not the preset's name, so this is the one relationship a reader
 # cannot check by eye against the entry alone.
+#
+# The wrong repository here is the one a preset used to publish into before it
+# moved to the cloud variant. That package still exists and still holds the
+# builds a released chart resolves to, so an entry left pointing at it resolves,
+# pulls, and seeds a machine with a root filesystem that has no cloud-init in it.
+# Nothing downstream would report that; this is where it is caught.
 @test "an entry resolving to a repository that is not the preset's package is refused" {
   local digest="sha256:0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff"
-  printf 'ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu-noble@%s\n' "$digest" \
+  printf 'ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu@%s\n' "$digest" \
     > "$BATS_TEST_TMPDIR/replacement"
   grep --invert-match '^ubuntu-noble: ' "$CATALOG" > "$BATS_TEST_TMPDIR/rest"
   cat "$BATS_TEST_TMPDIR/rest" "$BATS_TEST_TMPDIR/replacement" > "$CATALOG"
   check
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"is not named stateful-pods-ubuntu"* ]]
+  [[ "$stderr" == *"is not named stateful-pods-ubuntu-cloud"* ]]
 }
 
 @test "an entry pinned by tag rather than by digest is refused" {
