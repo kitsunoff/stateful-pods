@@ -11,6 +11,11 @@ tests:
   # updated by a bot every time an upstream rebuilds, and a test that pinned the
   # digest would fail on every one of those bumps while proving nothing about
   # what the chart does with it.
+  #
+  # The package name is part of that shape on purpose. It carries the upstream
+  # variant, so this is also what notices a preset quietly resolving back to the
+  # `default` build - a rootfs with no cloud-init in it, under a name that says
+  # it has one.
   - it: renders the pinned reference the named preset resolves to
     set:
       shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
@@ -25,7 +30,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.template.spec.initContainers[0].env[6].value
-          pattern: '^ghcr\.io/[^/]+/stateful-pods-debian@sha256:[0-9a-f]{64}$'
+          pattern: '^ghcr\.io/[^/]+/stateful-pods-debian-cloud@sha256:[0-9a-f]{64}$'
       - equal:
           path: spec.template.spec.initContainers[0].env[6].name
           value: SP_SOURCE_REFERENCE
