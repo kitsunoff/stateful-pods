@@ -25,6 +25,12 @@ SP_VERSION="0.1.0"
 # The labels the chart puts on every object it renders for a machine. They are
 # also its selector labels, which are immutable for the life of a machine - the
 # most stable thing there is to depend on.
+# Where the chart is published, and the version of it this plugin drives. A
+# plugin whose version has drifted from the chart's would ask a registry for a
+# revision that does not exist, so the tag build refuses to publish one without
+# the other.
+SP_DEFAULT_CHART="oci://ghcr.io/kitsunoff/charts/stateful-pods"
+
 SP_MACHINE_LABEL="stateful-pods.io/machine"
 SP_RELEASE_LABEL="app.kubernetes.io/instance"
 
@@ -59,6 +65,8 @@ Usage:
   kubectl machine status <name>           where one machine is in its life
   kubectl machine shell <name> [-- cmd]   a shell inside the machine
   kubectl machine console <name>          the machine's own boot output
+  kubectl machine create <name> [flags]   install a machine
+  kubectl machine delete <name>           remove a machine's release, keeping its root filesystem
   kubectl machine version                 the plugin's version
 
 Flags shared by every command:
@@ -99,6 +107,10 @@ $2"
 
 require_kubectl() {
     require_tool kubectl "Install it: https://kubernetes.io/docs/tasks/tools/"
+}
+
+require_helm() {
+    require_tool helm "Install it: https://helm.sh/docs/intro/install/"
 }
 
 # ---------------------------------------------------------------------------
@@ -781,6 +793,309 @@ cmd_console() {
 }
 
 # ---------------------------------------------------------------------------
+# create
+#
+# Composes values and hands them to Helm. It checks none of them. The chart
+# refuses to guess a security mode or a source and its rejections name the values
+# path and the accepted set; a second validator here would drift from that one,
+# and a default invented here would be a machine configured by a tool rather than
+# by its owner.
+# ---------------------------------------------------------------------------
+
+create_help() {
+    cat <<EOF
+kubectl machine create <name> - install a machine
+
+Usage:
+  kubectl machine create <name> --preset <preset> --mode <mode> [flags]
+  kubectl machine create <name> --source-oci <reference> --mode <mode> [flags]
+  kubectl machine create <name> --source-lxc-url <url> --source-sha256 <digest> --mode <mode> [flags]
+
+Source, one of:
+  --preset <name>            a root filesystem this project publishes and pins
+  --source-oci <reference>   an image to unpack into the root filesystem
+  --source-lxc-url <url>     a template tarball, with --source-sha256
+
+Machine:
+  --mode <mode>              the privilege level, as the chart names them
+  --source-sha256 <digest>   the checksum an lxc template must match
+  --size <size>              the root filesystem's size
+  --storage-class <class>    the storage class to create it from
+  --hostname <hostname>      the hostname inside the machine
+  --pull-secret <name>       a dockerconfigjson secret for a private source
+
+Release:
+  --release <release>        the release to install into (default: the machine's name)
+  --chart <chart>            the chart to install (default: $SP_DEFAULT_CHART)
+  --version <version>        the chart version (default: $SP_VERSION)
+  --set <key=value>          passed to helm unchanged, repeatable
+  --values <file>            passed to helm unchanged, repeatable
+
+Nothing above is validated here. Every input goes to the chart, and what comes
+back when one is wrong is the chart's own message.
+EOF
+}
+
+# Whether a helm failure was the chart refusing the values or helm never getting
+# hold of the chart at all. Only the second is worth advice, and a rejection the
+# chart wrote must not be buried under it.
+looks_like_an_unresolvable_chart() {
+    case "$1" in
+        *"execution error at"* | *"template:"*) return 1 ;;
+    esac
+    case "$1" in
+        *"failed to download"* | *"failed to pull"* | *"not found"* | *"no such host"* | \
+            *unauthorized* | *"access denied"* | *"failed to authorize"*) return 0 ;;
+    esac
+    return 1
+}
+
+cmd_create() {
+    local name="" chart="" version="" mode="" size="" storage_class="" hostname=""
+    local pull_secret="" preset="" oci="" lxc_url="" sha256="" sources=0
+    local passthrough=()
+
+    while [ "$#" -gt 0 ]; do
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                create_help
+                return 0
+                ;;
+            --preset)
+                flag_value "$@"
+                preset="$SP_VALUE"
+                sources=$((sources + 1))
+                ;;
+            --source-oci)
+                flag_value "$@"
+                oci="$SP_VALUE"
+                sources=$((sources + 1))
+                ;;
+            --source-lxc-url)
+                flag_value "$@"
+                lxc_url="$SP_VALUE"
+                sources=$((sources + 1))
+                ;;
+            --source-sha256)
+                flag_value "$@"
+                sha256="$SP_VALUE"
+                ;;
+            --mode)
+                flag_value "$@"
+                mode="$SP_VALUE"
+                ;;
+            --size)
+                flag_value "$@"
+                size="$SP_VALUE"
+                ;;
+            --storage-class)
+                flag_value "$@"
+                storage_class="$SP_VALUE"
+                ;;
+            --hostname)
+                flag_value "$@"
+                hostname="$SP_VALUE"
+                ;;
+            --pull-secret)
+                flag_value "$@"
+                pull_secret="$SP_VALUE"
+                ;;
+            --chart)
+                flag_value "$@"
+                chart="$SP_VALUE"
+                ;;
+            --version)
+                flag_value "$@"
+                version="$SP_VALUE"
+                ;;
+            --set)
+                flag_value "$@"
+                passthrough+=(--set "$SP_VALUE")
+                ;;
+            --values)
+                flag_value "$@"
+                passthrough+=(--values "$SP_VALUE")
+                ;;
+            --*)
+                common_flag "$@" || die "unknown flag for create: $SP_FLAG"
+                ;;
+            *)
+                [ -z "$name" ] || die "create takes one machine, and was given $name and $SP_FLAG"
+                name="$SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+
+    [ -n "$name" ] || die "create needs a name for the machine.
+
+$(create_help)"
+    # The one thing checked here, because these flags contradict each other
+    # rather than being wrong: the chart would only ever see the last one.
+    [ "$sources" -le 1 ] ||
+        die "a machine has one source: name it with --preset, --source-oci or --source-lxc-url, not more than one."
+    require_helm
+
+    local release="${SP_RELEASE:-$name}"
+    local values=()
+    [ -n "$preset" ] && values+=(--set-string "machines.$name.source.kind=preset" \
+        --set-string "machines.$name.source.name=$preset")
+    [ -n "$oci" ] && values+=(--set-string "machines.$name.source.kind=oci" \
+        --set-string "machines.$name.source.reference=$oci")
+    [ -n "$lxc_url" ] && values+=(--set-string "machines.$name.source.kind=lxc" \
+        --set-string "machines.$name.source.url=$lxc_url")
+    # --set-string throughout, and this is the reason: a checksum of nothing but
+    # digits is a number to a values parser, and a number is not a checksum by
+    # the time the chart reads it.
+    [ -n "$sha256" ] && values+=(--set-string "machines.$name.source.sha256=$sha256")
+    [ -n "$pull_secret" ] && values+=(--set-string "machines.$name.source.pullSecretName=$pull_secret")
+    [ -n "$mode" ] && values+=(--set-string "machines.$name.security.mode=$mode")
+    [ -n "$size" ] && values+=(--set-string "machines.$name.rootfs.size=$size")
+    [ -n "$storage_class" ] && values+=(--set-string "machines.$name.rootfs.storageClassName=$storage_class")
+    [ -n "$hostname" ] && values+=(--set-string "machines.$name.hostname=$hostname")
+
+    local args=(upgrade --install "$release" "${chart:-$SP_DEFAULT_CHART}")
+    [ -n "$SP_CONTEXT" ] && args+=(--kube-context "$SP_CONTEXT")
+    [ -n "$SP_NAMESPACE" ] && args+=(--namespace "$SP_NAMESPACE")
+    # Only for a reference that has to be resolved: a chart taken off the
+    # filesystem is whatever is on the filesystem, and asking for a version of it
+    # would refuse a checkout that is mid-development.
+    case "${chart:-$SP_DEFAULT_CHART}" in
+        oci://* | http://* | https://*) args+=(--version "${version:-$SP_VERSION}") ;;
+        *) [ -n "$version" ] && args+=(--version "$version") ;;
+    esac
+    args+=(${values[@]+"${values[@]}"} ${passthrough[@]+"${passthrough[@]}"})
+
+    printf 'Context:    %s\n' "$(current_context)"
+    printf 'Namespace:  %s\n' "${SP_NAMESPACE:-(the one the context names)}"
+    printf 'Machine:    %s\n' "$name"
+    printf 'Release:    %s\n' "$release"
+    printf 'Objects:    %s\n' "$release-$name"
+    show "helm ${args[*]}"
+
+    local out rc=0
+    if out="$(helm "${args[@]}" 2>&1)"; then
+        [ -n "$out" ] && printf '%s\n' "$out"
+        return 0
+    else
+        rc=$?
+    fi
+    # The chart's own rejection, unchanged and unabridged.
+    printf '%s\n' "$out" >&2
+    if looks_like_an_unresolvable_chart "$out"; then
+        printf '\nHelm could not get hold of the chart itself. Until a chart is published at
+%s, install from a checkout instead:
+
+  kubectl machine create %s --chart <path to charts/stateful-pods> ...\n' \
+            "${chart:-$SP_DEFAULT_CHART}" "$name" >&2
+    fi
+    return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# delete
+# ---------------------------------------------------------------------------
+
+delete_help() {
+    cat <<EOF
+kubectl machine delete <name> - remove a machine's release
+
+Usage:
+  kubectl machine delete <name> [--release <release>] [--yes]
+
+Flags:
+  --yes   do not ask for the confirmation, for a run with nobody to ask
+
+The machine's root filesystem is kept. The chart retains the claim, and removing
+it is a separate, deliberate command that this prints and does not run. There is
+no flag here that does both.
+EOF
+}
+
+# The claim holding this machine's root filesystem, found by the same label the
+# machine itself is found by rather than by rebuilding the naming rule.
+machine_claims() {
+    kubectl_run get persistentvolumeclaims --selector "$(machine_selector "$SP_MACHINE")" \
+        --output 'go-template={{range .items}}{{.metadata.name}}{{"\n"}}{{end}}' 2>/dev/null || true
+}
+
+cmd_delete() {
+    local name="" assume_yes=0
+    while [ "$#" -gt 0 ]; do
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                delete_help
+                return 0
+                ;;
+            --yes) assume_yes=1 ;;
+            --*)
+                common_flag "$@" || die "unknown flag for delete: $SP_FLAG"
+                ;;
+            *)
+                [ -z "$name" ] || die "delete takes one machine, and was given $name and $SP_FLAG"
+                name="$SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+    [ -n "$name" ] || die "delete needs a machine's name. Run 'kubectl machine list' to see them."
+    require_kubectl
+    require_helm
+    resolve_machine "$name"
+
+    local claims claim_line
+    claims="$(machine_claims)"
+    if [ -n "$claims" ]; then
+        claim_line=""
+        while IFS= read -r claim || [ -n "$claim" ]; do
+            [ -n "$claim" ] || continue
+            claim_line="$claim_line $claim"
+        done <<EOF
+$claims
+EOF
+        claim_line="${claim_line# }"
+    else
+        claim_line=""
+    fi
+
+    printf 'Context:          %s\n' "$(current_context)"
+    printf 'Namespace:        %s\n' "${SP_NAMESPACE:-(the one the context names)}"
+    printf 'Machine:          %s\n' "$SP_MACHINE"
+    printf 'Release:          %s\n' "$SP_MACHINE_RELEASE"
+    printf 'Objects:          %s\n' "$SP_OBJECT"
+    printf 'Root filesystem:  %s\n' "${claim_line:-(none found under this label)}"
+    printf '\nThis removes the release. The root filesystem above is kept.\n'
+
+    if [ "$assume_yes" -ne 1 ]; then
+        local reply=""
+        printf 'Type the name of the machine to confirm: ' >&2
+        if ! IFS= read -r reply; then
+            die "
+nothing was confirmed, so nothing was removed. Pass --yes for a run with nobody to ask."
+        fi
+        [ "$reply" = "$SP_MACHINE" ] ||
+            die "that is not the name of this machine, so nothing was removed."
+    fi
+
+    local args=(uninstall "$SP_MACHINE_RELEASE")
+    [ -n "$SP_CONTEXT" ] && args+=(--kube-context "$SP_CONTEXT")
+    [ -n "$SP_NAMESPACE" ] && args+=(--namespace "$SP_NAMESPACE")
+    show "helm ${args[*]}"
+    helm "${args[@]}"
+
+    printf '\nThe root filesystem was not removed: it is what makes this machine a pet, and
+it outlives the release. To destroy it, and everything on it:\n\n'
+    if [ -n "$claim_line" ]; then
+        printf '  kubectl%s delete persistentvolumeclaim %s\n' "$(kube_flags)" "$claim_line"
+    else
+        printf '  kubectl%s get persistentvolumeclaim --selector %s\n' \
+            "$(kube_flags)" "$(machine_selector "$SP_MACHINE")"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -799,6 +1114,8 @@ main() {
         status) cmd_status "$@" ;;
         shell) cmd_shell "$@" ;;
         console) cmd_console "$@" ;;
+        create) cmd_create "$@" ;;
+        delete) cmd_delete "$@" ;;
         version | --version) printf '%s %s\n' "$SP_PROGRAM" "$SP_VERSION" ;;
         help | --help)
             usage

@@ -121,4 +121,4 @@ seeded_init() { printf 'seed=terminated,Completed,0,true;prepare=terminated,Comp
 
 # The subcommands the plugin answers to. Kept here rather than in a suite so that
 # a command added without a help of its own fails in one place.
-implemented_subcommands() { printf 'list status shell console\n'; }
+implemented_subcommands() { printf 'list status shell console create delete\n'; }
