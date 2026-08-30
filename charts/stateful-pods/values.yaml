@@ -179,12 +179,16 @@ shim:
 #       #                    bring up a tunnel. A pod's addressing belongs to the
 #       #                    cluster's CNI - see the end of this file.
 #       #
-#       #                These are the same five refusals the reference
-#       #                implementation makes of its own privileged container, and
-#       #                a machine that needs one of them back should be a reported
-#       #                case rather than a local edit: a capability added here
-#       #                without a machine and a failure behind it is how a named
-#       #                set drifts back into a blanket flag.
+#       #                The first five are the refusals the reference
+#       #                implementation makes of its own privileged container. The
+#       #                last is not: a Proxmox privileged container does hold
+#       #                CAP_NET_ADMIN and the rest, and this set leaves them out
+#       #                only because nothing has been shown to need one yet.
+#       #
+#       #                Either way, a machine that needs one back should be a
+#       #                reported case rather than a local edit: a capability added
+#       #                here without a machine and a failure behind it is how a
+#       #                named set drifts back into a blanket flag.
 #       #
 #       # The version check happens at render time. The node's kernel, the
 #       # runtime's configuration and whether the storage supports idmapped mounts

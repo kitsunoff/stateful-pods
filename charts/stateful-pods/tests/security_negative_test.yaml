@@ -21,7 +21,7 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].securityContext.privileged
 
-  - it: does not forbid privilege escalation in userns mode, which SYS_ADMIN rules out
+  - it: leaves privilege escalation allowed in userns mode, which no_new_privs would cost
     set:
       machines.web:
         source:
@@ -141,7 +141,7 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].securityContext.privileged
 
-  - it: does not forbid privilege escalation in privileged mode, which SYS_ADMIN rules out
+  - it: leaves privilege escalation allowed in privileged mode, which no_new_privs would cost
     set:
       machines.web:
         source:

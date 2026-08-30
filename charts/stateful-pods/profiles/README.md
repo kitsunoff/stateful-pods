@@ -48,8 +48,11 @@ profile does not close that, and does not claim to.
 
 In `privileged` mode the profile is worth the same as in `userns`, and for the same reason: that
 mode grants a named capability set which holds none of `CAP_SYS_BOOT`, `CAP_DAC_READ_SEARCH` or
-`CAP_SYS_MODULE` either, so the five calls are already refused and the profile restates a boundary
-that exists.
+`CAP_SYS_MODULE` either, so those calls are mostly a boundary the profile restates. The forced
+unmount is the exception in both modes, and it is not a small one: `umount2` with `MNT_FORCE` needs
+only `CAP_SYS_ADMIN`, which both modes grant, so that rule is the profile's own and nothing else
+denies it. `hack/seccomp-test.sh` makes exactly that call from inside a running machine, once before
+it names the profile and once after.
 
 It used to be worth nothing there. The mode rendered a privileged container, and containerd drops
 the seccomp profile a privileged container names before it builds it — measured, not inferred — so

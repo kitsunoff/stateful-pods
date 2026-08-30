@@ -110,7 +110,12 @@ they are not losses at all:
 - **What `/dev` *contains* does not change either.** The machine's `/dev` is a fresh tmpfs holding
   the seven nodes the shim binds, in both modes. What changes is whether the machine can reach one of
   the node's devices by creating its own node for it: privileged could — `mknod` a block device and
-  open it — and this mode gets `EACCES` from the device cgroup instead. That is the entry above.
+  open it — and this mode gets `EPERM` from the device cgroup instead. That is the entry above.
+
+  The errno matters, and the integration assertion turns on it. A `nodev` mount refuses the same open
+  with `EACCES`, and the machine's `/tmp` and `/run` are both `nodev` — so a probe made there would
+  be refused whatever the device cgroup allowed, and would have been refused under the old posture
+  too. The probe is made in `/dev`, which is not `nodev`, and only `EPERM` is accepted as the answer.
 
 ### The runtime's default AppArmor profile denies `mount`
 
@@ -173,10 +178,14 @@ implements it.
 - **The temptation to widen the set** → Every capability added later should carry a note saying
   which machine needed it and why. Without that, the set drifts back toward the blanket flag one
   well-intentioned commit at a time.
-- **`allowPrivilegeEscalation`** → It is left unset in the `userns` mode because `false` is
-  incompatible with an added `SYS_ADMIN`. The same constraint applies here once the mode adds
-  `SYS_ADMIN` rather than being privileged, and the render tests should pin that it is not set to
-  `false`.
+- **`allowPrivilegeEscalation`** → It is left unset in both modes, and the reason given here while
+  this was being written was wrong. `false` is *not* incompatible with an added `SYS_ADMIN`: the API
+  accepts the pair and the container keeps the capability, which was checked on a cluster. What
+  `false` does is set `no_new_privs`, and `no_new_privs` makes the kernel ignore setuid bits and file
+  capabilities on every following `execve`. A machine is a whole operating system built on both —
+  its `su`, its `sudo`, its `ping`, and the file capability the seeding step preserves on purpose.
+  The cost is not to the container's privilege but to the machine's own userland. The render tests
+  pin that it is not set to `false`.
 
 ## Migration Plan
 

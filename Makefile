@@ -6,8 +6,9 @@ RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
-# The chart's own floor, from Chart.yaml's kubeVersion, and the one example that
-# renders there. A field the oldest supported API does not have is a chart that
+# The chart's own floor, and the one example that renders there. It duplicates
+# Chart.yaml's kubeVersion by hand - nothing ties the two together, so a floor
+# raised there has to be raised here as well or this validates the wrong version. A field the oldest supported API does not have is a chart that
 # installs on that cluster and behaves differently - which is what the guest's
 # access-control profile would have been below 1.30, and validating only at the
 # version above would not have seen it.

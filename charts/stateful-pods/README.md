@@ -621,7 +621,13 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The same values render the same posture everywhere | `security_cluster_independence_test.yaml` |
 | The syscall filter is never left to the cluster | `seccomp_posture_test.yaml` |
 | A cluster that filters by default does not change the machine | `hack/seccomp-test.sh` |
-| The guest declares the access-control profile it runs under | `apparmor_posture_test.yaml` |
+
+### pod-security-posture (added by bounded-privileged-mode)
+
+| Scenario | Covered by |
+| --- | --- |
+| The guest declares the profile it runs under | `apparmor_posture_test.yaml` |
+| The preparation steps are left to the node's default | `apparmor_posture_test.yaml` |
 
 ### values-validation (added by seccomp-posture)
 

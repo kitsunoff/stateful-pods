@@ -92,6 +92,10 @@ kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 # A StatefulSet recreates a pod that was deleted, but not in the same instant.
 # `kubectl wait` landing in that gap fails with NotFound rather than waiting, so
 # the pod is waited into existence first and only then waited on.
+#
+# The same helper is in hack/seccomp-test.sh, on purpose: each script stands on
+# its own and is run on its own, and a shared file between two suites that build
+# different clusters would be a third thing to keep in step with both.
 wait_ready() {
   local pod="$1"
   for _ in $(seq 1 60); do
