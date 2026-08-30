@@ -36,11 +36,16 @@ make shell-lint   # shellcheck over every shell script
 make docs         # the guarantees values.yaml makes about itself
 make test         # helm unittest
 make shell-test   # bats, inside a Linux container
+make plugin-test  # the kubectl plugin's suite, on this host's bash
 make conform      # kubeconform against the Kubernetes API schemas
 make image-test   # the toolbox image's archive and registry guarantees
 make seccomp-test # the syscall filter, on a cluster whose kubelet filters by default
 make render       # helm template
 ```
+
+`make plugin-test` runs the plugin's suite directly on the host and needs `bats` there; it
+is how the bash 3.2 constraint is checked locally (`make plugin-test MACHINE_BASH=/bin/bash`
+on macOS). `make shell-test` runs the same suite in the container as well.
 
 `make shell-test` and `make image-test` need a container engine: the scripts manipulate another
 system's root filesystem, and ownership, extended attributes and file capabilities only exist on
@@ -105,6 +110,88 @@ PersistentVolumeClaim derived from it, so renaming a machine or a release orphan
 recreates the machine empty.
 
 See `values.yaml` for the full input contract, with a comment on every input.
+
+## The kubectl plugin
+
+`kubectl machine` addresses a machine by the name it was declared under, instead of by the
+`<release>-<machine>-0` the chart derives from it:
+
+```bash
+kubectl machine list                      # every machine here, and the stage each is in
+kubectl machine status web                # where one machine is in its life
+kubectl machine shell web                 # a shell inside the machine
+kubectl machine console web --follow      # the machine's own boot output
+kubectl machine create web --preset debian-trixie --mode userns
+kubectl machine delete web                # the release; the root filesystem is kept
+```
+
+A machine takes minutes to become usable, and for most of that time a pod-level view says
+`Init:1/3`. The plugin answers the question that was actually asked: whether the machine is
+being seeded, prepared or customized, booting, ready or stopped — and when it cannot be
+entered, which stage it is in and the one command whose output explains the wait.
+
+It validates nothing. Every input goes to the chart, and what comes back when one is wrong
+is the chart's own message, unchanged. It removes no root filesystem: `delete` uninstalls
+the release, says the volume survived and prints the separate command that would destroy
+it. There is no flag that does both.
+
+### Installing it
+
+With krew, from a published release:
+
+```bash
+kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/machine.yaml
+```
+
+Or without krew, since it is one file:
+
+```bash
+curl --silent --show-error --location --fail --remote-name \
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/kubectl-machine_v0.1.0.tar.gz
+sha256sum --check <(curl --silent --location --fail \
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/SHA256SUMS)
+tar --extract --gzip --file kubectl-machine_v0.1.0.tar.gz
+install -m 0755 kubectl-machine /usr/local/bin/kubectl-machine
+```
+
+The file has to be named exactly `kubectl-machine` and be on `PATH`; that is how `kubectl`
+finds a plugin. From a checkout, `install -m 0755 cmd/kubectl-machine /usr/local/bin/` does
+the same thing.
+
+`shell`, `console`, `list` and `status` need only `kubectl`. `create` and `delete` also need
+`helm`, because they install and uninstall a release.
+
+### What it does not support
+
+**Windows.** The plugin is a bash program, which is the trade taken when it was written in
+bash rather than Go: it is one file with no build step and no toolchain, and there is no
+bash on Windows worth targeting. Under WSL it is an ordinary Linux install. Run anywhere
+else, it says which platform it found and stops, rather than failing part-way through an
+action.
+
+macOS is supported, and that is a real constraint rather than a hope: macOS ships bash 3.2,
+so the plugin uses none of bash 4 — no associative arrays, no `mapfile`, no `${var^^}`. A
+job in CI runs its suite and the shell lint against that bash on every push, because a
+construct that breaks the target runs perfectly in the Linux container the other suites use
+and fails on somebody's Mac.
+
+### Creating a machine, before the chart is published
+
+`create` installs the chart by reference, and defaults that reference to the chart this
+project publishes at the plugin's own version. Until the first tag is cut there is nothing
+at that reference, so point it at a checkout:
+
+```bash
+kubectl machine create web --chart ./charts/stateful-pods \
+  --preset debian-trixie --mode userns \
+  --set shim.image=<an image built from images/shim in this repository>
+```
+
+`--set` and `--values` reach `helm` unchanged, which is how anything the plugin has no flag
+for is supplied — the shim image above, a seccomp profile, a volume snapshot to restore
+from. A private source needs `--pull-secret <name>`, naming a `kubernetes.io/dockerconfigjson`
+secret in the namespace; the preset images this project publishes are private, so a
+`--preset` machine needs one until they are not.
 
 ## Seeding
 

@@ -9,5 +9,8 @@ charts/*/Chart.lock
 # Local kubeconfig fragments produced by kubecm
 kubecm.config
 
+# Release artefacts, built by hack/release-archives.sh
+/dist/
+
 # Local scratch
 /tmp/

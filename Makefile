@@ -4,6 +4,14 @@ IMAGE_CONTEXT ?= images/shim
 EXAMPLES ?= $(wildcard $(CHART)/examples/*.yaml)
 RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
+BATS ?= bats
+# The bash the plugin's suite runs the plugin under. Empty means the one its
+# shebang finds; a path is how the macOS job pins it to the system bash 3.2.
+MACHINE_BASH ?=
+# Guarded against expanding to nothing below, because a suite list that came out
+# empty is a target that passes having run no tests.
+PLUGIN_SUITES_GLOB ?= test/shell/plugin-*.bats
+PLUGIN_SUITES ?= $(wildcard $(PLUGIN_SUITES_GLOB))
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
 # The chart's own floor, read out of Chart.yaml rather than repeated here: a
@@ -21,7 +29,7 @@ KUBE_VERSION ?= 1.33.0
 KUBE_VERSION_FLOOR ?= $(shell sed -n 's/^kubeVersion: ">= \(.*\)-0"$$/\1/p' $(CHART)/Chart.yaml)
 FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
-.PHONY: all lint shell-lint test shell-test render conform docs presets image-build image-test integration-test seccomp-test preset-test preset-build
+.PHONY: all lint shell-lint test shell-test plugin-test render conform docs presets image-build image-test integration-test seccomp-test preset-test preset-build
 
 all: lint shell-lint docs presets test shell-test preset-test conform
 
@@ -53,6 +61,24 @@ test:
 ## shell-test: run the bats suites for the shim image's shell scripts
 shell-test:
 	./hack/shell-test.sh
+
+## plugin-test: run the kubectl plugin's suite against a bash on this host
+#  The one part of test/shell that is not about another system's root
+#  filesystem: these suites stub kubectl and helm and assert what the plugin
+#  composes, so they need neither Linux nor a container. `make shell-test` runs
+#  them too, in the container, against whatever bash Debian ships.
+#
+#  This target exists for the bash that is not that one. The plugin targets bash
+#  3.2 because that is what macOS ships, and every construct that breaks the
+#  target - mapfile, an associative array, ${var^^} - breaks at runtime on
+#  somebody's Mac rather than in a suite on Linux:
+#
+#    make plugin-test MACHINE_BASH=/bin/bash
+#
+#  It needs bats on the host, which nothing else here does.
+plugin-test:
+	@test -n "$(PLUGIN_SUITES)" || { echo "no plugin suites matched $(PLUGIN_SUITES_GLOB)" >&2; exit 1; }
+	MACHINE_BASH=$(MACHINE_BASH) $(BATS) $(PLUGIN_SUITES)
 
 ## preset-test: assert what the preset build refuses
 #  In `all`, and not in `image-test` or `integration-test`, because it needs
