@@ -221,3 +221,42 @@ deleted_digests() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"--max-deletions takes a number"* ]]
 }
+
+# A build is published as per-architecture manifests first and combined into an
+# index last, so a run that dies in between leaves a tagged -<arch> manifest that
+# no index references. GHCR cannot untag without deleting, so it stays.
+#
+# It must not be mistaken for a build. Counting it as one costs a real build its
+# place in the five, and then `verify_retained` tries to resolve an index tag
+# that was never pushed and fails - after the deletions have already happened,
+# and again on every run afterwards.
+@test "a per-architecture tag with no index is not a build" {
+  plan <<< '{
+    "keep": 2,
+    "versions": [
+      {"id": 1, "digest": "sha256:idx3", "tags": ["trixie-20260103_0500"]},
+      {"id": 2, "digest": "sha256:amd3", "tags": ["trixie-20260103_0500-amd64"]},
+      {"id": 3, "digest": "sha256:idx2", "tags": ["trixie-20260102_0500"]},
+      {"id": 4, "digest": "sha256:amd2", "tags": ["trixie-20260102_0500-amd64"]},
+      {"id": 5, "digest": "sha256:orphan", "tags": ["trixie-20260104_0500-amd64"]},
+      {"id": 6, "digest": "sha256:idx1", "tags": ["trixie-20260101_0500"]},
+      {"id": 7, "digest": "sha256:amd1", "tags": ["trixie-20260101_0500-amd64"]}
+    ],
+    "children": {
+      "sha256:idx3": ["sha256:amd3"],
+      "sha256:idx2": ["sha256:amd2"],
+      "sha256:idx1": ["sha256:amd1"]
+    }
+  }'
+  [ "$status" -eq 0 ]
+  # The two newest complete builds, and no phantom among them.
+  [ "$(jq --raw-output '.retained_builds | join(" ")' <<< "$output")" \
+    = "trixie-20260103_0500 trixie-20260102_0500" ]
+  [[ "$(jq --raw-output '.retained_builds | join(" ")' <<< "$output")" != *"20260104"* ]]
+  # The orphan belongs to no build this run understands, so it is left alone
+  # rather than swept up - not knowing what something is is not a reason to
+  # delete it.
+  [[ "$(deleted_digests)" != *"sha256:orphan"* ]]
+  # And the build that would have lost its place is still here.
+  [[ "$(deleted_digests)" != *"sha256:idx2"* ]]
+}

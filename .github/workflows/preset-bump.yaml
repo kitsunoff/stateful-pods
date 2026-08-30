@@ -39,6 +39,9 @@ jobs:
   survey:
     name: survey
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     outputs:
       behind: ${{ steps.survey.outputs.behind }}
       any: ${{ steps.survey.outputs.any }}
@@ -48,6 +51,16 @@ jobs:
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
+
+      # The packages are private, so an anonymous read would report every preset
+      # as behind every night and the log would stop meaning anything.
+      - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
 
       # Which presets have fallen behind, and which are simply not ready. A
       # preset whose architectures are mid-rebuild exits 3 rather than failing,
@@ -91,8 +104,14 @@ jobs:
             # upstream build's tag either already resolves to what the catalog
             # names, or the catalog is behind.
             catalogued_digest="${current##*@}"
-            if published="$(crane digest "$reference" 2>/dev/null)" \
-               && [ "$published" = "$catalogued_digest" ]; then
+            # A read that fails is not a digest that differs. Reporting both
+            # as "behind" would hide a registry this job cannot reach behind a
+            # message that looks like ordinary news.
+            if ! published="$(crane digest "$reference" 2>&1)"; then
+              echo "$preset: could not read $reference from the registry: $published" >&2
+              exit 1
+            fi
+            if [ "$published" = "$catalogued_digest" ]; then
               echo "$preset: up to date ($tag)"
             else
               echo "$preset: behind - upstream has $tag"

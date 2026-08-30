@@ -36,6 +36,9 @@
 
 def build_pattern: "^(?<release>[^-]+)-(?<date>[0-9]{8}_[0-9]{4})(-(?<arch>.+))?$";
 
+# The tag that names a build itself, rather than one of its architectures.
+def index_pattern: "^[^-]+-[0-9]{8}_[0-9]{4}$";
+
 # The build a tag belongs to: the release and the upstream date, without the
 # architecture suffix a per-architecture tag carries.
 def build_of(tag): tag | capture(build_pattern) | .release + "-" + .date;
@@ -55,7 +58,16 @@ def date_of(key): key | capture("(?<d>[0-9]{8}_[0-9]{4})") | .d;
   else
 
   ($input.versions | map(. + { builds: ([.tags[]? | build_of(.)] | unique) })) as $versions
-  | ([$versions[].builds[]] | unique | sort_by(date_of(.)) | reverse) as $ordered
+
+  # A build is a build because its index exists, not because something carries a
+  # tag shaped like one. A preset is published architecture by architecture and
+  # combined into an index last, so a run that died in between leaves a tagged
+  # per-architecture manifest that no index references - and GHCR cannot untag
+  # without deleting, so it stays there. Counting that as a build would cost a
+  # real one its place among the five, and would then send the after-the-fact
+  # check looking for an index tag that was never pushed.
+  | ([$versions[].tags[]? | select(test(index_pattern))] | unique) as $build_tags
+  | ($build_tags | sort_by(date_of(.)) | reverse) as $ordered
   | ($ordered[0:$keep]) as $retained_builds
   | ($ordered[$keep:]) as $removed_builds
 
@@ -65,6 +77,8 @@ def date_of(key): key | capture("(?<d>[0-9]{8}_[0-9]{4})") | .d;
   | ([$retained_versions[] | .digest, (($children[.digest] // [])[])] | unique) as $protected
 
   | ([$versions[] | select(.builds | any(. as $b | $removed_builds | index($b)))]) as $removed_tagged
+  # Versions belonging to no build this run recognises - the orphan above among
+  # them - fall through every list below and are neither protected nor removed.
   | ([$removed_tagged[] | ($children[.digest] // [])[]] | unique) as $orphaned
 
   # An untagged version is only ever removed as a child of an index that is being

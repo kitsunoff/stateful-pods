@@ -425,9 +425,10 @@ Takes the root context.
 {{- if eq ($source.reference | default "") "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.reference: not set. An \"oci\" source requires an image reference, for example docker.io/library/debian:13." $name) -}}
 {{- end -}}
-{{- range $field := list "url" "sha256" -}}
+{{- range $pair := list (list "url" "lxc") (list "sha256" "lxc") (list "name" "preset") (list "preset" "preset") -}}
+{{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
-{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind \"lxc\". Remove the field, or set machines.%s.source.kind to \"lxc\"." $name $field $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
 {{- end -}}
 {{- end -}}
 {{- $errors = concat $errors (include "stateful-pods.validate.pullSecretName" (dict "name" $name "source" $source) | fromYamlArray) -}}
@@ -451,7 +452,7 @@ Takes the root context.
        user who also supplies one of those has expressed two intentions, and the
        one that would be silently discarded may be the one they believed was in
        effect. */ -}}
-{{- range $pair := list (list "reference" "oci") (list "url" "lxc") (list "sha256" "lxc") -}}
+{{- range $pair := list (list "reference" "oci") (list "url" "lxc") (list "sha256" "lxc") (list "preset" "preset") -}}
 {{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
 {{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"preset\"; it belongs to kind %q. A preset is a name for a reference this project pins and verified the provenance of, so it takes neither a reference nor a checksum of its own. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
@@ -465,9 +466,10 @@ Takes the root context.
 {{- if eq ($source.sha256 | default "" | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.sha256: not set. An \"lxc\" source requires the SHA-256 checksum of the template tarball, and there is no way to skip verification. The tarball is fetched over the network and unpacked into what becomes a privileged machine's root filesystem, and nothing about the transport establishes that the bytes are the intended ones." $name) -}}
 {{- end -}}
-{{- range $field := list "reference" "pullSecretName" -}}
+{{- range $pair := list (list "reference" "oci") (list "pullSecretName" "oci") (list "name" "preset") (list "preset" "preset") -}}
+{{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
-{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind \"oci\". Remove the field, or set machines.%s.source.kind to \"oci\"." $name $field $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
 {{- end -}}
 {{- end -}}
 {{- else -}}

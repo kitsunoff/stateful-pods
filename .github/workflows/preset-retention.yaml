@@ -77,14 +77,16 @@ jobs:
           if ./hack/preset-retention.sh --owner "$REPOSITORY_OWNER" --keep "$KEEP" --dry-run; then
             exit 0
           fi
-          {
-            echo '### Retention could not work out a plan'
-            echo
-            echo 'Nothing was removed - this job removes nothing without a token in any'
-            echo 'case. The most likely cause is that the workflow token cannot read'
-            echo '`/users/OWNER/packages`, which is a read this job needs and an'
-            echo 'installation token may not have. The log above says which call failed.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Markdown, in a quoted heredoc so that its code spans are code spans
+          # and nothing in it expands.
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Retention could not work out a plan
+
+          Nothing was removed - this job removes nothing without a token in any
+          case. The most likely cause is that the workflow token cannot read
+          `/users/OWNER/packages`, which is a read this job needs and an
+          installation token may not have. The log above says which call failed.
+          SUMMARY
           echo "could not produce a plan; see the summary" >&2
 
       # On the schedule as well as on a dispatch, because "keep the five most
@@ -101,15 +103,15 @@ jobs:
         run: |
           set -o errexit -o nounset -o pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            {
-              echo '### Retention is reporting, not removing'
-              echo
-              echo 'Deleting a version of a user-owned package needs a personal access'
-              echo 'token with `delete:packages`; a workflow `GITHUB_TOKEN` cannot do it'
-              echo 'whatever permissions it is given. Add one as the'
-              echo '`PRESET_RETENTION_TOKEN` secret to turn this on. Until then the plan'
-              echo 'above is all this job produces, and nothing is ever removed.'
-            } >> "$GITHUB_STEP_SUMMARY"
+            cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Retention is reporting, not removing
+
+          Deleting a version of a user-owned package needs a personal access
+          token with `delete:packages`; a workflow `GITHUB_TOKEN` cannot do it
+          whatever permissions it is given. Add one as the
+          `PRESET_RETENTION_TOKEN` secret to turn this on. Until then the plan
+          above is all this job produces, and nothing is ever removed.
+          SUMMARY
             echo "no PRESET_RETENTION_TOKEN; reported only"
             exit 0
           fi

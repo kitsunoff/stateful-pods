@@ -104,7 +104,7 @@ if command -v helm >/dev/null 2>&1; then
   if ! helm package "$chart_dir" --destination "$package_dir" >/dev/null 2>&1; then
     fail "the chart does not package, so whether the catalog travels with it cannot be established"
   else
-    packaged="$(find "$package_dir" -name '*.tgz' -maxdepth 1 | head -1)"
+    packaged="$(find "$package_dir" -maxdepth 1 -name '*.tgz' | head -1)"
     rendered="$(helm template check "$packaged" \
       --set "shim.image=example.invalid/shim:test" \
       --set "machines.probe.source.kind=preset" \
@@ -112,7 +112,10 @@ if command -v helm >/dev/null 2>&1; then
       --set "machines.probe.rootfs.size=1Gi" \
       --set "machines.probe.security.mode=userns" \
       --kube-version 1.33.0 2>&1)" || rendered=""
-    expected="$(grep --fixed-strings -- "$first_preset: " "$CATALOG" | sed "s|^$first_preset: ||")"
+    # A literal prefix strip rather than a regex built by interpolation: a
+    # preset name contains a dot, and in a pattern that is a wildcard.
+    expected="$(grep --fixed-strings -- "$first_preset: " "$CATALOG")"
+    expected="${expected#"$first_preset": }"
     if [[ -n "$expected" ]] && grep --quiet --fixed-strings -- "$expected" <<< "$rendered"; then
       echo "the catalog travels with the chart: $first_preset resolves from a package"
     else
