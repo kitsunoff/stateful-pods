@@ -34,7 +34,7 @@ setup() { plugin_setup; }
 
 @test "an unknown name lists the machines that do exist" {
     export SP_TEST_STATEFULSETS=""
-    export SP_TEST_ALL_STATEFULSETS="$(printf 'api\tlab\tlab-api\ndb\tprod\tprod-db\n')"
+    export SP_TEST_ALL_STATEFULSETS="$(printf 'api|lab|lab-api\ndb|prod|prod-db\n')"
     machine status ghost --namespace homelab
     [ "$status" -ne 0 ]
     [[ "$output" == *"ghost"* ]]
@@ -43,7 +43,7 @@ setup() { plugin_setup; }
 }
 
 @test "an ambiguous name is reported with every match, and nothing is done" {
-    export SP_TEST_STATEFULSETS="$(printf 'web\tlab\tlab-web\nweb\tprod\tprod-web\n')"
+    export SP_TEST_STATEFULSETS="$(printf 'web|lab|lab-web\nweb|prod|prod-web\n')"
     machine status web --namespace homelab
     [ "$status" -ne 0 ]
     [[ "$output" == *"lab"* ]]
@@ -62,8 +62,8 @@ setup() { plugin_setup; }
 }
 
 @test "list names every machine with its stage and its object" {
-    export SP_TEST_STATEFULSETS="$(printf 'api\tlab\tlab-api\ndb\tlab\tlab-db\n')"
-    export SP_TEST_PODS="$(printf 'api\tlab\tlab-api-0\tRunning\t%s\tguest=running,,,true;\ndb\tlab\tlab-db-0\tPending\tseed=running,,,false;\t\n' "$(seeded_init)")"
+    export SP_TEST_STATEFULSETS="$(printf 'api|lab|lab-api\ndb|lab|lab-db\n')"
+    export SP_TEST_PODS="$(printf 'api|lab|lab-api-0|Running|%s|guest=running,,,true;\ndb|lab|lab-db-0|Pending|seed=running,,,false;|\n' "$(seeded_init)")"
     machine list --namespace homelab
     [ "$status" -eq 0 ]
     [[ "$output" == *"api"* ]]
@@ -128,4 +128,48 @@ setup() { plugin_setup; }
     machine list web --namespace homelab
     [ "$status" -ne 0 ]
     [[ "$output" == *"status web"* ]]
+}
+
+# Two releases in one namespace, each with a machine called `web`. The header of
+# this file calls picking the wrong pet the one mistake this must not make, and a
+# listing is the first place a user meets that case - before they know to reach
+# for --release.
+@test "two machines of the same name are listed with their own stages" {
+    export SP_TEST_ALL_STATEFULSETS="$(printf 'web|lab|lab-web\nweb|prod|prod-web\n')"
+    export SP_TEST_ALL_PODS="$(printf 'web|lab|lab-web-0|Running|%s|guest=running,,,true;\nweb|prod|prod-web-0|Pending|seed=running,,,false;|\n' "$(seeded_init)")"
+    machine list --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"lab      ready"* ]]
+    [[ "$output" == *"prod     seeding"* ]]
+}
+
+@test "list narrows to a release when it is given one" {
+    export SP_TEST_ALL_STATEFULSETS="$(sts_line web lab lab-web)"
+    export SP_TEST_ALL_PODS="$(pod_line web lab lab-web-0 Running "$(seeded_init)" 'guest=running,,,true;')"
+    machine list --release lab --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"statefulsets --selector stateful-pods.io/machine,app.kubernetes.io/instance=lab"* ]]
+}
+
+# The read for one named machine succeeds and the read for every machine is
+# denied. Without the failure being reported where it can stop the program, the
+# right answer is printed and then contradicted by a wrong one.
+@test "a broad read that is denied does not become 'no machines at all'" {
+    export SP_TEST_STATEFULSETS=""
+    export SP_TEST_BROAD_STATUS=1
+    machine status ghost --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"no machines at all"* ]]
+    [[ "$output" != *"These are there"* ]]
+}
+
+# A pod another release left behind carries the same machine label, so a read
+# that is not narrowed to the resolved release sees two pods for one machine.
+@test "a pod belonging to another release is not mistaken for this machine's" {
+    export SP_TEST_STATEFULSETS="$(sts_line web prod prod-web)"
+    export SP_TEST_PODS="$(pod_line web prod prod-web-0 Running "$(seeded_init)" 'guest=running,,,true;')"
+    machine status web --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ready"* ]]
+    [[ "$(calls)" == *"pods --selector stateful-pods.io/machine=web,app.kubernetes.io/instance=prod"* ]]
 }

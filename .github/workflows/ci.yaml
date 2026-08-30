@@ -86,7 +86,6 @@ jobs:
       - name: Package the chart
         run: |
           helm package charts/stateful-pods --destination dist
-          echo "would push to oci://ghcr.io/${{ github.repository_owner }}/charts"
           ls -l dist
 
       # The plugin defaults the chart version to its own, so a chart published
@@ -176,10 +175,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The archive is named for the version the script derived, not for the
+          # tag as it was typed: the trigger glob is `v*`, so a tag the script
+          # normalises differently would otherwise fail at the upload.
+          version="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            dist/kubectl-machine_"$GITHUB_REF_NAME".tar.gz \
+            "dist/kubectl-machine_v${version}.tar.gz" \
             dist/SHA256SUMS \
             dist/machine.yaml
 

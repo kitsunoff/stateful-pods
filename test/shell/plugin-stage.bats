@@ -128,3 +128,16 @@ in_state() {
     ! grep --quiet '^kubectl get events' "$RECORD"
     [[ "$(calls)" == *"go-template"* ]]
 }
+
+# A machine whose pod has no init containers at all. The chart always renders
+# three, so this is not a state it produces today - but the projection's empty
+# field is, and an empty field between two others is how a reader gets every
+# column after it wrong. Reported as pending while it was running, on a real
+# cluster, before the projection stopped being tab separated.
+@test "an empty field between two others does not shift the ones after it" {
+    export SP_TEST_PODS="$(pod_line web lab lab-web-0 Running '' 'guest=running,,,true;')"
+    machine status web --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ready"* ]]
+    [[ "$output" != *"pending"* ]]
+}

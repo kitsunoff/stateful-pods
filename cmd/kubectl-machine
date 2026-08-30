@@ -31,6 +31,9 @@ SP_VERSION="0.1.0"
 # the other.
 SP_DEFAULT_CHART="oci://ghcr.io/kitsunoff/charts/stateful-pods"
 
+# The labels the chart puts on every object it renders for a machine. They are
+# also its selector labels, which are immutable for the life of a machine - the
+# most stable thing there is to depend on.
 SP_MACHINE_LABEL="stateful-pods.io/machine"
 SP_RELEASE_LABEL="app.kubernetes.io/instance"
 
@@ -232,14 +235,31 @@ machine_selector() {
     fi
 }
 
+# The selector for the machine that was resolved, narrowed by the release it was
+# found in rather than by whether the user happened to type --release. Every read
+# after resolution uses this. A pod or a claim another release left behind
+# carries the same machine label - the plugin's own retention is what creates
+# that - and deciding which machine is meant is exactly what resolving did.
+resolved_selector() {
+    printf '%s=%s,%s=%s' "$SP_MACHINE_LABEL" "$SP_MACHINE" "$SP_RELEASE_LABEL" "$SP_MACHINE_RELEASE"
+}
+
+# The projections below are separated by a vertical bar rather than a tab, and
+# that is not a taste. Bash treats a tab as IFS whitespace even when IFS is set
+# to a tab alone, so two of them in a row collapse into one delimiter - and a
+# machine with no init containers, whose init field is empty, would have every
+# field after it shifted along by one and be reported as pending while it runs.
+# None of the values here can contain a bar: they are label values, DNS names,
+# CamelCase reasons and digits.
+
 # Every machine's statefulset, projected to: name, release, object name.
-STS_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"\t"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"\t"}}{{.metadata.name}}{{"\n"}}{{end}}'
+STS_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"|"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"|"}}{{.metadata.name}}{{"\n"}}{{end}}'
 
 # Every machine's pod, projected to: name, release, pod, phase, the init
 # containers' states, the containers' states. A container is encoded as
 # NAME=STATE,REASON,EXITCODE,READY - which is everything the stage derivation
 # below reads, and nothing that needs jq to get at.
-POD_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"\t"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"\t"}}{{.metadata.name}}{{"\t"}}{{.status.phase}}{{"\t"}}{{range .status.initContainerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"\t"}}{{range .status.containerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"\n"}}{{end}}'
+POD_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"|"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"|"}}{{.metadata.name}}{{"|"}}{{.status.phase}}{{"|"}}{{range .status.initContainerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"|"}}{{range .status.containerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"\n"}}{{end}}'
 
 get_statefulsets() {
     kubectl_run get statefulsets --selector "$1" --output "go-template=$STS_TEMPLATE"
@@ -274,20 +294,23 @@ read_failed() {
 SP_MACHINE=""
 SP_MACHINE_RELEASE=""
 SP_OBJECT=""
+# What the resolving read returned, kept so that reporting an ambiguous name does
+# not ask the same question a second time.
+SP_MATCHES=""
 
 resolve_machine() {
-    local name="$1" found=0 machine release object matches
+    local name="$1" found=0 machine release object
     # Through a variable rather than a process substitution: the exit status of
     # the read is lost in one, and losing it is how a failure becomes an answer.
-    matches="$(get_statefulsets "$(machine_selector "$name")")" || read_failed
-    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+    SP_MATCHES="$(get_statefulsets "$(machine_selector "$name")")" || read_failed
+    while IFS='|' read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         found=$((found + 1))
         SP_MACHINE="$machine"
         SP_MACHINE_RELEASE="$release"
         SP_OBJECT="$object"
     done <<EOF
-$matches
+$SP_MATCHES
 EOF
 
     if [ "$found" -eq 0 ]; then
@@ -299,13 +322,17 @@ EOF
 }
 
 report_unknown() {
-    local name="$1" listing="" other release stage
-    while IFS="$(printf '\t')" read -r other release stage _ || [ -n "$other" ]; do
+    local name="$1" listing="" other release stage rows
+    # Not inside the heredoc: a read there happens in a command substitution, and
+    # exiting from there ends the substitution rather than the program - which
+    # would print the failure and then contradict it with an answer.
+    rows="$(machine_rows)" || read_failed
+    while IFS='|' read -r other release stage _ || [ -n "$other" ]; do
         [ -n "$other" ] || continue
         listing="$listing  $other in release $release ($stage)
 "
     done <<EOF
-$(machine_rows || read_failed)
+$rows
 EOF
     if [ -n "$listing" ]; then
         die "no machine called $name in $(where_it_would_act). These are there:
@@ -315,14 +342,13 @@ $listing"
 }
 
 report_ambiguous() {
-    local name="$1" machine release object found matches=""
-    found="$(get_statefulsets "$(machine_selector "$name")")" || read_failed
-    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+    local name="$1" machine release object matches=""
+    while IFS='|' read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         matches="$matches  $machine in release $release ($object)
 "
     done <<EOF
-$found
+$SP_MATCHES
 EOF
     die "more than one machine is called $name in $(where_it_would_act):
 $matches
@@ -553,8 +579,8 @@ SP_POD=""
 read_machine_pod() {
     local machine release pod inits containers found=0 pods
     SP_POD=""
-    pods="$(get_pods "$(machine_selector "$SP_MACHINE")")" || read_failed
-    while IFS="$(printf '\t')" read -r machine release pod _ inits containers || [ -n "$machine" ]; do
+    pods="$(get_pods "$(resolved_selector)")" || read_failed
+    while IFS='|' read -r machine release pod _ inits containers || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         SP_POD="$pod"
         derive_stage "$inits" "$containers"
@@ -583,21 +609,30 @@ EOF
 # release declares is a machine that exists.
 machine_rows() {
     local machine release object inits containers stage
-    local pods="" sets="" line
+    local pods="" sets="" line line_release selector
+    # The label on its own lists every machine here. --release narrows that, and
+    # is advertised as a flag every command takes, so it has to mean something
+    # here too.
+    selector="$SP_MACHINE_LABEL"
+    [ -n "$SP_RELEASE" ] && selector="$SP_MACHINE_LABEL,$SP_RELEASE_LABEL=$SP_RELEASE"
     # Reported by the caller, which is in the shell that can act on it.
-    pods="$(get_pods "$SP_MACHINE_LABEL")" || return 1
-    sets="$(get_statefulsets "$SP_MACHINE_LABEL")" || return 1
-    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+    pods="$(get_pods "$selector")" || return 1
+    sets="$(get_statefulsets "$selector")" || return 1
+    while IFS='|' read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         stage="not running"
-        while IFS="$(printf '\t')" read -r line _ _ _ inits containers || [ -n "$line" ]; do
+        while IFS='|' read -r line line_release _ _ inits containers || [ -n "$line" ]; do
+            # Both, because two releases here can each declare a machine called
+            # `web`, and matching on the name alone gives them both whichever
+            # pod was read last.
             [ "$line" = "$machine" ] || continue
+            [ "$line_release" = "$release" ] || continue
             derive_stage "$inits" "$containers"
             stage="$SP_STAGE"
         done <<EOF
 $pods
 EOF
-        printf '%s\t%s\t%s\t%s\n' "$machine" "$release" "$stage" "$object"
+        printf '%s|%s|%s|%s\n' "$machine" "$release" "$stage" "$object"
     done <<EOF
 $sets
 EOF
@@ -630,7 +665,7 @@ Did you mean: kubectl machine status $SP_FLAG"
         printf 'There are no machines in %s.\n' "$(where_it_would_act)"
         return 0
     fi
-    while IFS="$(printf '\t')" read -r name release stage object || [ -n "$name" ]; do
+    while IFS='|' read -r name release stage object || [ -n "$name" ]; do
         [ -n "$name" ] || continue
         [ "${#name}" -gt "$name_width" ] && name_width="${#name}"
         [ "${#release}" -gt "$release_width" ] && release_width="${#release}"
@@ -640,7 +675,7 @@ $rows
 EOF
     printf '%-*s  %-*s  %-*s  %s\n' \
         "$name_width" NAME "$release_width" RELEASE "$stage_width" STAGE OBJECT
-    while IFS="$(printf '\t')" read -r name release stage object || [ -n "$name" ]; do
+    while IFS='|' read -r name release stage object || [ -n "$name" ]; do
         [ -n "$name" ] || continue
         printf '%-*s  %-*s  %-*s  %s\n' \
             "$name_width" "$name" "$release_width" "$release" "$stage_width" "$stage" "$object"
@@ -1087,7 +1122,7 @@ EOF
 # The claim holding this machine's root filesystem, found by the same label the
 # machine itself is found by rather than by rebuilding the naming rule.
 machine_claims() {
-    kubectl_run get persistentvolumeclaims --selector "$(machine_selector "$SP_MACHINE")" \
+    kubectl_run get persistentvolumeclaims --selector "$(resolved_selector)" \
         --output 'go-template={{range .items}}{{.metadata.name}}{{"\n"}}{{end}}' 2>/dev/null || true
 }
 
@@ -1162,7 +1197,7 @@ it outlives the release. To destroy it, and everything on it:\n\n'
         printf '  kubectl%s delete persistentvolumeclaim %s\n' "$(kube_flags)" "$claim_line"
     else
         printf '  kubectl%s get persistentvolumeclaim --selector %s\n' \
-            "$(kube_flags)" "$(machine_selector "$SP_MACHINE")"
+            "$(kube_flags)" "$(resolved_selector)"
     fi
 }
 

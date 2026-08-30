@@ -95,7 +95,7 @@ setup() {
 }
 
 @test "an ambiguous name is never uninstalled" {
-    export SP_TEST_STATEFULSETS="$(printf 'web\tlab\tlab-web\nweb\tprod\tprod-web\n')"
+    export SP_TEST_STATEFULSETS="$(printf 'web|lab|lab-web\nweb|prod|prod-web\n')"
     machine delete web --namespace homelab --yes
     [ "$status" -ne 0 ]
     [[ "$output" == *"--release"* ]]
@@ -116,4 +116,20 @@ setup() {
     machine delete web --namespace homelab --yes < /dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"helm"* ]]
+}
+
+# The claim named here is pasted into a command that destroys it, and a machine
+# of the same name in another release leaves a claim carrying the same label -
+# the plugin's own retention is what creates that orphan. Naming it would offer,
+# ready to paste, the destruction of the volume the user was told was kept.
+@test "the claim named on removal is this machine's, not another release's" {
+    export SP_TEST_STATEFULSETS="$(sts_line web prod prod-web)"
+    export SP_TEST_PODS="$(pod_line web prod prod-web-0 Running "$(seeded_init)" 'guest=running,,,true;')"
+    export SP_TEST_PVCS="prod-web-prod-web-0"
+    export SP_TEST_PVCS_ALL="$(printf 'lab-web-lab-web-0\nprod-web-prod-web-0\n')"
+    machine delete web --namespace homelab --yes < /dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"prod-web-prod-web-0"* ]]
+    [[ "$output" != *"lab-web-lab-web-0"* ]]
+    [[ "$(calls)" == *"persistentvolumeclaims --selector stateful-pods.io/machine=web,app.kubernetes.io/instance=prod"* ]]
 }

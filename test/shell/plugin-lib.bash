@@ -33,6 +33,11 @@ plugin_setup() {
     export SP_TEST_PVCS=""
     export SP_TEST_CONTEXT="kind-lab"
     export SP_TEST_KUBECTL_STATUS=0
+    # The broad read - "every machine here" - answered separately from the read
+    # for one named machine, so that a cluster which allows one and denies the
+    # other can be exercised. That asymmetry is real: an RBAC rule, or a
+    # transient failure on one call and not the next.
+    export SP_TEST_BROAD_STATUS=0
     export SP_TEST_HELM_STATUS=0
     export SP_TEST_HELM_OUTPUT=""
     export SP_TEST_UNAME="Linux"
@@ -65,20 +70,37 @@ printf 'kubectl %s\n' "$*" >> "$SP_TEST_RECORD"
 # the namespace separately, because the difference between them is exactly what a
 # name that resolves to nothing has to fall back on.
 answer() {
-    local one="$1" all="$2" body
+    local one="$1" all="$2" body status
     if [[ "$SP_ARGS" == *"stateful-pods.io/machine="* ]]; then
         body="$one"
+        status="$SP_TEST_KUBECTL_STATUS"
     else
         body="$all"
+        status="$SP_TEST_BROAD_STATUS"
+        [ "$SP_TEST_KUBECTL_STATUS" -ne 0 ] && status="$SP_TEST_KUBECTL_STATUS"
+    fi
+    if [ "$status" -ne 0 ]; then
+        echo "Error from server (Forbidden): this read is denied" >&2
+        exit "$status"
     fi
     [ -n "$body" ] && printf '%s\n' "$body"
-    exit "$SP_TEST_KUBECTL_STATUS"
+    exit 0
 }
 
 SP_ARGS="$*"
 case "$SP_ARGS" in
     *statefulsets*) answer "$SP_TEST_STATEFULSETS" "${SP_TEST_ALL_STATEFULSETS:-$SP_TEST_STATEFULSETS}" ;;
-    *persistentvolumeclaims*) answer "$SP_TEST_PVCS" "$SP_TEST_PVCS" ;;
+    # A claim read narrowed to one release answers with that machine's claim; a
+    # read that names only the machine answers with every claim carrying that
+    # label, including one another release left behind.
+    *persistentvolumeclaims*)
+        if [[ "$SP_ARGS" == *"app.kubernetes.io/instance="* ]]; then
+            [ -n "$SP_TEST_PVCS" ] && printf '%s\n' "$SP_TEST_PVCS"
+        else
+            [ -n "${SP_TEST_PVCS_ALL:-$SP_TEST_PVCS}" ] && printf '%s\n' "${SP_TEST_PVCS_ALL:-$SP_TEST_PVCS}"
+        fi
+        exit "$SP_TEST_KUBECTL_STATUS"
+        ;;
     *" pods"*) answer "$SP_TEST_PODS" "${SP_TEST_ALL_PODS:-$SP_TEST_PODS}" ;;
     *current-context*) printf '%s\n' "$SP_TEST_CONTEXT"; exit 0 ;;
 esac
@@ -110,11 +132,11 @@ STUB
 }
 
 # A projected statefulset line: the machine's name, its release, its object name.
-sts_line() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+sts_line() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
 
 # A projected pod line, in the encoding the plugin asks kubectl to produce:
 # machine, release, pod, phase, init container states, container states.
-pod_line() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
+pod_line() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
 
 # The init container states of a machine that finished being made.
 seeded_init() { printf 'seed=terminated,Completed,0,true;prepare=terminated,Completed,0,true;customize=terminated,Completed,0,true;'; }
