@@ -60,14 +60,31 @@ jobs:
           printf '%s' "$REGISTRY_TOKEN" \
             | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
 
+      # A report, not a gate. Whether an installation token can read a user's
+      # packages at /users/{owner}/packages is not something this change
+      # established, and a nightly job that goes red on it would teach everyone
+      # to ignore a job whose whole purpose is to be read - which is the failure
+      # mode preset-bump.yaml's own comment warns about. So a run that cannot
+      # produce a plan says so and stops; it does not fail.
       - name: Work out what would be removed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          KEEP: ${{ inputs.keep || '5' }}
         run: |
-          ./hack/preset-retention.sh \
-            --owner "${{ github.repository_owner }}" \
-            --keep "${{ inputs.keep || '5' }}" \
-            --dry-run
+          set -o nounset -o pipefail
+          if ./hack/preset-retention.sh --owner "$REPOSITORY_OWNER" --keep "$KEEP" --dry-run; then
+            exit 0
+          fi
+          {
+            echo '### Retention could not work out a plan'
+            echo
+            echo 'Nothing was removed - this job removes nothing without a token in any'
+            echo 'case. The most likely cause is that the workflow token cannot read'
+            echo '`/users/OWNER/packages`, which is a read this job needs and an'
+            echo 'installation token may not have. The log above says which call failed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "could not produce a plan; see the summary" >&2
 
       # Only with a token that can actually delete. The step above has already
       # printed the plan, so what runs here is never a surprise.
@@ -75,6 +92,8 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.PRESET_RETENTION_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          KEEP: ${{ inputs.keep || '5' }}
         run: |
           set -o errexit -o nounset -o pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -90,6 +109,4 @@ jobs:
             echo "no PRESET_RETENTION_TOKEN; reported only"
             exit 0
           fi
-          ./hack/preset-retention.sh \
-            --owner "${{ github.repository_owner }}" \
-            --keep "${{ inputs.keep || '5' }}"
+          ./hack/preset-retention.sh --owner "$REPOSITORY_OWNER" --keep "$KEEP"
