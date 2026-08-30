@@ -475,6 +475,10 @@ STUB
   stub_registry
   run "$RETENTION" --owner tester --keep 1 --dry-run ubuntu-noble
   [ "$status" -eq 0 ]
-  [[ "$output" == *"stateful-pods-ubuntu"* ]] || [[ "$output" == *"removing 2 version(s)"* ]]
+  [[ "$output" == *"removing 2 version(s)"* ]]
+  # The package it read from, asserted where the answer actually is: the note it
+  # prints names the preset and the release, not the package.
+  grep --quiet --fixed-strings \
+    "/users/tester/packages/container/stateful-pods-ubuntu/versions" "$GH_CALLS"
   ! grep --quiet --fixed-strings "DELETE" "$GH_CALLS"
 }

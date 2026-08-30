@@ -91,6 +91,21 @@ check() {
 
 kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 
+# The release a preset publishes under, which is also its rolling tag. Read out
+# of the catalog rather than derived: the package, the preset name and the
+# upstream's own name for the distribution are three different strings, and this
+# is the one file that relates them.
+preset_release() {
+  local want="$1" name release
+  while IFS=';' read -r name _ release _ _ || [[ -n "$name" ]]; do
+    if [[ "$name" == "$want" ]]; then
+      printf '%s\n' "$release"
+      return 0
+    fi
+  done < images/presets/presets.list
+  return 0
+}
+
 # wait_ready <pod>
 # A StatefulSet recreates a pod that was deleted, but not in the same instant.
 # `kubectl wait` landing in that gap fails with NotFound rather than waiting, so
@@ -548,6 +563,41 @@ else
       || fail "$preset: could not point the test catalog at $in_cluster"
   done <<< "$built"
 
+  # The release's own tag is the name a person pulls, and it is the only
+  # reference the build moves rather than creates. Everything else here is
+  # asserted against what the build reported; this is asserted against the
+  # registry, because "the tag followed" is a claim about the registry.
+  step "asserting each release tag names the build just published"
+  while IFS=$'\t' read -r preset build reference; do
+    [[ -n "$preset" ]] || continue
+    rolling_tag="$(preset_release "$preset")"
+    [[ -n "$rolling_tag" ]] || fail "$preset: no line in images/presets/presets.list"
+    repository="${reference%@*}"
+    rolling="$(crane digest "$repository:$rolling_tag")" \
+      || fail "$preset: $repository:$rolling_tag does not resolve"
+    if [[ "$rolling" == "${reference##*@}" ]]; then
+      pass "$preset: $repository:$rolling_tag is the build just published"
+    else
+      fail "$preset: $repository:$rolling_tag is $rolling, not ${reference##*@}"
+    fi
+  done <<< "$built"
+
+  # A run that dies between the index push and the rolling tag leaves the tag on
+  # whatever it named before. Nothing here can produce that state honestly, so it
+  # is produced by hand - and the next build has to put it back, without
+  # republishing the dated tag it correctly leaves alone. That repair is the
+  # whole reason the already-published path sets the tag at all, and it is a line
+  # that can be deleted without any other assertion here noticing.
+  step "moving a release tag off its build, the way an interrupted run would"
+  alpine_reference="$(grep --max-count 1 '^alpine-3.24	' <<< "$built" | cut --fields 3)"
+  alpine_repository="${alpine_reference%@*}"
+  stray_tag="$(crane ls "$alpine_repository" | grep -- "-$node_arch\$" | head -1)"
+  [[ -n "$stray_tag" ]] || fail "the alpine preset published no per-architecture tag to point at"
+  crane tag "$alpine_repository:$stray_tag" "3.24" \
+    || fail "could not move $alpine_repository:3.24 onto $stray_tag"
+  check "the release tag now names something other than the build" \
+    test "$(crane digest "$alpine_repository:3.24")" != "${alpine_reference##*@}"
+
   # A published tag is never republished, which is the promise that makes a
   # machine's origin reproducible. The build says so; this is where a registry
   # exists to check it against.
@@ -564,6 +614,8 @@ else
   fi
   check "the second build said it was leaving the published tags alone" \
     grep --quiet "is already published, leaving it alone" "$PRESET_CHART_DIR/rebuild.log"
+  check "the second build put the release tag back on its build" \
+    test "$(crane digest "$alpine_repository:3.24")" = "${alpine_reference##*@}"
 
   for preset in alpine-3.24 void-current; do
     release="preset-${preset%%-*}"

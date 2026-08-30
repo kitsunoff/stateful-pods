@@ -131,8 +131,14 @@ jobs:
           while IFS=$'\t' read -r preset _ reference; do
             [ -n "$reference" ] || continue
             release=""
+            # An `if` rather than an `&&`, for the reason package_releases in
+            # hack/preset-retention.sh gives: a while loop's status is its last
+            # body command's, and the last line read here is ordinarily the one
+            # that did not match.
             while IFS=';' read -r name _ candidate _ _; do
-              [ "$name" = "$preset" ] && release="$candidate"
+              if [ "$name" = "$preset" ]; then
+                release="$candidate"
+              fi
             done < images/presets/presets.list
             if [ -z "$release" ]; then
               echo "$preset has no line in images/presets/presets.list" >&2

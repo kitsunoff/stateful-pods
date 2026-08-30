@@ -211,7 +211,10 @@ retain_preset() {
           "$preset: there are tags here that do not name a build:" \
           "$(jq --raw-output '.unparsable[] | "  " + .' <<< "$plan")" \
           "Ordering by build date is the whole basis of this decision, so a tag whose" \
-          "date cannot be read makes it a guess. Nothing was deleted.")"
+          "date cannot be read makes it a guess. Nothing was deleted." \
+          "A bare release name here is the rolling tag of a release that has since been" \
+          "removed from images/presets/presets.list: it is no longer recognised, and this" \
+          "package holds other releases that still are. Restore the line, or remove the tag.")"
         ;;
       "no release to retain")
         die "$(printf '%s\n' \
