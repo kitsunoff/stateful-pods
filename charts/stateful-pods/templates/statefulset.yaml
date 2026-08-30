@@ -200,12 +200,71 @@ spec:
             # here is what makes the posture a property of these values rather
             # than of a flag on the node.
             {{- include "stateful-pods.machine.guestSeccompProfile" $ctx | nindent 12 }}
+            # Declared for the same reason, against the same kind of default. A
+            # container the runtime has not been told to stop policing is one
+            # containerd confines with its own default AppArmor profile, on every
+            # node where AppArmor is supported - and that profile denies mount
+            # outright, which is what this container does before it can become the
+            # machine. Whether a node happens to have apparmor_parser installed is
+            # not something a machine's posture should turn on. This is not a
+            # profile the chart ships; it is the field a real one would be named
+            # in.
+            appArmorProfile:
+              type: Unconfined
             {{- if eq $mode "privileged" }}
-            privileged: true
+            # The privilege this mode grants, enumerated so that a reviewer can
+            # read it. ALL is dropped first, so this list is the whole of it and
+            # not an addition to whatever a runtime currently calls a default.
+            #
+            # It is what a container gets by default plus SYS_ADMIN, which is what
+            # the shim needs for mount(2) and pivot_root(2) - the same capability
+            # the other mode grants, and the reason both modes exist. A systemd
+            # guest and a busybox guest were both booted on this set, from both
+            # source kinds, and nothing had to be added.
+            #
+            # What is absent is as deliberate as what is present. MAC_ADMIN,
+            # MAC_OVERRIDE, SYS_TIME, SYS_MODULE and SYS_RAWIO are the five the
+            # reference implementation has always refused a privileged container.
+            # DAC_READ_SEARCH and SYS_BOOT are absent permanently: they are what
+            # open_by_handle_at and kexec_load need, and those are the two escape
+            # primitives the profile in profiles/ exists to close.
+            #
+            # A capability added here later should name the machine that needed it
+            # and the failure that showed it. Without that the set drifts back
+            # towards the blanket flag one well-intentioned commit at a time.
+            #
+            # allowPrivilegeEscalation is deliberately left unset, exactly as it
+            # is in the other mode - and not because the API would refuse it.
+            # Setting it false is accepted, and the container keeps SYS_ADMIN;
+            # what it does is set no_new_privs, and no_new_privs makes the kernel
+            # ignore setuid bits and file capabilities on every exec that
+            # follows. Inside a whole operating system that is su, sudo, ping and
+            # everything else the distribution ships - including the file
+            # capability the seeding step goes out of its way to preserve. It
+            # would not cost the container its privilege; it would cost the
+            # machine its own userland.
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - AUDIT_WRITE
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - FSETID
+                - KILL
+                - MKNOD
+                - NET_BIND_SERVICE
+                - NET_RAW
+                - SETFCAP
+                - SETGID
+                - SETPCAP
+                - SETUID
+                - SYS_ADMIN
+                - SYS_CHROOT
             {{- else }}
             # SYS_ADMIN is what the shim needs for mount(2) and pivot_root(2).
-            # allowPrivilegeEscalation is deliberately left unset: setting it to
-            # false is incompatible with an added SYS_ADMIN.
+            # allowPrivilegeEscalation is left unset for the reason given above.
             capabilities:
               add:
                 - SYS_ADMIN

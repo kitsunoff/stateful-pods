@@ -1,0 +1,84 @@
+suite: rendering - the access-control profile the guest declares
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: declares the guest unconfined rather than leaving it to the node, in privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # A container the runtime is not told to stop policing is one containerd
+      # confines with its own default AppArmor profile wherever the node supports
+      # it, and that profile contains "deny mount," - the one thing this container
+      # exists to do. Left out, the field would make a machine's posture a property
+      # of whether a node has apparmor_parser installed.
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.appArmorProfile
+          value:
+            type: Unconfined
+
+  - it: declares the guest unconfined rather than leaving it to the node, in userns mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      # The guest mounts in either mode, so it declares this in either mode. The
+      # field describes the container, not the mode.
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.appArmorProfile
+          value:
+            type: Unconfined
+
+  - it: leaves the preparation steps to the node's own default
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # They unpack an archive, write files and fetch over HTTPS. The default
+      # profile permits all of it, and it is the only container in this pod whose
+      # work it forbids that names anything else.
+      - notExists:
+          path: spec.template.spec.initContainers[0].securityContext.appArmorProfile
+      - notExists:
+          path: spec.template.spec.initContainers[1].securityContext.appArmorProfile
+      - notExists:
+          path: spec.template.spec.initContainers[2].securityContext.appArmorProfile
+
+  - it: declares it on the container and not on the pod
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # A pod-level profile would reach every container, including the three that
+      # do not need it and are better off under the node's default.
+      - notExists:
+          path: spec.template.spec.securityContext

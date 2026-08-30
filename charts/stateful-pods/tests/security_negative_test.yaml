@@ -21,7 +21,7 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].securityContext.privileged
 
-  - it: allows no privilege escalation in userns mode
+  - it: leaves privilege escalation allowed in userns mode, which no_new_privs would cost
     set:
       machines.web:
         source:
@@ -34,6 +34,9 @@ tests:
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation
+          value: false
 
   - it: adds no capability beyond SYS_ADMIN in userns mode
     set:
@@ -99,7 +102,32 @@ tests:
       - notExists:
           path: spec.template.spec.runtimeClassName
 
-  - it: adds no capability and opts out of no user namespace in privileged mode
+  - it: grants exactly the named set and opts out of no user namespace in privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # Everything the mode grants is in the add list, because the drop of ALL
+      # empties the bounding set first. Without that drop the list would be
+      # additive to whatever a runtime happens to call a default, and the posture
+      # would stop being a property of these values.
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          value:
+            - ALL
+      - lengthEqual:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          count: 15
+      - notExists:
+          path: spec.template.spec.hostUsers
+
+  - it: marks no container privileged in privileged mode
     set:
       machines.web:
         source:
@@ -111,6 +139,26 @@ tests:
           mode: privileged
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].securityContext.capabilities
+          path: spec.template.spec.containers[0].securityContext.privileged
+
+  - it: leaves privilege escalation allowed in privileged mode, which no_new_privs would cost
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # Not because the API refuses it - it does not. Setting it false sets
+      # no_new_privs, which makes the kernel ignore setuid bits and file
+      # capabilities on every exec that follows, and a machine is a whole
+      # operating system built on both. The preparation steps run one program and
+      # do set it false.
       - notExists:
-          path: spec.template.spec.hostUsers
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+      - equal:
+          path: spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation
+          value: false

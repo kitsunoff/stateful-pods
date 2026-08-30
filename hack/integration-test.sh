@@ -88,6 +88,23 @@ check() {
 
 kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 
+# wait_ready <pod>
+# A StatefulSet recreates a pod that was deleted, but not in the same instant.
+# `kubectl wait` landing in that gap fails with NotFound rather than waiting, so
+# the pod is waited into existence first and only then waited on.
+#
+# The same helper is in hack/seccomp-test.sh, on purpose: each script stands on
+# its own and is run on its own, and a shared file between two suites that build
+# different clusters would be a third thing to keep in step with both.
+wait_ready() {
+  local pod="$1"
+  for _ in $(seq 1 60); do
+    kc get "pod/$pod" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  kc wait --for=condition=Ready "pod/$pod" --timeout=300s >/dev/null
+}
+
 # assert_default_filter <pod>
 # The steps that run before the guest declare the runtime's default syscall
 # filter, and a pod that is Ready is a pod whose preparation steps succeeded
@@ -190,7 +207,7 @@ helm --kube-context "$CONTEXT" upgrade --install oci "$CHART" \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.web.source.reference=$SOURCE_REFERENCE" \
   --wait --timeout 5m >/dev/null
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 
 assert_default_filter oci-web-0
 
@@ -272,6 +289,78 @@ check "the kernel filesystem the guest must not write to is read-only" \
 check "the device nodes are usable" guest sh -c 'echo probe > /dev/null'
 check "the machine knows it is in a container" guest sh -c 'tr "\0" "\n" < /proc/1/environ | grep -qx "container=lxc"'
 
+step "asserting the machine holds the capability set its mode names, and nothing beyond it"
+# The bounding set of the machine's own init. Nothing inside the machine can
+# exceed it, so this is a statement about every process the machine will ever run
+# and not about the shell this exec started. `capsh` is in the source image
+# because it installs libcap2-bin for the file-capability assertion above, and it
+# is called by path for the same reason `getcap` is.
+# Both substitutions end in `|| true` so that a failure here is reported by the
+# check below rather than ending the run with errexit and no message at all.
+bounding="$(guest sh -c 'awk "/^CapBnd:/ {print \$2}" /proc/1/status' | tr -d '\r' || true)"
+granted="$(guest /usr/sbin/capsh --decode="$bounding" | sed 's/^[^=]*=//' | tr ',' '\n' | tr -d '\r' || true)"
+[[ -n "$granted" ]] \
+  || fail "could not read the machine's bounding capability set (CapBnd was '${bounding:-nothing}')"
+
+held() { grep --quiet --line-regexp --fixed-strings "$1" <<< "$granted"; }
+
+# What the mode is defined by granting. Without these an operating system does
+# not run: SYS_ADMIN is the mount and the root change, and the rest are what a
+# daemon dropping privilege or binding a low port needs.
+for capability in cap_sys_admin cap_chown cap_setuid cap_setgid cap_mknod cap_net_bind_service; do
+  if held "$capability"; then
+    pass "the machine holds $capability, which the mode names"
+  else
+    fail "the machine does not hold $capability, so the mode's set is too narrow to run an operating system"
+  fi
+done
+
+# What the mode is defined by *not* granting, and what each would let a machine
+# do. The first five are the ones the reference implementation has always refused
+# a privileged container; the last two are the escape primitives the syscall
+# filter in profiles/ exists to close, and they are absent permanently.
+assert_given_up() {
+  if held "$1"; then
+    fail "the machine holds $1, so it can still $2 - which this mode gives up"
+  else
+    pass "the machine cannot $2: $1 is not in its bounding set"
+  fi
+}
+assert_given_up cap_sys_module "load or unload a kernel module"
+assert_given_up cap_sys_rawio "perform raw I/O"
+assert_given_up cap_sys_time "set the node's clock"
+assert_given_up cap_mac_admin "alter the node's mandatory access control"
+assert_given_up cap_mac_override "override the node's mandatory access control"
+assert_given_up cap_dac_read_search "reach a file outside its root by handle"
+assert_given_up cap_sys_boot "replace the running kernel"
+
+step "asserting the machine cannot reach the node's own devices"
+# The sharpest form of what the mode gave up. A machine still holds CAP_MKNOD, so
+# it creates the node for one of the node's block devices exactly as before - and
+# opening it is what the device cgroup now refuses. Under the blanket privileged
+# flag the same two commands read the node's disk.
+check "no block device of the node's is present in the machine" \
+  guest sh -c '! ls -l /dev | grep -q "^b"'
+# The node is made in /dev, which the mount plan mounts without nodev. On a nodev
+# filesystem - /tmp and /run, in this machine - the open fails whatever the device
+# cgroup allows, so probing there would hold under the old posture too and prove
+# nothing about this one. Asserted rather than assumed, because the mount plan
+# could change.
+check "the machine's /dev is not mounted nodev, so the probe below means what it says" \
+  guest sh -c 'awk "\$2 == \"/dev\" && \$4 ~ /nodev/ {found=1} END {exit found}" /proc/mounts'
+# The two refusals are told apart by their errno, and only one of them is this
+# mode's doing: nodev gives EACCES, "Permission denied"; the device cgroup gives
+# EPERM, "Operation not permitted". Matching the exact one is also what stops a
+# node with no such device from passing this for saying "No such device".
+device_error="$(guest sh -c 'mknod /dev/sp-node b 7 0 && dd if=/dev/sp-node of=/dev/null bs=512 count=1' 2>&1 || true)"
+if grep --quiet 'Operation not permitted' <<< "$device_error"; then
+  pass "the machine cannot open one of the node's block devices, even through a node it made itself"
+elif grep --quiet 'records out' <<< "$device_error"; then
+  fail "the machine read one of the node's block devices, which this mode is meant to have given up"
+else
+  fail "the machine was refused the node's block device for another reason: ${device_error:-nothing}"
+fi
+
 step "asserting the files the chart maintains inside the machine"
 check "the machine has the pod's host name" \
   guest sh -c '[ "$(cat /etc/hostname)" = "oci-web-0" ]'
@@ -281,7 +370,7 @@ check "the machine's host table is the pod's" guest sh -c 'grep -q oci-web-0 /et
 step "asserting a claimed file is left alone"
 guest sh -c 'touch /etc/.stateful-pods-ignore.resolv.conf; echo "nameserver 1.1.1.1" > /etc/resolv.conf'
 kc delete pod oci-web-0 --wait >/dev/null
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 check "the claimed resolver survived the restart" \
   guest sh -c 'grep -q "1.1.1.1" /etc/resolv.conf'
 check "the unclaimed host name was still refreshed" \
@@ -349,13 +438,13 @@ else
   fail "the machine never became ready"
 fi
 
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 
 step "asserting that a restart does not re-seed"
 guest sh -c 'echo "written by the guest" > /etc/guest-state'
 before="$(guest cat /.stateful-pods/provisioned)"
 kc delete pod oci-web-0 --wait >/dev/null
-kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null
+wait_ready oci-web-0
 
 if [[ "$(guest cat /etc/guest-state)" == "written by the guest" ]]; then
   pass "the guest's own file survived the restart"
@@ -376,7 +465,7 @@ helm --kube-context "$CONTEXT" upgrade --install alpine "$CHART" \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.tiny.source.reference=$ALPINE_SOURCE_REFERENCE" \
   --wait --timeout 5m >/dev/null
-kc wait --for=condition=Ready pod/alpine-tiny-0 --timeout=300s >/dev/null
+wait_ready alpine-tiny-0
 
 assert_default_filter alpine-tiny-0
 
@@ -404,8 +493,8 @@ step "taking the registry away and restarting both seeded machines"
 kc scale deployment/registry --replicas=0 >/dev/null
 kc wait --for=delete pod --selector app=registry --timeout=120s >/dev/null
 kc delete pod oci-web-0 alpine-tiny-0 --wait >/dev/null
-if kc wait --for=condition=Ready pod/oci-web-0 --timeout=300s >/dev/null \
-   && kc wait --for=condition=Ready pod/alpine-tiny-0 --timeout=300s >/dev/null; then
+if wait_ready oci-web-0 \
+   && wait_ready alpine-tiny-0; then
   pass "both machines came back up with no registry to reach"
 else
   fail "a seeded machine could not start once its source was unreachable"
@@ -436,7 +525,7 @@ else
     --values test/integration/oci.yaml \
     --set "shim.image=$SHIM_IMAGE" \
     --wait --timeout 5m >/dev/null
-  kc wait --for=condition=Ready pod/migrated-web-0 --timeout=300s >/dev/null
+  wait_ready migrated-web-0
   check "the previous revision rendered a ConfigMap of scripts" kc get configmap migrated-web
   kc exec migrated-web-0 --container guest -- \
     sh -c 'echo "written before the upgrade" > /etc/before-upgrade' >/dev/null
@@ -447,7 +536,7 @@ else
     --set "shim.image=$SHIM_IMAGE" \
     --set "machines.web.source.reference=$SOURCE_REFERENCE" \
     --wait --timeout 5m >/dev/null
-  kc wait --for=condition=Ready pod/migrated-web-0 --timeout=300s >/dev/null
+  wait_ready migrated-web-0
   check "the upgrade removed the ConfigMap" \
     bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap migrated-web"
   check "the machine's own file survived the upgrade" \
@@ -482,7 +571,7 @@ else
     --set "machines.db.source.url=$TEMPLATE_URL" \
     --set-string "machines.db.source.sha256=$TEMPLATE_SHA256" \
     --wait --timeout 10m >/dev/null
-  kc wait --for=condition=Ready pod/lxc-db-0 --timeout=600s >/dev/null
+  wait_ready lxc-db-0
 
   assert_default_filter lxc-db-0
 

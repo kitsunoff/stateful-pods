@@ -46,9 +46,18 @@ boundary that exists. What it adds there is narrower: `CAP_SYS_ADMIN` inside a u
 unlocks a large amount of mount-related kernel code, and the kernel is the only target left. This
 profile does not close that, and does not claim to.
 
-In `privileged` mode the profile is not applied at all. Containerd drops the seccomp profile a
-privileged container names before it builds the container — measured, not inferred — so no value the
-chart sets can confine that mode.
+In `privileged` mode the profile is worth the same as in `userns`, and for the same reason: that
+mode grants a named capability set which holds none of `CAP_SYS_BOOT`, `CAP_DAC_READ_SEARCH` or
+`CAP_SYS_MODULE` either, so those calls are mostly a boundary the profile restates. The forced
+unmount is the exception in both modes, and it is not a small one: `umount2` with `MNT_FORCE` needs
+only `CAP_SYS_ADMIN`, which both modes grant, so that rule is the profile's own and nothing else
+denies it. `hack/seccomp-test.sh` makes exactly that call from inside a running machine, once before
+it names the profile and once after.
+
+It used to be worth nothing there. The mode rendered a privileged container, and containerd drops
+the seccomp profile a privileged container names before it builds it — measured, not inferred — so
+no value the chart set could confine it. That is one of the two reasons the mode stopped being
+rendered that way.
 
 ## Getting the file onto the nodes
 
@@ -132,5 +141,5 @@ A machine running under the profile denies the calls, and that is visible from i
 kubectl exec lab-web-0 -- sh -c 'cat /proc/1/status | grep Seccomp'
 ```
 
-`Seccomp: 2` means a filter is loaded; `Seccomp: 0` means none is, which is what an unconfined
-machine — and every privileged one — reports.
+`Seccomp: 2` means a filter is loaded; `Seccomp: 0` means none is, which is what a machine naming
+`Unconfined` reports. Both security modes report `2` when they name a profile.

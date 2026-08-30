@@ -7,7 +7,7 @@ tests:
   - it: rejects userns on a cluster below the required version, naming version and alternative
     capabilities:
       majorVersion: 1
-      minorVersion: 29
+      minorVersion: 32
     set:
       machines.web:
         source:
@@ -19,12 +19,12 @@ tests:
           mode: userns
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.security\.mode: "userns" requires Kubernetes >= 1\.33, but the target cluster reports v1\.29\.0.*set machines\.web\.security\.mode to "privileged"'
+          errorPattern: '(?s)machines\.web\.security\.mode: "userns" requires Kubernetes >= 1\.33, but the target cluster reports v1\.32\.0.*set machines\.web\.security\.mode to "privileged"'
 
   - it: renders privileged on that same cluster
     capabilities:
       majorVersion: 1
-      minorVersion: 29
+      minorVersion: 32
     set:
       machines.web:
         source:

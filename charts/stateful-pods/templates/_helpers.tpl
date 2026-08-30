@@ -260,7 +260,7 @@ Takes the root context.
 {{- else if eq $mode "userns" -}}
 {{- $found := $root.Capabilities.KubeVersion.Version -}}
 {{- if not (semverCompare ">= 1.33.0-0" $found) -}}
-{{- $errors = append $errors (printf "machines.%s.security.mode: \"userns\" requires Kubernetes >= 1.33, but the target cluster reports %s. Upgrade the cluster, or set machines.%s.security.mode to \"privileged\", which works on any cluster and gives up almost all isolation." $name $found $name) -}}
+{{- $errors = append $errors (printf "machines.%s.security.mode: \"userns\" requires Kubernetes >= 1.33, but the target cluster reports %s. Upgrade the cluster, or set machines.%s.security.mode to \"privileged\", which asks nothing of the cluster beyond this chart's floor of 1.30 and grants the guest a named capability set that is real on the node." $name $found $name) -}}
 {{- end -}}
 {{- end -}}
 
@@ -292,7 +292,7 @@ Takes the root context.
 {{- if eq $type "" -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: not set. Name the filter form explicitly, the same way the mode is named. Accepted forms:\n%s" $name (include "stateful-pods.errors.seccompForms" $root)) -}}
 {{- else if eq $type "RuntimeDefault" -}}
-{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: \"RuntimeDefault\" cannot be used for a machine. The container runtime's default profile does not permit pivot_root, which is the call the guest container makes to become the machine, so in \"userns\" mode this value renders cleanly, seeds the volume over several minutes and then fails at the root change. It is refused in \"privileged\" mode too, where the runtime drops the profile and nothing would fail, because a machine's posture must not depend on what a runtime does with a value. A filter that does permit it has to come from a file on the node: place one and name it with type \"Localhost\" and machines.%s.security.seccompProfile.localhostProfile. This chart ships such a profile in profiles/stateful-pods-machine.json." $name $name) -}}
+{{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: \"RuntimeDefault\" cannot be used for a machine. The container runtime's default profile does not permit pivot_root, which is the call the guest container makes to become the machine, so this value renders cleanly, seeds the volume over several minutes and then fails at the root change. That holds in both modes: neither of them renders a container the runtime has been told to stop policing, so both get the filter they name. A filter that does permit it has to come from a file on the node: place one and name it with type \"Localhost\" and machines.%s.security.seccompProfile.localhostProfile. This chart ships such a profile in profiles/stateful-pods-machine.json." $name $name) -}}
 {{- else if not (has $type (list "Unconfined" "Localhost")) -}}
 {{- $errors = append $errors (printf "machines.%s.security.seccompProfile.type: %q is not a syscall filter form. Accepted forms:\n%s" $name $type (include "stateful-pods.errors.seccompForms" $root)) -}}
 {{- end -}}
@@ -392,8 +392,14 @@ documentation of the two modes, which is why it states what each needs.
                    is scoped to that namespace. Requires Kubernetes >= 1.33 with user
                    namespaces enabled, containerd >= 2.0 or CRI-O, Linux >= 6.3 and
                    idmap-capable storage (not NFS).
-      privileged - the guest container runs privileged. Works on any cluster and on any
-                   kernel, and gives up almost all isolation from the node.
+      privileged - the guest container is granted a named capability set - what a container
+                   gets by default, plus CAP_SYS_ADMIN for the mount and the root change -
+                   and every one of them is real on the node. Asks nothing of the cluster
+                   beyond this chart's own floor of Kubernetes 1.30, and nothing at all of
+                   the kernel. It is not the runtime's blanket privileged flag: a machine in
+                   this mode cannot load kernel modules, perform raw I/O, set the node's
+                   clock or reach a device the pod was not given, and it does run under the
+                   syscall filter its values name.
 {{- end -}}
 
 {{/*

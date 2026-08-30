@@ -26,6 +26,8 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
+            appArmorProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
@@ -48,4 +50,81 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
-            privileged: true
+            appArmorProfile:
+              type: Unconfined
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - AUDIT_WRITE
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - FSETID
+                - KILL
+                - MKNOD
+                - NET_BIND_SERVICE
+                - NET_RAW
+                - SETFCAP
+                - SETGID
+                - SETPCAP
+                - SETUID
+                - SYS_ADMIN
+                - SYS_CHROOT
+
+  - it: names the capabilities the mode excludes nowhere in the privileged posture
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # Loading kernel code, raw I/O, the host's clock and the host's mandatory
+      # access control - the five the reference implementation has always refused -
+      # together with the two that are the escape primitives its syscall filter
+      # exists to close.
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_MODULE
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_RAWIO
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_TIME
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: MAC_ADMIN
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: MAC_OVERRIDE
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: DAC_READ_SEARCH
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_BOOT
+
+  - it: marks no container as suspending the runtime's policy in the privileged mode
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.privileged
+      - notExists:
+          path: spec.template.spec.initContainers[0].securityContext.privileged
+      - notExists:
+          path: spec.template.spec.initContainers[1].securityContext.privileged
+      - notExists:
+          path: spec.template.spec.initContainers[2].securityContext.privileged

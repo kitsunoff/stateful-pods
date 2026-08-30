@@ -26,6 +26,8 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
+            appArmorProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
@@ -52,14 +54,16 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
+            appArmorProfile:
+              type: Unconfined
             capabilities:
               add:
                 - SYS_ADMIN
 
-  - it: renders the privileged posture identically on Kubernetes 1.27
+  - it: renders the privileged posture identically on Kubernetes 1.30, the chart's floor
     capabilities:
       majorVersion: 1
-      minorVersion: 27
+      minorVersion: 30
     set:
       machines.web:
         source:
@@ -77,7 +81,27 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
-            privileged: true
+            appArmorProfile:
+              type: Unconfined
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - AUDIT_WRITE
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - FSETID
+                - KILL
+                - MKNOD
+                - NET_BIND_SERVICE
+                - NET_RAW
+                - SETFCAP
+                - SETGID
+                - SETPCAP
+                - SETUID
+                - SYS_ADMIN
+                - SYS_CHROOT
 
   - it: renders the privileged posture identically on Kubernetes 1.99
     capabilities:
@@ -100,4 +124,24 @@ tests:
           value:
             seccompProfile:
               type: Unconfined
-            privileged: true
+            appArmorProfile:
+              type: Unconfined
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - AUDIT_WRITE
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - FSETID
+                - KILL
+                - MKNOD
+                - NET_BIND_SERVICE
+                - NET_RAW
+                - SETFCAP
+                - SETGID
+                - SETPCAP
+                - SETUID
+                - SYS_ADMIN
+                - SYS_CHROOT
