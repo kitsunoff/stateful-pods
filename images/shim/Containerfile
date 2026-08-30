@@ -26,7 +26,7 @@
 #           container, so the image needs a registry client of its own. `crane
 #           export` applies the layers, including their whiteouts, and writes the
 #           result as a tar stream that GNU tar above extracts.
-FROM alpine:3.22
+FROM alpine:3.24
 
 # renovate: datasource=repology
 RUN apk add --no-cache \
