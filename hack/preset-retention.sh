@@ -280,7 +280,13 @@ package_releases() {
   {
     while IFS=';' read -r name _ release _ package || [[ -n "$name" ]]; do
       [[ "$name" == \#* || -z "$package" ]] && continue
-      [[ "$package" == "$want" ]] && printf '%s\n' "$release"
+      # An `if` rather than an `&&`, because a while loop's status is its last
+      # body command's and the last line here is ordinarily the one that did not
+      # match. Under errexit that made the assignment this feeds fail, and the
+      # run ended without a word.
+      if [[ "$package" == "$want" ]]; then
+        printf '%s\n' "$release"
+      fi
     done < "$CATALOG_FILE"
   } | jq --raw-input --slurp 'split("\n") | map(select(length > 0))'
 }

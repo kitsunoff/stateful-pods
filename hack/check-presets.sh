@@ -52,8 +52,16 @@ done < "$PRESET_LIST"
 package_of() {
   local want="$1" name package
   while read -r name package; do
-    [[ "$name" == "$want" ]] && { printf '%s\n' "$package"; return 0; }
+    if [[ "$name" == "$want" ]]; then
+      printf '%s\n' "$package"
+      return 0
+    fi
   done <<< "$packages"
+  # A name with no package is a name this project does not build, which is
+  # something the caller reports rather than something that stops the check. It
+  # has to be said explicitly: a while loop's status is its last body command's,
+  # and under errexit falling off the end here would end the run in silence.
+  return 0
 }
 
 # What the chart offers.
