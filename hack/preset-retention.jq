@@ -4,9 +4,17 @@
 # Input:
 #   {
 #     "keep": 5,
+#     "max_deletions": 8,
 #     "versions": [ { "id": 1, "digest": "sha256:...", "tags": ["trixie-20260829_0524"] } ],
 #     "children": { "sha256:<index>": [ "sha256:<child>", ... ] }
 #   }
+#
+# `max_deletions` is a blast radius, and it is decided here rather than by the
+# caller so that it is reachable by the same fixtures as everything else. A day's
+# retention removes one build, which is three versions; a plan much larger than
+# that is not describing a day, and the difference between a bug and a routine
+# Tuesday should not be measured in how many published images survive it. Null
+# means no limit.
 #
 # Output: the same decision, spelled out - which builds stay, which go, which
 # digests are protected, and the versions to delete in the order to delete them.
@@ -68,13 +76,22 @@ def date_of(key): key | capture("(?<d>[0-9]{8}_[0-9]{4})") | .d;
      | unique_by(.id)
      | map(select(.digest | IN($protected[]) | not))) as $doomed
 
-  | {
-      retained_builds: $retained_builds,
-      removed_builds: $removed_builds,
-      protected: $protected,
-      delete: (
-        [$doomed[] | . as $v | select($children | has($v.digest)) | {id, digest, tags, kind: "index"}]
-        + [$doomed[] | . as $v | select($children | has($v.digest) | not) | {id, digest, tags, kind: "manifest"}]
-      )
-    }
+  # Indexes before the manifests they point at, never after, so that a run
+  # interrupted half way leaves a resolvable image rather than an index whose
+  # children are gone.
+  | ([$doomed[] | . as $v | select($children | has($v.digest)) | {id, digest, tags, kind: "index"}]
+     + [$doomed[] | . as $v | select($children | has($v.digest) | not) | {id, digest, tags, kind: "manifest"}]
+    ) as $delete
+
+  | if ($input.max_deletions != null) and (($delete | length) > $input.max_deletions) then
+      { error: "the plan is larger than a run may remove",
+        would_delete: ($delete | length),
+        max_deletions: $input.max_deletions,
+        removed_builds: $removed_builds }
+    else
+      { retained_builds: $retained_builds,
+        removed_builds: $removed_builds,
+        protected: $protected,
+        delete: $delete }
+    end
   end

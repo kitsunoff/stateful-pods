@@ -288,10 +288,6 @@ Takes the root context.
 {{- end -}}
 
 {{/*
-Stage two: every remaining check, accumulated and reported together.
-Takes the root context.
-*/}}
-{{/*
 The checks on a source's registry credentials, shared by every kind that fetches
 from a registry.
 
@@ -322,6 +318,10 @@ empty.
 {{ toYaml $errors }}
 {{- end -}}
 
+{{/*
+Stage two: every remaining check, accumulated and reported together.
+Takes the root context.
+*/}}
 {{- define "stateful-pods.validate.semantics" -}}
 {{- $root := . -}}
 {{- $errors := list -}}

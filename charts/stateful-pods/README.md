@@ -690,7 +690,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | What was verified is recorded | the `io.stateful-pods.preset.upstream.*` labels |
 | One reference serves both architectures | `hack/preset-build.sh`, asserted in `preset-publish.yaml` |
 | A preset with an incomplete upstream is not published | `test/presets/verification.bats` |
-| A published tag keeps its content | `test/presets/verification.bats`, and the build skips a tag that exists |
+| A published tag keeps its content | the preset stage of `hack/integration-test.sh`, which builds twice and compares |
 | No tag tracks the newest build | every tag names an upstream build date |
 | A named preset renders as a pinned reference | `values_preset_source_test.yaml` |
 | The table is part of the chart | `.Files.Get`, exercised from a package |

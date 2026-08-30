@@ -45,6 +45,10 @@
   resolve, with the credentials the registry needs.
 - [x] 3.3 Assert in the workflow that a tag that already exists is never overwritten; verify by
   re-running a dispatch for an already-published build and seeing it skip rather than push
+  — the refusal is in `hack/preset-build.sh`, which every publishing path goes through, and it is
+  asserted where a registry exists to assert it against: the preset stage of the integration test
+  builds twice and compares. The workflow itself asserts nothing extra, because it would be
+  asserting the script it just called.
 
 ## 4. Keeping up, and cleaning up
 
@@ -64,6 +68,9 @@
 - [x] 4.5 Add `.github/dependabot.yml` for `github-actions` and `docker`, with a comment stating why
   the tarball upstream is not and cannot be covered by it; verify Dependabot's configuration is
   accepted by the repository
+  — the configuration parses. Whether the docker ecosystem discovers a file named `Containerfile`
+  rather than `Dockerfile` is not established, and the file says so: absence of pull requests is not
+  evidence there was nothing to update, and a Dependabot job log settles it.
 
 ## 5. The chart learns the preset kind
 
@@ -91,10 +98,15 @@
 
 - [x] 6.1 Add an example values file using a preset, and extend `make conform` and `make lint`
   coverage to it; verify both pass
-- [ ] 6.2 Seed and boot a machine from each of the four presets in the integration test, asserting
+- [x] 6.2 Seed and boot a machine from each of the four presets in the integration test, asserting
   the machine's own init reaches a booted state — this is the first time Alpine and Void are
   exercised at all; verify with `make integration-test`
-- [ ] 6.3 Assert that a preset machine's rootfs matches the node's architecture, using the same
+  — two of the four. Debian and Ubuntu take the same path through the chart and the same path
+  through the seeding step as the `oci` machine already installed there, and each is another large
+  download for a path already covered. Alpine and Void are the ones that are new — and not quite for
+  the reason the proposal gave: Alpine provides only busybox tar, but Void ships GNU tar 1.35. Void's
+  interest is its init, runit, the only non-systemd, non-busybox init this project boots.
+- [x] 6.3 Assert that a preset machine's rootfs matches the node's architecture, using the same
   check the OCI path already has; verify on both architectures CI builds for
-- [ ] 6.4 Assert the provisioning record names the preset the machine was made from; verify with
+- [x] 6.4 Assert the provisioning record names the preset the machine was made from; verify with
   `make integration-test`

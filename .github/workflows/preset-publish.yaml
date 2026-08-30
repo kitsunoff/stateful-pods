@@ -51,10 +51,15 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
 
+      # Through the environment rather than interpolated into the script body,
+      # which is the standard hardening for anything carrying a secret.
       - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | crane auth login ghcr.io --username "${{ github.actor }}" --password-stdin
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
 
       # Before anything is fetched. A build that cannot establish what it is
       # packaging must not package anything, and this is the cheapest place to
@@ -66,13 +71,14 @@ jobs:
         id: build
         env:
           PRESETS: ${{ inputs.presets }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
           # Unquoted on purpose: this is a list of preset names, and an empty
           # value has to become no arguments rather than one empty argument.
           # shellcheck disable=SC2086
           ./hack/preset-build.sh \
-            --repository "ghcr.io/${{ github.repository_owner }}/stateful-pods-" \
+            --repository "ghcr.io/$REPOSITORY_OWNER/stateful-pods-" \
             $PRESETS | tee published.tsv
           {
             echo 'published<<PUBLISHED_EOF'
@@ -100,12 +106,13 @@ jobs:
       - name: Report each package's visibility
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
           while IFS=$'\t' read -r preset build reference; do
             [ -n "$preset" ] || continue
             package="stateful-pods-$preset"
-            visibility="$(gh api "/users/${{ github.repository_owner }}/packages/container/$package" \
+            visibility="$(gh api "/users/$REPOSITORY_OWNER/packages/container/$package" \
               --jq '.visibility' 2>/dev/null || echo unknown)"
             echo "$package: $visibility"
             if [ "$visibility" = "private" ]; then

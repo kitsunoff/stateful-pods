@@ -12,5 +12,6 @@ checksums and any other bytes has to refuse, and that refusal is the whole
 guarantee.
 
 The signature is over the file's exact bytes, so nothing here may be reformatted,
-re-indented or line-ending-converted. `.gitattributes` marks the directory
-binary for that reason.
+re-indented or line-ending-converted. `.gitattributes` marks both files `-text`
+for that reason, which turns off the line-ending conversion git would otherwise
+be entitled to apply.

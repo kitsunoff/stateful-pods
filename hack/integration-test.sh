@@ -55,14 +55,7 @@ REGISTRY_IN_CLUSTER="registry.${NAMESPACE}.svc.cluster.local:5000"
 # The same registry seen from this host, through a port forward. A registry
 # stores by repository path and not by the host it was reached on, so an image
 # pushed here is the image pulled there.
-#
-# The loopback address rather than `localhost`, because `kubectl port-forward`
-# binds 127.0.0.1 and a client that resolves `localhost` to ::1 first - which Go
-# does on a Mac - gets connection refused from a forward that is working
-# perfectly. Naming what the forward actually listens on removes the question.
-# Every client here treats a loopback registry as plain HTTP, which is what makes
-# the forward usable without a certificate.
-REGISTRY_LOCAL="127.0.0.1:${REGISTRY_PORT:-5000}"
+REGISTRY_LOCAL="localhost:${REGISTRY_PORT:-5000}"
 PORT_FORWARD_PID=""
 PREVIOUS_CHART_WORKTREE=""
 # A copy of the chart whose catalog points at this cluster's registry, so that a
@@ -496,69 +489,6 @@ check "the machine's own init is process 1" \
 check "the machine has the pod's host name" \
   tiny sh -c '[ "$(cat /etc/hostname)" = "alpine-tiny-0" ]'
 
-# ------------------------------------------------- the source after seeding ---
-# A machine's source is a seed, not a runtime dependency. Taking the registry
-# away is the only way to prove that: a machine that still reached for its
-# source on every start would depend for its whole life on a reference someone
-# else controls, and would pay for a full transfer of its operating system every
-# time it was rescheduled.
-step "taking the registry away and restarting both seeded machines"
-kc scale deployment/registry --replicas=0 >/dev/null
-kc wait --for=delete pod --selector app=registry --timeout=120s >/dev/null
-kc delete pod oci-web-0 alpine-tiny-0 --wait >/dev/null
-if wait_ready oci-web-0 \
-   && wait_ready alpine-tiny-0; then
-  pass "both machines came back up with no registry to reach"
-else
-  fail "a seeded machine could not start once its source was unreachable"
-fi
-check "the guest's own file survived the registry going away" \
-  guest sh -c '[ "$(cat /etc/guest-state)" = "written by the guest" ]'
-kc scale deployment/registry --replicas=1 >/dev/null
-
-# ------------------------------------------------------------- the upgrade ---
-# The one assertion here that is about the migration rather than about the
-# chart: the per-machine ConfigMap the previous revision rendered is
-# release-owned, so `helm upgrade` deletes it, and no machine's volume is
-# touched by that. It retires itself once the previous revision no longer
-# renders a ConfigMap.
-step "upgrading a machine installed by the previous chart revision"
-previous_sha="$(git rev-parse --verify --quiet "$PREVIOUS_CHART_REF^{commit}" || true)"
-if [[ -z "$previous_sha" ]]; then
-  skip "the upgrade assertion: $PREVIOUS_CHART_REF does not resolve"
-elif ! git cat-file -e "$previous_sha:charts/stateful-pods/templates/scripts-configmap.yaml" 2>/dev/null; then
-  skip "the upgrade assertion: $PREVIOUS_CHART_REF renders no ConfigMap to migrate from"
-else
-  PREVIOUS_CHART_WORKTREE="$(mktemp -d)"
-  git worktree add --detach --force "$PREVIOUS_CHART_WORKTREE" "$previous_sha" >/dev/null 2>&1 \
-    || fail "could not check out $PREVIOUS_CHART_REF ($previous_sha) to upgrade from"
-  helm --kube-context "$CONTEXT" upgrade --install migrated \
-    "$PREVIOUS_CHART_WORKTREE/charts/stateful-pods" \
-    --namespace "$NAMESPACE" \
-    --values test/integration/oci.yaml \
-    --set "shim.image=$SHIM_IMAGE" \
-    --wait --timeout 5m >/dev/null
-  wait_ready migrated-web-0
-  check "the previous revision rendered a ConfigMap of scripts" kc get configmap migrated-web
-  kc exec migrated-web-0 --container guest -- \
-    sh -c 'echo "written before the upgrade" > /etc/before-upgrade' >/dev/null
-
-  helm --kube-context "$CONTEXT" upgrade migrated "$CHART" \
-    --namespace "$NAMESPACE" \
-    --values test/integration/oci.yaml \
-    --set "shim.image=$SHIM_IMAGE" \
-    --set "machines.web.source.reference=$SOURCE_REFERENCE" \
-    --wait --timeout 5m >/dev/null
-  wait_ready migrated-web-0
-  check "the upgrade removed the ConfigMap" \
-    bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap migrated-web"
-  check "the machine's own file survived the upgrade" \
-    kc exec migrated-web-0 --container guest -- \
-      sh -c '[ "$(cat /etc/before-upgrade)" = "written before the upgrade" ]'
-  check "the volume was not re-seeded by the upgrade" \
-    kc exec migrated-web-0 --container guest -- test -f /.stateful-pods/provisioned
-fi
-
 # ------------------------------------------------------------- preset source ---
 # The first machines here that name a distribution rather than a reference.
 #
@@ -578,6 +508,10 @@ fi
 # The catalog is rewritten to point at the in-cluster registry. What is being
 # asserted is that a name resolves and that what it resolves to boots; that this
 # project's published references resolve is asserted where they are published.
+#
+# This runs before the section that takes the registry away, and has to: that
+# section deletes the registry pod, and the port forward opened once at the top
+# of this file dies with it and is never reopened.
 if ! command -v crane >/dev/null 2>&1; then
   skip "the preset assertions: crane is needed to build a preset and was not found"
 else
@@ -609,6 +543,23 @@ else
     ./hack/preset-bump.sh --catalog "$preset_catalog" "$preset" "$in_cluster" >/dev/null \
       || fail "$preset: could not point the test catalog at $in_cluster"
   done <<< "$built"
+
+  # A published tag is never republished, which is the promise that makes a
+  # machine's origin reproducible. The build says so; this is where a registry
+  # exists to check it against.
+  step "asserting a published build is not republished"
+  rebuilt="$(./hack/preset-build.sh \
+    --repository "$REGISTRY_LOCAL/stateful-pods-" \
+    --platforms "linux/$node_arch" \
+    alpine-3.24 void-current 2>"$PRESET_CHART_DIR/rebuild.log")" \
+    || fail "the second preset build did not complete"
+  if [[ "$rebuilt" == "$built" ]]; then
+    pass "a second build resolves both presets to the digests already published"
+  else
+    fail "a second build changed what a published tag resolves to"
+  fi
+  check "the second build said it was leaving the published tags alone" \
+    grep --quiet "is already published, leaving it alone" "$PRESET_CHART_DIR/rebuild.log"
 
   for preset in alpine-3.24 void-current; do
     release="preset-${preset%%-*}"
@@ -676,6 +627,69 @@ else
     check "the machine has the pod's host name" \
       osguest sh -c "[ \"\$(cat /etc/hostname)\" = \"$pod\" ]"
   done
+fi
+
+# ------------------------------------------------- the source after seeding ---
+# A machine's source is a seed, not a runtime dependency. Taking the registry
+# away is the only way to prove that: a machine that still reached for its
+# source on every start would depend for its whole life on a reference someone
+# else controls, and would pay for a full transfer of its operating system every
+# time it was rescheduled.
+step "taking the registry away and restarting both seeded machines"
+kc scale deployment/registry --replicas=0 >/dev/null
+kc wait --for=delete pod --selector app=registry --timeout=120s >/dev/null
+kc delete pod oci-web-0 alpine-tiny-0 --wait >/dev/null
+if wait_ready oci-web-0 \
+   && wait_ready alpine-tiny-0; then
+  pass "both machines came back up with no registry to reach"
+else
+  fail "a seeded machine could not start once its source was unreachable"
+fi
+check "the guest's own file survived the registry going away" \
+  guest sh -c '[ "$(cat /etc/guest-state)" = "written by the guest" ]'
+kc scale deployment/registry --replicas=1 >/dev/null
+
+# ------------------------------------------------------------- the upgrade ---
+# The one assertion here that is about the migration rather than about the
+# chart: the per-machine ConfigMap the previous revision rendered is
+# release-owned, so `helm upgrade` deletes it, and no machine's volume is
+# touched by that. It retires itself once the previous revision no longer
+# renders a ConfigMap.
+step "upgrading a machine installed by the previous chart revision"
+previous_sha="$(git rev-parse --verify --quiet "$PREVIOUS_CHART_REF^{commit}" || true)"
+if [[ -z "$previous_sha" ]]; then
+  skip "the upgrade assertion: $PREVIOUS_CHART_REF does not resolve"
+elif ! git cat-file -e "$previous_sha:charts/stateful-pods/templates/scripts-configmap.yaml" 2>/dev/null; then
+  skip "the upgrade assertion: $PREVIOUS_CHART_REF renders no ConfigMap to migrate from"
+else
+  PREVIOUS_CHART_WORKTREE="$(mktemp -d)"
+  git worktree add --detach --force "$PREVIOUS_CHART_WORKTREE" "$previous_sha" >/dev/null 2>&1 \
+    || fail "could not check out $PREVIOUS_CHART_REF ($previous_sha) to upgrade from"
+  helm --kube-context "$CONTEXT" upgrade --install migrated \
+    "$PREVIOUS_CHART_WORKTREE/charts/stateful-pods" \
+    --namespace "$NAMESPACE" \
+    --values test/integration/oci.yaml \
+    --set "shim.image=$SHIM_IMAGE" \
+    --wait --timeout 5m >/dev/null
+  wait_ready migrated-web-0
+  check "the previous revision rendered a ConfigMap of scripts" kc get configmap migrated-web
+  kc exec migrated-web-0 --container guest -- \
+    sh -c 'echo "written before the upgrade" > /etc/before-upgrade' >/dev/null
+
+  helm --kube-context "$CONTEXT" upgrade migrated "$CHART" \
+    --namespace "$NAMESPACE" \
+    --values test/integration/oci.yaml \
+    --set "shim.image=$SHIM_IMAGE" \
+    --set "machines.web.source.reference=$SOURCE_REFERENCE" \
+    --wait --timeout 5m >/dev/null
+  wait_ready migrated-web-0
+  check "the upgrade removed the ConfigMap" \
+    bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap migrated-web"
+  check "the machine's own file survived the upgrade" \
+    kc exec migrated-web-0 --container guest -- \
+      sh -c '[ "$(cat /etc/before-upgrade)" = "written before the upgrade" ]'
+  check "the volume was not re-seeded by the upgrade" \
+    kc exec migrated-web-0 --container guest -- test -f /.stateful-pods/provisioned
 fi
 
 # ---------------------------------------------------------------- lxc source ---

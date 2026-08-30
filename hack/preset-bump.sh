@@ -56,8 +56,15 @@ main() {
   [[ "$reference" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
     die "$reference is not pinned by digest"
 
-  local current
-  current="$(sed -n "s|^${preset}: \\(.*\\)$|\\1|p" "$CATALOG")"
+  # A literal comparison rather than a regex built by interpolation: a preset
+  # name contains a dot - alpine-3.24 - and in a pattern that is a wildcard.
+  local line current=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$preset: "* ]]; then
+      current="${line#"$preset": }"
+      break
+    fi
+  done < "$CATALOG"
   [[ -n "$current" ]] ||
     die "$preset has no entry in $CATALOG. A bump changes what an existing name resolves to; adding a preset is a decision, and needs a line in images/presets/presets.list too."
 
@@ -68,8 +75,14 @@ main() {
 
   # A line rewrite rather than a YAML round trip, so that the file's comments -
   # which are most of it, and explain why every entry is a digest - survive.
+  #
+  # Beside the catalog so the rename is atomic rather than a copy, and the mode
+  # set explicitly because mktemp creates 0600 and a rename carries that mode
+  # onto the file it replaces. Git would not notice; the next person to read the
+  # catalog would.
   local temporary
-  temporary="$(mktemp)"
+  temporary="$(mktemp "$CATALOG.XXXXXX")"
+  chmod 0644 "$temporary"
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" == "$preset: "* ]]; then
       printf '%s: %s\n' "$preset" "$reference"

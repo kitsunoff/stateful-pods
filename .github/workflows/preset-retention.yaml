@@ -53,9 +53,12 @@ jobs:
         uses: imjasonh/setup-crane@v0.4
 
       - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | crane auth login ghcr.io --username "${{ github.actor }}" --password-stdin
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
 
       - name: Work out what would be removed
         env:

@@ -122,6 +122,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISHED: ${{ needs.publish.outputs.published }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
           git config user.name "github-actions[bot]"
@@ -140,12 +141,17 @@ jobs:
             # -B has no long form; it creates the branch or resets an existing
             # one, which is what makes this branch a standing proposal.
             git checkout --force -B "$branch" "origin/$base"
-            if ! ./hack/preset-bump.sh "$preset" "$reference"; then
-              status=$?
-              if [ "$status" -eq 2 ]; then
-                echo "$preset: the catalog already names this reference"
-                continue
-              fi
+            # `$?` after a negated command is the negation's status, which is
+            # always 0 - so reading it here would turn every real failure into a
+            # silent success and make the exit-2 branch unreachable. The status
+            # has to be captured from the call itself, with errexit held off for
+            # exactly that call.
+            status=0
+            ./hack/preset-bump.sh "$preset" "$reference" || status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "$preset: the catalog already names this reference"
+              continue
+            elif [ "$status" -ne 0 ]; then
               exit "$status"
             fi
             ./hack/check-presets.sh

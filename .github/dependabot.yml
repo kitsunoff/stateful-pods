@@ -21,6 +21,14 @@ updates:
 
   # The base image the shim is built from. The only FROM in the repository that
   # names something that moves; the preset build has no FROM at all.
+  #
+  # Unverified, and worth checking against a Dependabot job log once: this
+  # repository names its build files `Containerfile` by convention, and the
+  # docker ecosystem is documented around `Dockerfile`. If Dependabot finds
+  # nothing here it will say so quietly, so the absence of pull requests is not
+  # evidence that there was nothing to update. The shim's Containerfile already
+  # carries a `# renovate:` annotation for its package set, which is the other
+  # half of the same job.
   - package-ecosystem: docker
     directory: /images/shim
     schedule:

@@ -203,3 +203,21 @@ build() {
   [[ "$output" == *"E7FB0CAEC8173D669066514CBAEFF88C22F6E216"* ]]
   [[ "$output" == *"signing-key.asc"* ]]
 }
+
+# The result is the contract. `hack/integration-test.sh` and both publishing
+# workflows read this stdout as tab-separated fields, so a line of narration on
+# the same channel becomes a reference someone tries to resolve - which is
+# exactly what happened the first time this ran end to end.
+@test "the build narrates on stderr and keeps stdout to its result" {
+  mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
+
+  run --separate-stderr "$BUILD" --mirror "file://$MIRROR" \
+    --repository "$NOWHERE" --resolve-only debian-trixie
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$(printf '%s' "$line" | tr --delete --complement '\t' | wc --chars)" -eq 2 ]
+    [[ "$line" != "==>"* ]]
+  done <<< "$output"
+}

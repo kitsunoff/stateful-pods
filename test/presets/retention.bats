@@ -52,6 +52,11 @@ fixture() {
     "$keep" "$version_json" "${children_json%,}"
 }
 
+# The same registry, with a limit on how much one run may remove.
+fixture_with_limit() {
+  jq --argjson max "$3" '. + {max_deletions: $max}' <<< "$(fixture "$1" "$2")"
+}
+
 deleted_digests() {
   jq --raw-output '.delete[].digest' <<< "$output" | sort | tr '\n' ' '
 }
@@ -185,10 +190,33 @@ deleted_digests() {
 # A destructive job that runs on a schedule needs a number past which it stops
 # and asks. The difference between a bug and a routine day should not be measured
 # in how many published images survive it.
-@test "a plan far larger than a day's worth stops rather than running" {
-  run "$RETENTION" --max-deletions 1 --keep 0 --owner nobody
-  [ "$status" -ne 0 ]
+@test "a plan larger than a run may remove is refused, with nothing to delete" {
+  # Seven builds keeping one removes six builds: six indexes and six unique
+  # amd64 manifests, which is well past a day's worth.
+  plan <<< "$(fixture_with_limit 7 1 4)"
+  [ "$status" -eq 0 ]
+  [ "$(jq --raw-output '.error' <<< "$output")" = "the plan is larger than a run may remove" ]
+  [ "$(jq --raw-output '.max_deletions' <<< "$output")" = "4" ]
+  [ "$(jq --raw-output '.would_delete' <<< "$output")" -gt 4 ]
+  # No list to act on, so a caller that ignored the error still deletes nothing.
+  [ "$(jq 'has("delete")' <<< "$output")" = "false" ]
+}
 
+@test "a plan inside the limit is returned as usual" {
+  plan <<< "$(fixture_with_limit 7 5 8)"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'has("error")' <<< "$output")" = "false" ]
+  [ "$(jq '.delete | length' <<< "$output")" -eq 4 ]
+}
+
+@test "no limit means no limit" {
+  plan <<< "$(fixture 7 1)"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'has("error")' <<< "$output")" = "false" ]
+  [ "$(jq '.delete | length' <<< "$output")" -eq 12 ]
+}
+
+@test "the flag itself is checked before anything is read" {
   run "$RETENTION" --max-deletions notanumber --owner nobody
   [ "$status" -ne 0 ]
   [[ "$output" == *"--max-deletions takes a number"* ]]

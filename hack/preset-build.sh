@@ -365,7 +365,7 @@ package_arch() {
     --label "org.opencontainers.image.description=Unmodified $preset root filesystem from images.linuxcontainers.org, packaged for the stateful-pods chart" \
     --label "org.opencontainers.image.url=$upstream_url" \
     --label "org.opencontainers.image.version=$upstream_build" \
-    --label "org.opencontainers.image.source=$SOURCE_URL" \
+    ${SOURCE_URL:+--label "org.opencontainers.image.source=$SOURCE_URL"} \
     --label "io.stateful-pods.preset.name=$preset" \
     --label "io.stateful-pods.preset.upstream.url=$upstream_url" \
     --label "io.stateful-pods.preset.upstream.build=$upstream_build" \
@@ -535,7 +535,10 @@ main() {
       die "could not work out where to publish from the git remote; pass --repository"
     REPOSITORY="ghcr.io/$owner/stateful-pods-"
   fi
-  SOURCE_URL="https://github.com/${owner:-kitsunoff}/stateful-pods"
+  # No owner, no claim. A label naming a repository the image did not come from
+  # is worse than no label, which is the whole reason the owner is derived from
+  # where it is being published rather than fixed here.
+  [[ -z "$owner" ]] || SOURCE_URL="https://github.com/$owner/stateful-pods"
 
   if [[ -z "$WORK_DIR" ]]; then
     # The archives are large and one of them is a root filesystem. Leaving them

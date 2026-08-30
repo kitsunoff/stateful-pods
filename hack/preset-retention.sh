@@ -32,11 +32,9 @@ set -o pipefail
 KEEP=5
 OWNER=""
 DRY_RUN=0
-# A blast radius. Retention removes one build a day in the ordinary course, which
-# is three versions; anything near this number means the plan is not describing
-# the ordinary course, and the difference between a bug and a routine day should
-# not be measured in how many published images survive it. Raising it is a
-# deliberate act on a run someone is watching.
+# A blast radius, enforced by the planner so that it is reachable by the same
+# fixtures as every other part of the decision. Raising it is a deliberate act on
+# a run someone is watching.
 MAX_DELETIONS=8
 PLAN_ONLY=0
 REGISTRY="ghcr.io"
@@ -61,8 +59,10 @@ usage() {
 Usage: hack/preset-retention.sh [options] [preset...]
 
 Options:
-  --owner NAME   The user or organisation the packages belong to. Taken from the
-                 git remote when not given.
+  --owner NAME   The user the packages belong to. Taken from the git remote when
+                 not given. A user, specifically: the endpoints here are
+                 /users/{owner} and /user, and an organisation's packages live
+                 under /orgs/{org}, which nothing here reaches for yet.
   --keep N       How many builds of each preset to keep. Defaults to 5.
   --dry-run      Work out what would be removed and report it, delete nothing.
   --max-deletions N
@@ -160,16 +160,33 @@ retain_preset() {
   fi
 
   children="$(index_children "$repository" "$versions")"
+  # A dry run wants the whole plan however large it is; that is the point of
+  # looking. Only a run that would act is held to the limit.
+  local limit="$MAX_DELETIONS"
+  [[ "$DRY_RUN" == "1" ]] && limit=null
   plan="$(jq --null-input --argjson keep "$KEEP" --argjson versions "$versions" \
-    --argjson children "$children" \
-    '{keep: $keep, versions: $versions, children: $children}' | plan_from_stdin)"
+    --argjson children "$children" --argjson maxDeletions "$limit" \
+    '{keep: $keep, max_deletions: $maxDeletions, versions: $versions, children: $children}' |
+    plan_from_stdin)"
 
   if [[ "$(jq --raw-output 'has("error")' <<< "$plan")" == "true" ]]; then
-    die "$(printf '%s\n' \
-      "$preset: $(jq --raw-output '.error' <<< "$plan")" \
-      "$(jq --raw-output '.unparsable[] | "  " + .' <<< "$plan")" \
-      "Ordering by build date is the whole basis of this decision, so a tag whose" \
-      "date cannot be read makes it a guess. Nothing was deleted.")"
+    case "$(jq --raw-output '.error' <<< "$plan")" in
+      "tags that do not name a build")
+        die "$(printf '%s\n' \
+          "$preset: there are tags here that do not name a build:" \
+          "$(jq --raw-output '.unparsable[] | "  " + .' <<< "$plan")" \
+          "Ordering by build date is the whole basis of this decision, so a tag whose" \
+          "date cannot be read makes it a guess. Nothing was deleted.")"
+        ;;
+      *)
+        die "$(printf '%s\n' \
+          "$preset: the plan removes $(jq --raw-output '.would_delete' <<< "$plan") versions, over the limit of $(jq --raw-output '.max_deletions' <<< "$plan")." \
+          "A day's retention removes one build, which is three versions. A number" \
+          "this size means something other than a day has passed - a backlog worth" \
+          "looking at, or a plan worth doubting. Nothing was deleted." \
+          "Run with --dry-run to see it, or --max-deletions if it is what you meant.")"
+        ;;
+    esac
   fi
 
   local removed keeping
@@ -186,15 +203,6 @@ retain_preset() {
   if [[ "$DRY_RUN" == "1" ]]; then
     note "$preset: dry run, nothing was deleted"
     return 0
-  fi
-
-  if [[ "$removed" -gt "$MAX_DELETIONS" ]]; then
-    die "$(printf '%s\n' \
-      "$preset: the plan removes $removed versions, over the limit of $MAX_DELETIONS." \
-      "A day's retention removes one build, which is three versions. A number" \
-      "this size means something other than a day has passed - a backlog worth" \
-      "looking at, or a plan worth doubting. Nothing was deleted." \
-      "Run with --max-deletions if the plan above is what you meant.")"
   fi
 
   local id
