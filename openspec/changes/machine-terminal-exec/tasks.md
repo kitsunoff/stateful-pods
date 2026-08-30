@@ -43,7 +43,7 @@
 
 ## 5. Prove the whole thing on a cluster
 
-- [ ] 5.1 Build the shim from this branch, boot a machine on it, and confirm a terminal exec
+- [x] 5.1 Build the shim from this branch, boot a machine on it, and confirm a terminal exec
   succeeds; verify by opening a shell with a terminal and reading back the terminal's name
-- [ ] 5.2 Run `make all`, then `make integration-test`; verify both are green at the final commit
+- [x] 5.2 Run `make all`, then `make integration-test`; verify both are green at the final commit
   and state in the report which targets ran and which could not
