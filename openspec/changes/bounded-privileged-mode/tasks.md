@@ -18,7 +18,7 @@
 
 ## 2. Change what the mode renders
 
-- [ ] 2.1 Rewrite the suites that pin the current posture — `values_security_mode_test.yaml`,
+- [x] 2.1 Rewrite the suites that pin the current posture — `values_security_mode_test.yaml`,
   `security_posture_test.yaml`, `init_security_test.yaml`, `security_negative_test.yaml` — to assert
   the named set, that no container is marked privileged, and that the excluded capabilities are
   absent; verify `make test` fails on the current chart for exactly those reasons

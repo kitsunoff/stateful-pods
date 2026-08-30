@@ -64,7 +64,7 @@ tests:
             seccompProfile:
               type: RuntimeDefault
 
-  - it: marks no preparation step privileged in privileged mode
+  - it: marks no container privileged in privileged mode, the guest included
     set:
       machines.db:
         source:
@@ -80,9 +80,32 @@ tests:
           path: spec.template.spec.initContainers[0].securityContext.privileged
       - notExists:
           path: spec.template.spec.initContainers[1].securityContext.privileged
-      - equal:
+      - notExists:
           path: spec.template.spec.containers[0].securityContext.privileged
-          value: true
+
+  - it: adds no capability to a preparation step in privileged mode
+    set:
+      machines.db:
+        source:
+          kind: lxc
+          url: https://example.test/d.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: privileged
+    asserts:
+      # The mode's set belongs to the guest alone. A preparation step unpacks an
+      # archive and writes files, which an ordinary container already does.
+      - notExists:
+          path: spec.template.spec.initContainers[0].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.initContainers[1].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.initContainers[2].securityContext.capabilities
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_ADMIN
 
   - it: adds no capability to a preparation step in userns mode
     set:
