@@ -30,11 +30,11 @@
 
 ## 4. Publish the presets and point the catalog at them
 
-- [ ] 4.1 Publish every preset from the branch with the existing `workflow_dispatch` on
+- [x] 4.1 Publish every preset from the branch with the existing `workflow_dispatch` on
   `preset-publish.yaml`, dispatching individually where the upstream is mid-rebuild on one.
-- [ ] 4.2 Bump `charts/stateful-pods/presets.yaml` to the published digests with
+- [x] 4.2 Bump `charts/stateful-pods/presets.yaml` to the published digests with
   `hack/preset-bump.sh`, and leave `void-current` alone.
-- [ ] 4.3 Run `make presets` and confirm the two catalogs agree in both directions.
+- [x] 4.3 Run `make presets` and confirm the two catalogs agree in both directions.
 
 ## 5. Say what a user gets
 
