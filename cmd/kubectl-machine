@@ -45,6 +45,11 @@ die() {
     exit 1
 }
 
+# Prints a command in the form it is about to be run in, so that the plugin
+# teaches the underlying invocation rather than hiding it. On stderr, so that
+# what a command produces stays pipeable.
+show() { printf '==> %s\n' "$*" >&2; }
+
 usage() {
     cat <<EOF
 $SP_PROGRAM - work with the machines a stateful-pods release runs
@@ -52,6 +57,8 @@ $SP_PROGRAM - work with the machines a stateful-pods release runs
 Usage:
   kubectl machine list                    the machines in a namespace, and the stage each is in
   kubectl machine status <name>           where one machine is in its life
+  kubectl machine shell <name> [-- cmd]   a shell inside the machine
+  kubectl machine console <name>          the machine's own boot output
   kubectl machine version                 the plugin's version
 
 Flags shared by every command:
@@ -238,8 +245,12 @@ resolve_machine() {
 }
 
 report_unknown() {
-    local name="$1" listing
-    listing="$(list_lines || true)"
+    local name="$1" listing="" other release stage
+    while IFS="$(printf '\t')" read -r other release stage _ || [ -n "$other" ]; do
+        [ -n "$other" ] || continue
+        listing="$listing  $other in release $release ($stage)
+"
+    done < <(machine_rows || true)
     if [ -n "$listing" ]; then
         die "no machine called $name in $(where_it_would_act). These are there:
 $listing"
@@ -280,6 +291,7 @@ SP_STAGE=""          # one word, for a listing
 SP_STAGE_TEXT=""     # what it means, for a person
 SP_STAGE_CONTAINER="" # the container whose output explains it
 SP_STAGE_DETAIL=""   # why, when a stage is a failure
+SP_STAGE_ENTERABLE=0 # whether the machine's own operating system is running in it
 
 # The state of one container out of a projected `name=state,reason,exit,ready;`
 # list. Sets SP_CS_STATE, SP_CS_REASON, SP_CS_EXIT and SP_CS_READY.
@@ -352,6 +364,7 @@ derive_stage() {
     SP_STAGE_TEXT=""
     SP_STAGE_CONTAINER=""
     SP_STAGE_DETAIL=""
+    SP_STAGE_ENTERABLE=0
 
     for step in $SP_INIT_STEPS; do
         container_state "$step" "$inits" || continue
@@ -390,6 +403,11 @@ derive_stage() {
         case "$SP_CS_STATE" in
             running)
                 SP_STAGE_CONTAINER="$SP_GUEST"
+                # Running is what makes a shell reachable. Ready is a statement
+                # about the operating system inside having finished starting,
+                # and waiting for it would lock a user out of exactly the machine
+                # they need to look at.
+                SP_STAGE_ENTERABLE=1
                 if [ "$SP_CS_READY" = "true" ]; then
                     SP_STAGE="ready"
                     SP_STAGE_TEXT="ready: its operating system has finished starting"
@@ -487,10 +505,10 @@ Usage:
 EOF
 }
 
-# One line per machine: name, release, stage, object name. Machines whose pod
-# has not been created yet still appear, because a machine that a release
-# declares is a machine that exists.
-list_lines() {
+# One row per machine: name, release, stage, object name, tab separated.
+# Machines whose pod has not been created yet still appear, because a machine a
+# release declares is a machine that exists.
+machine_rows() {
     local machine release object inits containers stage
     local pods="" line
     pods="$(get_pods "$SP_MACHINE_LABEL" || true)"
@@ -504,7 +522,7 @@ list_lines() {
         done <<EOF
 $pods
 EOF
-        printf '  %s\t%s\t%s\t%s\n' "$machine" "$release" "$stage" "$object"
+        printf '%s\t%s\t%s\t%s\n' "$machine" "$release" "$stage" "$object"
     done < <(get_statefulsets "$SP_MACHINE_LABEL")
 }
 
@@ -524,14 +542,30 @@ cmd_list() {
     done
     require_kubectl
 
-    local lines
-    lines="$(list_lines)"
-    if [ -z "$lines" ]; then
+    local rows name release stage object
+    local name_width=4 release_width=7 stage_width=5
+    rows="$(machine_rows)"
+    if [ -z "$rows" ]; then
         printf 'There are no machines in %s.\n' "$(where_it_would_act)"
         return 0
     fi
-    printf '  %s\t%s\t%s\t%s\n' NAME RELEASE STAGE OBJECT
-    printf '%s\n' "$lines"
+    while IFS="$(printf '\t')" read -r name release stage object || [ -n "$name" ]; do
+        [ -n "$name" ] || continue
+        [ "${#name}" -gt "$name_width" ] && name_width="${#name}"
+        [ "${#release}" -gt "$release_width" ] && release_width="${#release}"
+        [ "${#stage}" -gt "$stage_width" ] && stage_width="${#stage}"
+    done <<EOF
+$rows
+EOF
+    printf '%-*s  %-*s  %-*s  %s\n' \
+        "$name_width" NAME "$release_width" RELEASE "$stage_width" STAGE OBJECT
+    while IFS="$(printf '\t')" read -r name release stage object || [ -n "$name" ]; do
+        [ -n "$name" ] || continue
+        printf '%-*s  %-*s  %-*s  %s\n' \
+            "$name_width" "$name" "$release_width" "$release" "$stage_width" "$stage" "$object"
+    done <<EOF
+$rows
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -590,6 +624,163 @@ cmd_status() {
 }
 
 # ---------------------------------------------------------------------------
+# shell
+# ---------------------------------------------------------------------------
+
+shell_help() {
+    cat <<EOF
+kubectl machine shell <name> - a shell inside the machine
+
+Usage:
+  kubectl machine shell <name> [--release <release>] [--namespace <namespace>] [-- <command>]
+
+Flags:
+  --tty / --no-tty   allocate a terminal, or do not (default: when there is one)
+  -- <command>       run this inside the machine instead of opening a shell
+
+The shell is chosen inside the machine: /bin/sh exists in every root filesystem
+the chart can seed, and bash does not - Alpine and Void do not ship it.
+EOF
+}
+
+# What is run inside the machine when no command was given. One round trip: the
+# choice is made in the machine, by the machine, rather than probed for first.
+SP_SHELL_CHOOSER='if command -v bash >/dev/null 2>&1; then exec bash --login; else exec sh; fi'
+
+# Says where a machine cannot be entered and what explains the wait, rather than
+# handing back an error about a container. This is the whole reason the plugin
+# exists.
+refuse_with_stage() {
+    local verb="$1"
+    printf '%s is %s.\n' "$SP_MACHINE" "$SP_STAGE_TEXT" >&2
+    [ -n "$SP_STAGE_DETAIL" ] && printf 'Because: %s\n' "$SP_STAGE_DETAIL" >&2
+    printf '\nThere is nothing to %s yet. This is what explains it:\n\n  %s\n' \
+        "$verb" "$(stage_hint "$SP_POD")" >&2
+    exit 1
+}
+
+# A machine whose release exists but whose pod does not.
+refuse_without_pod() {
+    printf '%s is not running: its release %s is installed, but it has no pod.\n' \
+        "$SP_MACHINE" "$SP_MACHINE_RELEASE" >&2
+    printf '\n  kubectl%s describe statefulset %s\n' "$(kube_flags)" "$SP_OBJECT" >&2
+    exit 1
+}
+
+cmd_shell() {
+    local name="" tty="auto"
+    local command=()
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "--" ]; then
+            shift
+            command=("$@")
+            break
+        fi
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                shell_help
+                return 0
+                ;;
+            --tty) tty="yes" ;;
+            --no-tty) tty="no" ;;
+            --*)
+                common_flag "$@" || die "unknown flag for shell: $SP_FLAG"
+                ;;
+            *)
+                [ -z "$name" ] || die "shell takes one machine, and was given $name and $SP_FLAG"
+                name="$SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+    [ -n "$name" ] || die "shell needs a machine's name. Run 'kubectl machine list' to see them."
+    require_kubectl
+    resolve_machine "$name"
+    read_machine_pod || refuse_without_pod
+    [ "$SP_STAGE_ENTERABLE" -eq 1 ] || refuse_with_stage "enter"
+
+    local exec_flags=(--stdin)
+    case "$tty" in
+        yes) exec_flags+=(--tty) ;;
+        no) ;;
+        *) [ -t 0 ] && [ -t 1 ] && exec_flags+=(--tty) ;;
+    esac
+
+    local target=("$SP_POD" --container "$SP_GUEST" --)
+    if [ "${#command[@]}" -eq 0 ]; then
+        target+=(/bin/sh -c "$SP_SHELL_CHOOSER")
+    else
+        target+=("${command[@]}")
+    fi
+
+    printf 'Entering %s (%s) in %s, on context %s.\n' \
+        "$SP_MACHINE" "$SP_POD" "$(where_it_would_act)" "$(current_context)" >&2
+    show "kubectl$(kube_flags) exec ${exec_flags[*]} ${target[*]}"
+    kubectl_run exec "${exec_flags[@]}" "${target[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# console
+# ---------------------------------------------------------------------------
+
+console_help() {
+    cat <<EOF
+kubectl machine console <name> - the machine's own boot output
+
+Usage:
+  kubectl machine console <name> [--follow] [--tail <lines>] [--previous]
+
+The console is what the guest container's logs are: the output of the machine's
+own init system, from the first line it printed.
+EOF
+}
+
+cmd_console() {
+    local name="" follow=0 previous=0 tail=""
+    while [ "$#" -gt 0 ]; do
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                console_help
+                return 0
+                ;;
+            --follow) follow=1 ;;
+            --previous) previous=1 ;;
+            --tail)
+                flag_value "$@"
+                tail="$SP_VALUE"
+                ;;
+            --*)
+                common_flag "$@" || die "unknown flag for console: $SP_FLAG"
+                ;;
+            *)
+                [ -z "$name" ] || die "console takes one machine, and was given $name and $SP_FLAG"
+                name="$SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+    [ -n "$name" ] || die "console needs a machine's name. Run 'kubectl machine list' to see them."
+    require_kubectl
+    resolve_machine "$name"
+    read_machine_pod || refuse_without_pod
+
+    # The guest container is where a machine's own output is. Before it starts
+    # there is no console to read, and saying which step is still running is a
+    # better answer than an empty log.
+    [ "$SP_STAGE_CONTAINER" = "$SP_GUEST" ] || refuse_with_stage "read"
+
+    local args=("$SP_POD" --container "$SP_GUEST")
+    [ "$previous" -eq 1 ] && args+=(--previous)
+    [ -n "$tail" ] && args+=(--tail "$tail")
+    [ "$follow" -eq 1 ] && args+=(--follow)
+
+    show "kubectl$(kube_flags) logs ${args[*]}"
+    kubectl_run logs "${args[@]}"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -606,6 +797,8 @@ main() {
     case "$subcommand" in
         list) cmd_list "$@" ;;
         status) cmd_status "$@" ;;
+        shell) cmd_shell "$@" ;;
+        console) cmd_console "$@" ;;
         version | --version) printf '%s %s\n' "$SP_PROGRAM" "$SP_VERSION" ;;
         help | --help)
             usage
