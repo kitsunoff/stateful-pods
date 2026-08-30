@@ -22,12 +22,12 @@
   `security_posture_test.yaml`, `init_security_test.yaml`, `security_negative_test.yaml` — to assert
   the named set, that no container is marked privileged, and that the excluded capabilities are
   absent; verify `make test` fails on the current chart for exactly those reasons
-- [ ] 2.2 Change the guest container's security context in `statefulset.yaml` to the named set, and
+- [x] 2.2 Change the guest container's security context in `statefulset.yaml` to the named set, and
   update the comment that currently explains why the mode is privileged; verify `make test` passes
   the suites from 2.1
-- [ ] 2.3 Assert `allowPrivilegeEscalation` is not set to `false` in this mode, since that is
+- [x] 2.3 Assert `allowPrivilegeEscalation` is not set to `false` in this mode, since that is
   incompatible with an added `SYS_ADMIN`; verify with a render test in both modes
-- [ ] 2.4 Assert the preparation steps are unchanged — still no capability, still
+- [x] 2.4 Assert the preparation steps are unchanged — still no capability, still
   `allowPrivilegeEscalation: false`; verify `make test` covers both modes
 
 ## 3. Prove a machine still works
