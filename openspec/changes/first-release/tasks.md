@@ -51,11 +51,11 @@
 
 - [ ] 5.1 Review the six open Dependabot pull requests on their merits, merging those whose inputs
   the workflows do not use and which change only the runtime; verify each diff touches nothing else
-- [ ] 5.2 Reproduce the Alpine 3.24 regression against both bases before deciding that pull request,
+- [x] 5.2 Reproduce the Alpine 3.24 regression against both bases before deciding that pull request,
   and close it with the reproduction rather than merging it
-- [ ] 5.3 Remove the stale `openspec/changes/machine-plugin/` line from `.git/info/exclude`, leaving
+- [x] 5.3 Remove the stale `openspec/changes/machine-plugin/` line from `.git/info/exclude`, leaving
   the `.claude/` line, and verify `git status` is unaffected
-- [ ] 5.4 File one issue per defect left unfixed, each with a reproduction, and verify none of them
+- [x] 5.4 File one issue per defect left unfixed, each with a reproduction, and verify none of them
   duplicates something this change fixed
 
 ## 6. Verification
