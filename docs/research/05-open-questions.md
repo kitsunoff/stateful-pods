@@ -110,7 +110,10 @@ input — adding it later is additive and renames nothing.
 > **Superseded.** The ladder below is what was believed when the decision was taken, and it is left
 > as written because that is the only thing this directory is for. It no longer describes the chart.
 > `privileged` is not `privileged: true` and never has been in a released chart — the mode renders
-> `drop: ALL` plus fifteen named capabilities, and both modes run under a named seccomp filter. The
+> `drop: ALL` plus fifteen named capabilities. The guest's syscall filter is stated explicitly in
+> both modes rather than inherited from the node, but it is not required to be a named one: it
+> defaults to `Unconfined`, a named profile is opt-in through `security.seccompProfile`, and what
+> the chart refuses is `RuntimeDefault`, which denies the root change the guest performs. The
 > `userns` floor the chart enforces is 1.33, not the 1.36 named below, and the chart's own floor is
 > 1.30, set by `securityContext.appArmorProfile` rather than by anything in this ladder. What
 > governs now is [`openspec/specs/pod-security-posture/spec.md`](../../openspec/specs/pod-security-posture/spec.md).

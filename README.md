@@ -209,7 +209,9 @@ renames nothing that exists.
 step, no toolchain — and there is no bash on Windows worth targeting. Under WSL it is an ordinary
 Linux install.
 
-**Alpine is pinned to 3.22.** Alpine 3.24 ships crane 0.21, which drops go-containerregistry's rule
+**The shim image's base is pinned to Alpine 3.22** — the image the chart runs, not the
+`alpine-3.24` preset, which is a machine's operating system and unrelated. Alpine 3.24 ships crane
+0.21, which drops go-containerregistry's rule
 that a registry whose name ends in `.local` is spoken to over plain HTTP — and that rule is what
 lets a machine seed from an in-cluster `<service>.<namespace>.svc.cluster.local` registry with no
 insecure-registry input in the chart.

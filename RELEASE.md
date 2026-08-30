@@ -12,10 +12,10 @@ path unreproducible without anything in the release changing. The scripts the ch
 live inside that image, so the chart and the image are a matched pair.
 
 A matched pair pinned by digest is **ordered**: the digest can only be written down after the image
-it names exists. On a tag the workflow runs `chart`, `plugin`, `image` and `integration`, and `chart`
-publishes on any tag — so on the *first* tag the chart is published no matter what, and on the first
-tag no correct digest can exist yet, because the image that would carry one is being built by that
-same run. No ordering of a single tag escapes this.
+it names exists. On a tag the workflow runs `chart`, `plugin`, `release`, `image` and
+`integration`, and `chart` publishes on any tag — so on the *first* tag the chart is published no
+matter what, and on the first tag no correct digest can exist yet, because the image that would
+carry one is being built by that same run. No ordering of a single tag escapes this.
 
 So the first tag mints the image and the second one is the release anybody should install:
 
@@ -31,11 +31,13 @@ tag before they find this file.
 make the published chart differ from the chart in git, so nobody could rebuild the artefact from the
 source that claims to be it — which is the entire reason the value is a digest and not a tag.
 
-Two better-shaped alternatives were considered and rejected for now, with reasons, in
-[`openspec/changes/archive/`](openspec/changes/archive) — a prerelease bootstrap, and giving the
-shim image its own tag trigger. The second is the right long-term answer and is filed as an issue;
-it is the mechanism [`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) already
-describes when it says a script fix is "an image release plus the digest below".
+Two better-shaped alternatives were considered and rejected for now, with reasons, under *Decisions*
+in
+[`openspec/changes/archive/2026-08-30-first-release/design.md`](openspec/changes/archive/2026-08-30-first-release/design.md)
+— a prerelease bootstrap, and giving the shim image its own tag trigger. The second is the right
+long-term answer and is filed as an issue; it is the mechanism
+[`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) already describes when it says
+a script fix is "an image release plus the digest below".
 
 ## Before anything
 
@@ -67,7 +69,8 @@ git tag --annotate v0.1.0 --message "v0.1.0"
 git push origin v0.1.0
 ```
 
-Then wait for the run and confirm all of `chart`, `plugin`, `image` and `release` are green.
+Then wait for the run and confirm all five jobs - `chart`, `plugin`, `release`, `image` and
+`integration` - are green.
 
 ## Bumping the digest
 
