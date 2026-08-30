@@ -122,6 +122,17 @@ This is not a deviation in substance — §5 of the same document already moves 
 computation into the init container for exactly this reason, and the composition has to be on the
 same side of that line as the hash.
 
+A named `user` becomes a `users:` list entry with passwordless sudo, carrying the password and keys
+directly. The reference implementation uses cloud-init's top-level `user:` string, which renames the
+distribution's default user — and that key is deprecated since cloud-init 22.2 and scheduled for
+removal in 27.2, so a new feature cannot be built on it. A booted Alpine machine showed the rename
+failing as well: the distribution's own privilege rule is carried onto the new name and its `doas`
+translation is then rejected, leaving an account that cannot administer the machine and a run
+reported as `degraded`. With the list form both distributions report `done` with no errors.
+
+Supplying no `user` leaves the distribution's default account in place and puts the password and
+keys on it through the top-level keys, which are not deprecated.
+
 Composition is done with `jq`, emitting JSON. A cloud-config document may be JSON: YAML is a superset
 of it and cloud-init parses with `yaml.safe_load`. That removes every quoting question — a password
 hash containing `$`, a key with a comment, a `runcmd` line with a colon — which is otherwise the way

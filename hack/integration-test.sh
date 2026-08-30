@@ -855,12 +855,24 @@ else
     release="preset-${preset%%-*}"
     pod="$release-os-0"
 
-    step "installing a machine that names the $preset preset"
+    # The backend each preset can actually serve, which is a property of the
+    # upstream and not of this suite. Alpine is built from the cloud variant, so
+    # it takes the default; Void's upstream publishes no cloud variant at all, so
+    # a Void machine has to say `native` or the pod fails by design. Naming it
+    # here is the same thing a user has to do, and getting it wrong is what the
+    # refusal asserted earlier in this file is for.
+    case "$preset" in
+      void-current) preset_backend=native ;;
+      *)            preset_backend=cloud-init ;;
+    esac
+
+    step "installing a machine that names the $preset preset, provisioned by $preset_backend"
     helm --kube-context "$CONTEXT" upgrade --install "$release" "$preset_chart" \
       --namespace "$NAMESPACE" \
       --values test/integration/preset.yaml \
       --set "shim.image=$SHIM_IMAGE" \
       --set "machines.os.source.name=$preset" \
+      --set "machines.os.guest.provisioning=$preset_backend" \
       --wait --timeout 10m >/dev/null
     wait_ready "$pod"
 
@@ -915,21 +927,26 @@ else
         # seeding step put on the volume.
         check "the preset carries cloud-init" \
           osguest sh -c 'test -x /usr/bin/cloud-init && test -d /etc/cloud'
-        # And carries it as the upstream published it: installed and disabled.
-        # A provisioning backend that checks the line above and not this one
-        # finds cloud-init, writes a seed, and produces a machine with no users
-        # and no keys - which is the failure the whole loud-check rule exists to
-        # prevent, arrived at from a direction the rule does not name.
-        check "cloud-init is disabled by the upstream's own marker" \
-          osguest sh -c 'test -f /etc/cloud/cloud-init.disabled'
-        # The marker is honoured rather than merely present. /var/lib/cloud is
-        # the right thing to look at: neither image ships it, and cloud-init
-        # creates it the moment a stage actually runs. /run/cloud-init is not -
-        # on a systemd guest the generator creates that directory to record that
-        # it found the marker, so it exists precisely when cloud-init did not
-        # run. That was established by booting one rather than by reading.
-        check "no cloud-init stage ran behind the marker" \
-          osguest sh -c '! test -d /var/lib/cloud'
+        # The upstream publishes it installed and disabled, by a marker every
+        # unit and every OpenRC script tests. A backend that checked the line
+        # above and stopped there would find cloud-init, write a seed, and
+        # produce a machine with no users and no keys - the failure the loud
+        # check exists to prevent, reached from a direction the check does not
+        # cover. So the marker's removal is asserted rather than its presence:
+        # this machine was provisioned, and it could only have been if the
+        # marker went.
+        check "the marker that would have made the seed a no-op is gone" \
+          osguest sh -c '! test -e /etc/cloud/cloud-init.disabled'
+        # This is the only place the OpenRC half of the check runs against a real
+        # machine. Every other cloud-init assertion in this file is systemd's,
+        # and the two are genuinely different mechanisms: systemd gates on a unit
+        # condition and a generator, Alpine's service scripts test the marker by
+        # hand in shell. /var/lib/cloud is the right thing to look at - the image
+        # does not ship it, and cloud-init creates it the moment a stage runs.
+        check "cloud-init really ran, under an init system that is not systemd" \
+          osguest sh -c 'test -d /var/lib/cloud'
+        check "it ran from the seed the chart wrote" \
+          osguest sh -c 'test -f /var/lib/cloud/seed/nocloud/meta-data'
         ;;
       void-current)
         check "the machine booted an init that is neither systemd nor busybox" \

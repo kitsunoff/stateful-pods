@@ -72,29 +72,51 @@ sp_json_lines() {
 # every one of those is a way a generated YAML document silently becomes a
 # different document, and none of them can happen here.
 #
-# The shape is the reference implementation's own for the same job: `user` names
-# the distribution's default user rather than replacing the user list, so the
-# keys, the password and the sudo rule all land on one account that the
-# distribution already considers the way in.
+# Two shapes, chosen by whether a user was named.
+#
+# Naming one emits a `users:` list carrying that account's password and keys
+# directly. The reference implementation uses cloud-init's top-level `user:`
+# string for this, which renames the distribution's default user - and that key
+# is deprecated since cloud-init 22.2 and scheduled for removal in 27.2, so a new
+# feature must not be built on it. A booted Alpine machine also showed the
+# rename going wrong in a way the list form avoids: the distribution's own sudo
+# rule is carried onto the new name verbatim and its doas translation is then
+# rejected, leaving the account with no privilege escalation and the run
+# reported as degraded.
+#
+# Naming none leaves the distribution's default user in place and puts the
+# password and keys on it through the top-level keys, which are not deprecated.
+# That is the case where there is no account to describe, only one to add to.
 sp_compose_user_data() {
     _sp_config='{}'
 
     if sp_has_material user; then
-        _sp_config="$(jq --arg user "$(sp_material user)" \
-            '. + {user: $user}' <<< "$_sp_config")"
-    fi
-
-    if sp_has_material password; then
-        # `expire: false`, so that a machine provisioned with a password is one
-        # somebody can log into rather than one that demands a change over a
-        # console nothing is attached to.
-        _sp_config="$(jq --arg password "$(sp_material password)" \
-            '. + {password: $password, chpasswd: {expire: false}}' <<< "$_sp_config")"
-    fi
-
-    if sp_has_material ssh-authorized-keys; then
-        _sp_config="$(jq --argjson keys "$(sp_json_lines ssh-authorized-keys)" \
-            '. + {ssh_authorized_keys: $keys}' <<< "$_sp_config")"
+        _sp_user="$(jq --null-input --arg name "$(sp_material user)" \
+            '{name: $name, sudo: "ALL=(ALL) NOPASSWD:ALL"}')"
+        if sp_has_material password; then
+            # lock_passwd defaults to true, which would create the account and
+            # then make the password unusable.
+            _sp_user="$(jq --arg password "$(sp_material password)" \
+                '. + {hashed_passwd: $password, lock_passwd: false}' <<< "$_sp_user")"
+        fi
+        if sp_has_material ssh-authorized-keys; then
+            _sp_user="$(jq --argjson keys "$(sp_json_lines ssh-authorized-keys)" \
+                '. + {ssh_authorized_keys: $keys}' <<< "$_sp_user")"
+        fi
+        _sp_config="$(jq --argjson user "$_sp_user" \
+            '. + {users: [$user]}' <<< "$_sp_config")"
+    else
+        if sp_has_material password; then
+            # `expire: false`, so that a machine provisioned with a password is
+            # one somebody can log into rather than one that demands a change
+            # over a console nothing is attached to.
+            _sp_config="$(jq --arg password "$(sp_material password)" \
+                '. + {password: $password, chpasswd: {expire: false}}' <<< "$_sp_config")"
+        fi
+        if sp_has_material ssh-authorized-keys; then
+            _sp_config="$(jq --argjson keys "$(sp_json_lines ssh-authorized-keys)" \
+                '. + {ssh_authorized_keys: $keys}' <<< "$_sp_config")"
+        fi
     fi
 
     if sp_has_material packages; then

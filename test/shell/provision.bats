@@ -283,13 +283,22 @@ packages: [htop]
 
 # ------------------------------------------------------------- composition ---
 
-@test "a structured user becomes a cloud-config the machine can read" {
+# A `users:` list rather than the top-level `user:` string the reference
+# implementation uses. That key is deprecated since cloud-init 22.2 and
+# scheduled for removal in 27.2, and a booted Alpine machine showed the rename it
+# performs going wrong as well - so the account is described rather than the
+# distribution's own being renamed.
+@test "a named user becomes an account of its own, not a rename" {
     given_systemd_cloud_init
     given_material user 'maxim'
     run sp_provision "$ROOTFS"
     [ "$status" -eq 0 ]
     head -n 1 "$(seed_dir)/user-data" | grep -q '#cloud-config'
-    tail -n +2 "$(seed_dir)/user-data" | jq -e '.user == "maxim"'
+    body="$(tail -n +2 "$(seed_dir)/user-data")"
+    jq -e '.users | length == 1' <<< "$body"
+    jq -e '.users[0].name == "maxim"' <<< "$body"
+    jq -e '.users[0].sudo == "ALL=(ALL) NOPASSWD:ALL"' <<< "$body"
+    jq -e 'has("user") | not' <<< "$body"
 }
 
 # A hash contains $ and . and / and is exactly the kind of string a generated
@@ -301,6 +310,47 @@ packages: [htop]
     [ "$status" -eq 0 ]
     tail -n +2 "$(seed_dir)/user-data" | jq -e '.password == "$6$rounds=4096$abc$De.F/gh0"'
     tail -n +2 "$(seed_dir)/user-data" | jq -e '.chpasswd.expire == false'
+}
+
+# lock_passwd defaults to true, so an account given a password and not this would
+# be created and then be impossible to log into with it.
+@test "a password given with a user lands on that account, unlocked" {
+    given_systemd_cloud_init
+    given_material user 'maxim'
+    given_material password '$6$rounds=4096$abc$De.F/gh0'
+    run sp_provision "$ROOTFS"
+    [ "$status" -eq 0 ]
+    body="$(tail -n +2 "$(seed_dir)/user-data")"
+    jq -e '.users[0].hashed_passwd == "$6$rounds=4096$abc$De.F/gh0"' <<< "$body"
+    jq -e '.users[0].lock_passwd == false' <<< "$body"
+    jq -e 'has("password") | not' <<< "$body"
+}
+
+# No user named means there is no account to describe, only the distribution's
+# own to add to - and the top-level keys that do that are not deprecated.
+@test "keys given with no user go to the distribution's default account" {
+    given_systemd_cloud_init
+    given_material ssh-authorized-keys 'ssh-ed25519 AAAA one
+'
+    run sp_provision "$ROOTFS"
+    [ "$status" -eq 0 ]
+    body="$(tail -n +2 "$(seed_dir)/user-data")"
+    jq -e '.ssh_authorized_keys == ["ssh-ed25519 AAAA one"]' <<< "$body"
+    jq -e 'has("users") | not' <<< "$body"
+}
+
+@test "keys given with a user land on that account instead" {
+    given_systemd_cloud_init
+    given_material user 'maxim'
+    given_material ssh-authorized-keys 'ssh-ed25519 AAAA one
+ssh-ed25519 BBBB two
+'
+    run sp_provision "$ROOTFS"
+    [ "$status" -eq 0 ]
+    body="$(tail -n +2 "$(seed_dir)/user-data")"
+    jq -e '.users[0].ssh_authorized_keys | length == 2' <<< "$body"
+    jq -e '.users[0].ssh_authorized_keys[1] == "ssh-ed25519 BBBB two"' <<< "$body"
+    jq -e 'has("ssh_authorized_keys") | not' <<< "$body"
 }
 
 @test "keys, packages and commands become arrays, one item per line" {
@@ -323,6 +373,20 @@ echo two
     jq -e '.runcmd == ["echo one", "echo two"]' <<< "$body"
 }
 
+# The one key cloud-init tells us not to use. Asserted directly, because the
+# deprecation has a removal date and nothing else here would notice a
+# reintroduction.
+@test "the deprecated top-level user key is never emitted" {
+    given_systemd_cloud_init
+    given_material user 'maxim'
+    given_material password 'hash'
+    given_material ssh-authorized-keys 'ssh-ed25519 AAAA one
+'
+    run sp_provision "$ROOTFS"
+    [ "$status" -eq 0 ]
+    tail -n +2 "$(seed_dir)/user-data" | jq -e 'has("user") | not'
+}
+
 @test "a blank line in a list-valued input is not an item" {
     given_systemd_cloud_init
     given_material packages 'htop
@@ -339,7 +403,7 @@ tmux
     given_material user ''
     run sp_provision "$ROOTFS"
     [ "$status" -eq 0 ]
-    tail -n +2 "$(seed_dir)/user-data" | jq -e 'has("user") | not'
+    tail -n +2 "$(seed_dir)/user-data" | jq -e 'has("users") | not'
 }
 
 @test "the package upgrade switch is off unless it is asked for" {
@@ -494,7 +558,7 @@ users: [{name: maxim}]
     run bash "$SCRIPTS/provision.sh"
     [ "$status" -eq 0 ]
     [ -f "$(seed_dir)/meta-data" ]
-    tail -n +2 "$(seed_dir)/user-data" | jq -e '.user == "maxim"'
+    tail -n +2 "$(seed_dir)/user-data" | jq -e '.users[0].name == "maxim"'
 }
 
 @test "a machine that was given no material directory at all still provisions" {

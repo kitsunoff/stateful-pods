@@ -275,13 +275,22 @@ shim:
 #       #   value: |
 #       #     #cloud-config
 #
-#       # The distribution's default user, renamed. Proxmox spells this `ciuser`.
-#       # The keys and the password below land on this account, which is the one
-#       # the distribution already considers the way in.
+#       # An account to create, with passwordless sudo. Proxmox spells this
+#       # `ciuser`. The keys and the password below land on it.
+#       #
+#       # It is an account of its own rather than the distribution's default one
+#       # renamed. cloud-init deprecated the key that renames it in 22.2 and will
+#       # remove it in 27.2, and on Alpine the rename also carried the
+#       # distribution's own privilege rule onto the new name, where it was
+#       # rejected - leaving an account with no way to administer the machine.
+#       #
+#       # Leave it unset to keep the distribution's own default user; the keys
+#       # and password below then land on that instead.
 #       # user:
 #       #   value: maxim
 #
-#       # The default user's password. Give a crypt(3) HASH, not a plaintext
+#       # The password of the account above, or of the distribution's default
+#       # user when none is named. Give a crypt(3) HASH, not a plaintext
 #       # one: a hash on the volume is the same exposure as /etc/shadow, which is
 #       # unavoidable, while a plaintext one is a second copy of a secret in a
 #       # form nothing needed. Proxmox spells this `cipassword`.
@@ -293,8 +302,8 @@ shim:
 #       #       name: machine-secrets
 #       #       key: root-password-hash
 #
-#       # Public keys for the default user, one per line. Proxmox spells this
-#       # `sshkeys`.
+#       # Public keys, one per line, for the account named above - or for the
+#       # distribution's default user when none is. Proxmox spells this `sshkeys`.
 #       # sshAuthorizedKeys:
 #       #   value: |
 #       #     ssh-ed25519 AAAAC3Nz... maxim@workstation
