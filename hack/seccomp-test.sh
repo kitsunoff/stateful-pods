@@ -24,8 +24,13 @@
 # removed, because a kind node is itself a container and a user namespace nested
 # inside one does not work here. What is left is what matters: an unprivileged
 # guest holding CAP_SYS_ADMIN, which is the posture whose root change the default
-# profile withholds. The chart's own `privileged` mode could never show it, since
-# a privileged container is given no profile at all.
+# profile withholds.
+#
+# The last section then asserts the other side of it: that a machine in the
+# `privileged` mode now runs under the profile its values name. It did not use
+# to. The mode rendered a privileged container, and a privileged container is
+# given no profile at all - which is one of the two reasons the mode stopped
+# being rendered that way.
 #
 # Nearly every command below is single-quoted on purpose: it is expanded by a
 # shell in another container, not by this one.
@@ -347,6 +352,21 @@ check "the machine's own init is process 1" \
 check "the machine's root is the volume, so the root change happened" \
   guest test ! -d /mnt/rootfs
 
+step "asserting the machine can make the call the shipped profile denies, before it names one"
+# The first half of a pair. A forced unmount needs CAP_SYS_ADMIN, which this mode
+# grants, so once the machine names the profile the only thing left that can stop
+# the call is the filter. Without this half, the assertion after the upgrade would
+# hold just as well if the machine had lost the capability instead.
+forced_unmount() {
+  local path="$1"
+  guest sh -c "mkdir -p $path && mount -t tmpfs none $path && umount --force $path"
+}
+if forced_unmount /mnt/sp-force-allowed >/dev/null 2>&1; then
+  pass "unconfined, the machine forces a mount away, which is the call the profile will deny"
+else
+  fail "the machine could not force a mount away even unconfined, so denying it later would prove nothing"
+fi
+
 step "asserting the filter each container declared is the one the chart chose"
 guest_filter="$(kc get pod oci-web-0 --output \
   "jsonpath={.spec.containers[?(@.name=='guest')].securityContext.seccompProfile.type}")"
@@ -413,19 +433,30 @@ named_filter="$(kc get pod oci-web-0 --output \
 pass "the guest names the profile the machine asked for"
 
 # The machine here runs `privileged`, because that is the only mode a kind node
-# supports, and containerd gives a privileged container no seccomp profile at
-# all - it receives the reference over the CRI and drops it before building the
-# container. So the machine above is running unfiltered despite naming a
-# profile, and this asserts exactly that, rather than pretending otherwise. If a
-# future runtime starts honouring the profile here, this fails and the chart's
-# documentation of the privileged mode needs rewriting.
-step "asserting what a privileged machine actually got"
+# supports. This assertion used to say the opposite: the mode rendered a
+# privileged container, containerd drops the profile a privileged container names
+# before it builds one, and the machine ran unfiltered despite naming a profile.
+# The mode renders a capability set now, so there is nothing left telling the
+# runtime to withhold the filter, and the reference the machine sends is the
+# filter it gets. That is half the reason the mode was changed, and this is where
+# it is checked.
+step "asserting the machine runs under the filter it named"
 machine_mode="$(guest sh -c 'awk "/^Seccomp:/ {print \$2}" /proc/1/status' | tr -d '\r')"
-if [[ "$machine_mode" == "0" ]]; then
-  pass "the runtime dropped the profile a privileged machine named, as documented"
+if [[ "$machine_mode" == "2" ]]; then
+  pass "the machine's own init reports a loaded filter, which a privileged container never got"
 else
-  fail "a privileged machine reports seccomp mode $machine_mode; the chart documents that it gets none"
+  fail "the machine reports seccomp mode ${machine_mode:-nothing}; one naming a profile must report 2"
 fi
+
+# The second half of the pair made before the upgrade, on the same machine and
+# the same volume. The capability has not changed; only the profile has.
+if forced_unmount /mnt/sp-force-denied >/dev/null 2>&1; then
+  fail "the machine forced a mount away under a profile that denies it, so the filter is not reaching it"
+else
+  pass "the same forced unmount is refused under the profile, by the filter and not by the capability set"
+fi
+# An ordinary unmount is what the profile leaves alone, so it is also the cleanup.
+guest sh -c 'umount /mnt/sp-force-denied' >/dev/null 2>&1 || true
 
 step "asserting the machine still shuts down rather than being killed"
 started="$(date +%s)"
