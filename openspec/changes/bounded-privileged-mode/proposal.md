@@ -29,7 +29,12 @@ capabilities can be asked for by name.
   the node's root — which stays true.
 - **The mode becomes confinable.** A container that is not marked privileged is one the runtime will
   apply a seccomp profile to, which makes the profile from `seccomp-posture` mean something in the
-  mode where it matters most. The same applies to AppArmor later.
+  mode where it matters most.
+- **The guest names the access-control profile it runs under**, in both modes. The same reasoning
+  applies to AppArmor as to seccomp, but with the sign reversed: a container the runtime is willing
+  to confine is one it confines with a default profile that denies `mount(2)` outright, so a machine
+  that named nothing would stop booting on any node with AppArmor enabled. The field is declared;
+  no profile is shipped in it.
 - **What the mode loses is stated, not discovered**: host devices beyond the ones a container is
   given, the unmasked `/proc` paths, and the ability to load kernel modules or use raw I/O from
   inside a machine. Each is named in `values.yaml` with what to do instead.
@@ -51,6 +56,12 @@ Non-goals:
 - `pod-security-posture`: the `privileged` mode renders a named capability set rather than the
   runtime's blanket privileged flag, and the requirement that only the guest receives the mode's
   privilege is restated in terms of that set.
+
+### Added Capabilities
+
+- `pod-security-posture`: the guest container names the access-control profile it runs under, in
+  both modes, rather than leaving it to the node. Not foreseen when this was proposed - see
+  `design.md` for what the experiment found.
 
 ## Impact
 

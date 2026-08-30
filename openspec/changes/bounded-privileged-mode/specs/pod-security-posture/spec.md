@@ -3,8 +3,9 @@
 ### Requirement: The `privileged` mode is rendered plainly
 
 In `privileged` mode the guest container SHALL be granted an explicit, enumerated set of
-capabilities, without additionally opting into a user namespace. The chart SHALL NOT instruct the
-runtime to suspend the policy it applies to containers.
+capabilities, without additionally opting into a user namespace. The chart SHALL NOT mark any
+container privileged, which is the single flag that makes a runtime stop applying its policy
+wholesale rather than a statement about any particular part of it.
 
 The set SHALL include what the guest needs to mount the machine's filesystems and change its root,
 and SHALL exclude the capabilities that let a container load kernel code, perform raw I/O, alter the
@@ -67,3 +68,36 @@ system's file ownership requires, and in the user-namespaced mode it is not root
 - **WHEN** a machine is rendered in either mode
 - **THEN** no container that runs before the guest is marked privileged, adds a capability, or
   allows privilege escalation
+
+## ADDED Requirements
+
+### Requirement: The guest container names the access-control profile it runs under
+
+In every security mode the guest container SHALL declare the access-control profile it runs under
+rather than leaving that choice to the node. It SHALL declare that it runs unconfined by one, because
+every runtime's default profile forbids mounting outright, and mounting the machine's filesystems is
+what the guest container exists to do.
+
+This is the rule the syscall filter already follows and it exists for the same reason. A container
+that names neither is given whatever the node was configured to give it, so the same values would
+produce a machine that boots on one node and fails on another with nothing in the machine's own
+description to explain the difference. Until this mode stopped being rendered as a privileged
+container the question did not arise, because a runtime told to stop applying policy applies no such
+profile either; enumerating the mode's capabilities is what brings the machine back within reach of
+one.
+
+Declaring the guest unconfined is not a claim that a machine should be. It is the field a profile
+permitting what a machine does would be named in, and no such profile is shipped yet.
+
+The steps that run before the guest SHALL name nothing here and take the node's own default. They
+unpack an archive, write files and fetch over HTTPS, and no default profile withholds any of that.
+
+#### Scenario: The guest declares the profile it runs under
+
+- **WHEN** a machine is rendered in either security mode
+- **THEN** the guest container declares that it runs unconfined by an access-control profile
+
+#### Scenario: The preparation steps are left to the node's default
+
+- **WHEN** a machine is rendered
+- **THEN** no container that runs before the guest names an access-control profile
