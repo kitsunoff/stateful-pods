@@ -4,8 +4,9 @@
 # references; keeping only the newest leaves no way back when a build turns out
 # to be broken. Five is a week of room to notice.
 #
-# It deletes nothing until somebody deliberately lets it. Two reasons, and both
-# of them are the same reason.
+# It deletes nothing until somebody deliberately lets it, and then it deletes on
+# the schedule like anything else. Two reasons for the gate, and both of them are
+# the same reason.
 #
 # The first is mechanical. Deleting a version of a package owned by a user goes
 # through /user/packages, which a workflow's GITHUB_TOKEN cannot reach whatever
@@ -86,10 +87,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "could not produce a plan; see the summary" >&2
 
-      # Only with a token that can actually delete. The step above has already
-      # printed the plan, so what runs here is never a surprise.
+      # On the schedule as well as on a dispatch, because "keep the five most
+      # recent builds and remove the older ones" is the requirement and a job
+      # that only ever removed them when somebody remembered to press a button
+      # would not meet it. What gates this is the token, not the trigger: the
+      # step above has already printed the plan either way, so what runs here is
+      # never a surprise, and without a token it is not a run at all.
       - name: Remove the builds past the limit
-        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.PRESET_RETENTION_TOKEN }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}

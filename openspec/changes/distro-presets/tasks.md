@@ -62,9 +62,20 @@
   and for each removed tag resolve the index's children, delete the index, then delete those
   children only when no retained index still references them; verify against a package seeded with
   seven builds
+  — verified two ways, neither of them a live deletion. A seven-build package was created on GHCR
+  with one manifest deliberately shared by every build, and the planner was run against the
+  structure read back from it: it removes the two oldest indexes and their unique children and
+  protects the shared one, where a "delete untagged" step would have removed eight versions and
+  broken all seven tags. The same shape is a fixture in `test/presets/retention.bats`. The delete
+  calls themselves were not executed: they need a token with `delete:packages`, which is also why
+  the workflow ships inert.
 - [x] 4.4 After a retention run, resolve every retained tag for both architectures and fail if any
   is incomplete — this is the failure mode a naive "delete untagged" step produces; verify the check
   fails when pointed at a deliberately broken index
+  — the check is written and runs after every acting run; it was not verified against a broken
+  index, because breaking one means deleting a manifest and nothing here can delete yet. It is
+  belt-and-braces over the planner, which is what actually prevents the failure and which is
+  covered by fixtures.
 - [x] 4.5 Add `.github/dependabot.yml` for `github-actions` and `docker`, with a comment stating why
   the tarball upstream is not and cannot be covered by it; verify Dependabot's configuration is
   accepted by the repository
@@ -81,6 +92,9 @@
 - [x] 5.2 Add `charts/stateful-pods/presets.yaml` with the four entries pinned by digest, and read
   it in `_helpers.tpl` with `.Files.Get` and `fromYaml`; verify a `helm package` followed by a
   render from the package resolves a preset, which is what a values file could not do
+  — done, and automated rather than done once: `hack/check-presets.sh` packages the chart and
+  renders a preset from the package on every `make presets`. Confirmed to fail when the catalog is
+  excluded from the package.
 - [x] 5.3 Validate the new kind in `stateful-pods.validate.semantics`, generating the list of
   accepted names from the table rather than writing it twice; verify `make test` passes the suites
   from 5.1

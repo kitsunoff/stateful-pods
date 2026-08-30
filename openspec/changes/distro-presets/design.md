@@ -162,8 +162,11 @@ the tarballs, and the two do not overlap.
   the upstream archive itself, and asserted after publication by requiring the published layer's
   `diff_id` to equal the checksum of the archive that was verified.
 - **A retention job can break a retained multi-architecture image** → Addressed by the algorithm
-  above rather than by an off-the-shelf "delete untagged" step. Verified by resolving every retained
-  tag for both architectures after a retention run.
+  above rather than by an off-the-shelf "delete untagged" step, and the algorithm is a pure function
+  with fixtures in front of it. Confirmed against a real seven-build package sharing one manifest:
+  the plan removes the two oldest indexes and their unique children and protects the shared one,
+  where "delete untagged" would have removed eight versions and broken all seven tags. Backed by
+  resolving every retained tag for every architecture after a run that acts.
 - **New GHCR packages are private by default** → A preset nobody can pull is a preset that does not
   work, and the failure looks like a typo in the reference. Each package's visibility is set to
   public as part of first publication, and the check that a published reference resolves is run
@@ -191,8 +194,13 @@ the tarballs, and the two do not overlap.
 3. Confirm every published reference resolves unauthenticated, on both architectures.
 4. Land the chart change — the source kind, its validation, the catalog file populated with the
    four digests — and the documentation.
-5. Enable the daily workflow and the retention job. Retention does nothing until a preset has six
-   builds, which is the first week it can be observed doing the right thing.
+5. Enable the daily workflow and the retention job. Retention needs one thing more than being
+   merged: deleting a version of a user-owned package goes through `/user/packages`, which a
+   workflow's `GITHUB_TOKEN` cannot reach at any permission level, so it needs a personal access
+   token with `delete:packages` as `PRESET_RETENTION_TOKEN`. Until that secret exists the scheduled
+   run prints the plan it would carry out and removes nothing - which is a good state to leave it in
+   for the first week anyway, because that is when a preset first has six builds and the plan can be
+   read before anything acts on it.
 
 Rollback at any point before step 4 is deleting the packages; nothing in the chart depends on them.
 After step 4 it is a chart revision, and a machine already seeded from a preset is unaffected either

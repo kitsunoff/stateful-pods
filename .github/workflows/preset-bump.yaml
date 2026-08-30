@@ -62,10 +62,21 @@ jobs:
             case "$preset" in ''|\#*) continue ;; esac
             [ -n "$rest" ] || continue
 
-            resolved="$(./hack/preset-build.sh --resolve-only "$preset" 2>/tmp/why || true)"
-            if [ -z "$resolved" ]; then
+            # 3 is "the upstream has not finished this build yet", which is a
+            # state that resolves itself overnight. Anything else is something
+            # being wrong - a rotated signing key, a signing-key.asc that no
+            # longer matches the pinned fingerprint, an index line that does not
+            # parse - and swallowing it would leave this job green every morning
+            # while the catalog quietly stopped moving.
+            status=0
+            resolved="$(./hack/preset-build.sh --resolve-only "$preset" 2>/tmp/why)" || status=$?
+            if [ "$status" -eq 3 ]; then
               echo "$preset: not ready - $(head -1 /tmp/why)"
               continue
+            elif [ "$status" -ne 0 ]; then
+              echo "$preset: the build could not resolve it, and this is not a wait:" >&2
+              cat /tmp/why >&2
+              exit "$status"
             fi
             # The build's result is name, upstream build, reference - tab
             # separated. Read with the shell rather than cut, for the reason
@@ -73,7 +84,7 @@ jobs:
             # ones that behave the same wherever someone runs this by hand.
             IFS=$'\t' read -r _ _ reference <<< "$resolved"
             tag="${reference##*:}"
-            current="$(sed -n "s|^${preset}: .*|&|p" charts/stateful-pods/presets.yaml)"
+            current="$(grep --fixed-strings -- "$preset: " charts/stateful-pods/presets.yaml || true)"
 
             # The catalog holds a digest, so "is it behind" is answered against
             # the registry rather than against the catalog's own text: the newest
@@ -126,7 +137,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISHED: ${{ needs.publish.outputs.published }}
-          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
           git config user.name "github-actions[bot]"
@@ -171,7 +181,13 @@ jobs:
             # bump is merged replaces it instead of opening a second one.
             git push --force origin "$branch"
 
-            if gh pr view "$branch" --json number > /dev/null 2>&1; then
+            # An OPEN pull request specifically. `gh pr view <branch>` resolves a
+            # merged one as readily as an open one, and merging is the normal end
+            # of a bump - so asking that question would make each preset stop
+            # being proposed the first time one of its bumps landed, while
+            # logging that it had updated something.
+            open_pr="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+            if [ "$open_pr" != "0" ]; then
               echo "$preset: updated the open pull request"
             else
               gh pr create \

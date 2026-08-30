@@ -86,6 +86,43 @@ while IFS= read -r name; do
   fi
 done <<< "$built"
 
+# The table has to travel with the chart, not just sit beside it in a checkout.
+# That is the whole reason it is a chart-root file read through `.Files` rather
+# than a values file, and it is the one property a rendering test from the source
+# tree cannot see - a values file would pass that test and fail this one.
+if command -v helm >/dev/null 2>&1; then
+  package_dir="$(mktemp -d)"
+  trap 'rm -rf "$package_dir"' EXIT
+  chart_dir="$(dirname "$CATALOG")"
+  first_preset=""
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    first_preset="$name"
+    break
+  done <<< "$catalogued"
+
+  if ! helm package "$chart_dir" --destination "$package_dir" >/dev/null 2>&1; then
+    fail "the chart does not package, so whether the catalog travels with it cannot be established"
+  else
+    packaged="$(find "$package_dir" -name '*.tgz' -maxdepth 1 | head -1)"
+    rendered="$(helm template check "$packaged" \
+      --set "shim.image=example.invalid/shim:test" \
+      --set "machines.probe.source.kind=preset" \
+      --set "machines.probe.source.name=$first_preset" \
+      --set "machines.probe.rootfs.size=1Gi" \
+      --set "machines.probe.security.mode=userns" \
+      --kube-version 1.33.0 2>&1)" || rendered=""
+    expected="$(grep --fixed-strings -- "$first_preset: " "$CATALOG" | sed "s|^$first_preset: ||")"
+    if [[ -n "$expected" ]] && grep --quiet --fixed-strings -- "$expected" <<< "$rendered"; then
+      echo "the catalog travels with the chart: $first_preset resolves from a package"
+    else
+      fail "rendering $first_preset from a packaged chart did not produce $expected"
+    fi
+  fi
+else
+  echo "note: helm was not found, so the packaged-chart check was skipped" >&2
+fi
+
 if [[ "$status" -eq 0 ]]; then
   echo "preset catalog checks passed"
 fi

@@ -693,7 +693,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A published tag keeps its content | the preset stage of `hack/integration-test.sh`, which builds twice and compares |
 | No tag tracks the newest build | every tag names an upstream build date |
 | A named preset renders as a pinned reference | `values_preset_source_test.yaml` |
-| The table is part of the chart | `.Files.Get`, exercised from a package |
+| The table is part of the chart | `hack/check-presets.sh`, which packages the chart and renders a preset from the package |
 | The five newest builds of a preset remain | `test/presets/retention.bats` |
 | Retention is per preset | `hack/preset-retention.sh` runs per package |
 | A kept build stays whole | `test/presets/retention.bats`, and asserted after every run |

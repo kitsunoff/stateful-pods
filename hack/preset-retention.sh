@@ -96,13 +96,17 @@ package_versions() {
 # names: what an index references is the registry's answer to give.
 index_children() {
   local repository="$1" versions="$2"
-  local digest manifest children="{}"
+  local digest manifest media children="{}"
   while IFS= read -r digest; do
     [[ -n "$digest" ]] || continue
-    manifest="$(crane manifest "$repository@$digest" 2>/dev/null || true)"
-    [[ -n "$manifest" ]] || continue
-    if [[ "$(jq --raw-output '.mediaType // ""' <<< "$manifest")" != *"index"* &&
-          "$(jq --raw-output '.mediaType // ""' <<< "$manifest")" != *"manifest.list"* ]]; then
+    # A read that fails is not evidence that this is a leaf. Treating it as one
+    # would drop an index out of the children map, and the planner protects
+    # exactly what that map says a retained build points at - so the failure
+    # would be in the direction that deletes things.
+    manifest="$(crane manifest "$repository@$digest" 2>&1)" ||
+      die "could not read $repository@$digest from the registry, so what a retained build points at is unknown. Nothing was deleted. The registry said: $manifest"
+    media="$(jq --raw-output '.mediaType // ""' <<< "$manifest")"
+    if [[ "$media" != *"index"* && "$media" != *"manifest.list"* ]]; then
       continue
     fi
     children="$(jq --argjson existing "$children" --arg digest "$digest" \
@@ -124,19 +128,16 @@ delete_version() {
 verify_retained() {
   local repository="$1" plan="$2"
   local build platform failures=0
+  local -a platform_list=()
+  IFS=',' read -r -a platform_list <<< "$PLATFORMS"
   while IFS= read -r build; do
     [[ -n "$build" ]] || continue
-    local IFS_SAVE="$IFS"
-    IFS=','
-    for platform in $PLATFORMS; do
-      IFS="$IFS_SAVE"
+    for platform in "${platform_list[@]}"; do
       if ! crane manifest --platform "$platform" "$repository:$build" >/dev/null 2>&1; then
         echo "FAIL: $repository:$build no longer resolves for $platform" >&2
         failures=$((failures + 1))
       fi
-      IFS=','
     done
-    IFS="$IFS_SAVE"
   done < <(jq --raw-output '.retained_builds[]' <<< "$plan")
 
   if [[ "$failures" -gt 0 ]]; then

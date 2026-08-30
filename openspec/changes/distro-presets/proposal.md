@@ -38,7 +38,9 @@ in provenance, and built for the architecture the machine lands on.
   repository's own Containerfiles — but it cannot track a daily dated build on a plain HTTPS index,
   so the tarball side is this workflow's job.
 - **Five builds are kept per preset.** A scheduled job removes older versions from the registry,
-  keeping the five newest of each preset.
+  keeping the five newest of each preset. It reports rather than removes until it is given a token
+  that can delete: a user-owned package's versions are deleted through an endpoint a workflow's own
+  token cannot reach, and this is the one job here that can take a published image away.
 
 Non-goals:
 
