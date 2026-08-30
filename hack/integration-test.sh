@@ -683,10 +683,36 @@ else
       alpine-3.24)
         check "the source really provides only busybox tar" \
           osguest sh -c 'tar --version 2>&1 | grep -q busybox'
+        # This preset is built from the upstream's cloud variant, and carrying
+        # cloud-init is the entire reason for that choice rather than a detail of
+        # it. Asserted inside a booted machine because that is where it has to be
+        # true - the layer containing a file proves nothing about what the
+        # seeding step put on the volume.
+        check "the preset carries cloud-init" \
+          osguest sh -c 'test -x /usr/bin/cloud-init && test -d /etc/cloud'
+        # And carries it as the upstream published it: installed and disabled.
+        # A provisioning backend that checks the line above and not this one
+        # finds cloud-init, writes a seed, and produces a machine with no users
+        # and no keys - which is the failure the whole loud-check rule exists to
+        # prevent, arrived at from a direction the rule does not name.
+        check "cloud-init is disabled by the upstream's own marker" \
+          osguest sh -c 'test -f /etc/cloud/cloud-init.disabled'
+        # The marker is honoured rather than merely present. cloud-init creates
+        # /run/cloud-init the moment any of its stages runs, so this is the
+        # difference between a machine that skipped it and one that ran it and
+        # found nothing.
+        check "no cloud-init stage ran behind the marker" \
+          osguest sh -c '! test -d /run/cloud-init'
         ;;
       void-current)
         check "the machine booted an init that is neither systemd nor busybox" \
           osguest sh -c '[ "$(cat /proc/1/comm)" = "runit" ]'
+        # The upstream publishes no cloud variant of Void, so this preset is the
+        # `default` one and serves the native backend only. It is asserted rather
+        # than documented because the asymmetry between the four presets is the
+        # thing a reader is most likely to assume away.
+        check "the Void preset carries no cloud-init" \
+          osguest sh -c '! command -v cloud-init >/dev/null 2>&1'
         ;;
     esac
     check "the machine has the pod's host name" \
