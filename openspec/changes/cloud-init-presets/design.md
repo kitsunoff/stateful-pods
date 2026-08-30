@@ -59,9 +59,19 @@ Read from `https://images.linuxcontainers.org/meta/1.0/index-system`:
 | Preset | Upstream variants for both architectures | Taken |
 | --- | --- | --- |
 | `debian-trixie` | `default`, `cloud` | `cloud` |
-| `ubuntu-noble` | `default`, `cloud` | `cloud` |
+| `ubuntu-noble` | `default`, `cloud` (architectures disagree) | `default`, for now |
 | `alpine-3.24` | `default`, `cloud`, `tinycloud` | `cloud` |
 | `void-current` | `default`, `musl` | `default` |
+
+Ubuntu's cloud variant exists but is not takeable yet: `20260829_07:42` on amd64 against
+`20260829_08:43` on arm64. The rule that a preset covers every architecture or is not published
+already decides this — there is no single build to name — so `ubuntu-noble` stays on `default` and
+is documented as `native`-only until the upstream levels. It was left behind rather than holding the
+rest of the change because the upstream event is outside this project's control and the wait is
+unbounded; the two presets that are ready deliver the point of the change on their own. Nothing
+switches it automatically: `hack/preset-bump.sh` says outright that it cannot write `presets.list`,
+and the workflow only resolves and repins digests, so the variant field is only ever changed by a
+person.
 
 Void publishes no cloud variant at all. The three options for it were: keep it on `default` as a
 `native`-only preset, install cloud-init into it at build time, or drop the preset. The second is

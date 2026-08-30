@@ -38,6 +38,10 @@
 
 ## 5. Say what a user gets
 
+- [x] 5.0 Record that `ubuntu-noble` is waiting on its upstream's architectures to agree, in the
+  catalog, both READMEs and the change, and that moving it is a deliberate edit rather than
+  something the daily bump will do.
+
 - [x] 5.1 Update `README.md` and `charts/stateful-pods/README.md`: the new package names, which
   preset can serve which provisioning backend, and what a preset now costs in size.
 - [x] 5.2 State the interim behaviour — cloud-init present and inert until the provisioning change

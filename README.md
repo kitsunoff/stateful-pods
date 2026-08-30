@@ -161,15 +161,19 @@ A preset is a whole distribution rather than a base image, and each is pinned by
 is that you do not have to research a reference: a typo is refused and told which names exist,
 instead of resolving to nothing or to somebody's default.
 
-Three of the four are built from their upstream's **cloud** variant, so they carry cloud-init as the
-distribution assembled it. Void is not, because its upstream publishes no cloud variant at all — it
-offers only `default` and `musl`. Nothing is installed into a preset to make up the difference: a
-preset is the distribution's own root filesystem or it is not a preset.
+Two of the four are built from their upstream's **cloud** variant, so they carry cloud-init as the
+distribution assembled it. Nothing is installed into a preset to make up the difference: a preset is
+the distribution's own root filesystem or it is not a preset.
+
+Void has no cloud variant upstream at all — only `default` and `musl` — so it never gets one.
+Ubuntu does have one, but its two architectures are currently on different upstream builds, and a
+preset covers every architecture or it is not published; it moves to `cloud` once the upstream
+levels.
 
 | Preset | Upstream variant | Provisioning it can serve | Uncompressed |
 | --- | --- | --- | --- |
 | `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
-| `ubuntu-noble` | `cloud` | cloud-init, native | 682 MiB |
+| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
 | `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
 | `void-current` | `default` | native only | 361 MiB |
 
@@ -224,8 +228,8 @@ lets a machine seed from an in-cluster `<service>.<namespace>.svc.cluster.local`
 insecure-registry input in the chart.
 
 **Guest provisioning is not here.** SSH host keys and accounts arrive in a later change, so a
-machine starts with the identity and accounts its source shipped. cloud-init is *present* in three
-of the four presets and does nothing: the upstream ships its LXC images with cloud-init installed
+machine starts with the identity and accounts its source shipped. cloud-init is *present* in two of
+the four presets and does nothing: the upstream ships its LXC images with cloud-init installed
 and disabled by an `/etc/cloud/cloud-init.disabled` marker, a preset carries that marker unmodified,
 and nothing yet removes it or writes a seed for it to read. A machine installed today therefore
 boots exactly as it did before the presets moved to the cloud variant.

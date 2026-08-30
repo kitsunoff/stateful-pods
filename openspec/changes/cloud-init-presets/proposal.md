@@ -23,19 +23,26 @@ with it, never by installing it into an image here.
 
 ## What Changes
 
-- Presets are built from the upstream's `cloud` variant wherever the upstream publishes one, so a
-  preset carries cloud-init as the distribution assembled it. This reverses a non-goal of
-  `distro-presets`, deliberately, and the reversal is conditional: see Interim state below.
+- Presets are built from the upstream's `cloud` variant wherever the upstream publishes one as a
+  single build covering both architectures, so a preset carries cloud-init as the distribution
+  assembled it. This reverses a non-goal of `distro-presets`, deliberately, and the reversal is
+  conditional: see Interim state below.
 - **Void is the exception, established by looking rather than assumed.** The upstream publishes only
   `default` and `musl` for `voidlinux/current` — no `cloud` variant exists to take. `void-current`
   stays on `default`, carries no cloud-init, and serves the `native` backend only. Installing
   cloud-init into it here was rejected: it would modify an upstream root filesystem, which is a
   requirement of `distro-presets`, not a preference.
+- **Ubuntu is a second exception, and a temporary one.** Its upstream does publish a `cloud`
+  variant, but its two architectures are on different upstream builds - amd64 `20260829_07:42`
+  against arm64 `20260829_08:43` - and a preset covers every architecture or it is not published.
+  There is nothing to take yet, so `ubuntu-noble` stays on `default` and serves `native` only, like
+  Void. Moving it later is one line in `presets.list` plus a catalog entry; nothing does it
+  automatically, because the daily bump reads the variant field and never writes it.
 - **BREAKING** for image references: a preset's package names the variant as well as the
-  distribution, so `stateful-pods-debian` becomes `stateful-pods-debian-cloud`,
-  `stateful-pods-ubuntu` becomes `stateful-pods-ubuntu-cloud` and `stateful-pods-alpine` becomes
-  `stateful-pods-alpine-cloud`. `stateful-pods-void` is unchanged. The three packages under the old
-  names are left in place, because the released chart still points at digests inside them.
+  distribution, so `stateful-pods-debian` becomes `stateful-pods-debian-cloud` and
+  `stateful-pods-alpine` becomes `stateful-pods-alpine-cloud`. `stateful-pods-ubuntu` and
+  `stateful-pods-void` are unchanged. The two packages under the old names are left in place,
+  because the released chart still points at digests inside them.
 - The preset names a user writes in `values.yaml` do not change. `debian-trixie` still means Debian
   trixie; it now resolves to a root filesystem that can be provisioned.
 - A preset is still the upstream's bytes, unmodified. That has a consequence worth stating rather
@@ -46,7 +53,7 @@ with it, never by installing it into an image here.
 ## Interim state
 
 Between this change and the provisioning change, the chart drives nothing. cloud-init is present in
-three of the four presets and inert in all of them, because the upstream's disable marker is still
+two of the four presets and inert in both, because the upstream's disable marker is still
 there and nothing has been written to remove it. A machine installed in that window boots exactly as
 it does today, from a larger root filesystem. Nothing regresses and nothing new works yet, which is
 the point of landing the images first: the provisioning change should find cloud-init already there
@@ -67,10 +74,10 @@ None.
 
 ## Impact
 
-- `images/presets/presets.list`: three variants and three packages change; the header's account of
-  why the variant is `default` everywhere is replaced by why it is not.
-- `charts/stateful-pods/presets.yaml`: three references repointed at the new packages and at cloud
-  builds. `void-current` is untouched.
+- `images/presets/presets.list`: two variants and two packages change; the header's account of why
+  the variant is `default` everywhere is replaced by why it is not, and by why two presets keep it.
+- `charts/stateful-pods/presets.yaml`: two references repointed at the new packages and at cloud
+  builds. `ubuntu-noble` and `void-current` are untouched.
 - `test/presets/verification.bats`: the variant a preset names is the one looked up in the upstream
   index, and a preset resolves into the package its catalog line names including the variant.
 - `README.md`, `charts/stateful-pods/README.md`: the published package names, the size a preset

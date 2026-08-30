@@ -60,15 +60,19 @@ check() {
 # builds a released chart resolves to, so an entry left pointing at it resolves,
 # pulls, and seeds a machine with a root filesystem that has no cloud-init in it.
 # Nothing downstream would report that; this is where it is caught.
+#
+# Debian rather than Ubuntu, because Ubuntu has not moved to the cloud variant
+# yet - its variantless package is the one it correctly publishes into, so it
+# would not be wrong.
 @test "an entry resolving to a repository that is not the preset's package is refused" {
   local digest="sha256:0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff"
-  printf 'ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu@%s\n' "$digest" \
+  printf 'debian-trixie: ghcr.io/kitsunoff/stateful-pods-debian@%s\n' "$digest" \
     > "$BATS_TEST_TMPDIR/replacement"
-  grep --invert-match '^ubuntu-noble: ' "$CATALOG" > "$BATS_TEST_TMPDIR/rest"
+  grep --invert-match '^debian-trixie: ' "$CATALOG" > "$BATS_TEST_TMPDIR/rest"
   cat "$BATS_TEST_TMPDIR/rest" "$BATS_TEST_TMPDIR/replacement" > "$CATALOG"
   check
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"is not named stateful-pods-ubuntu-cloud"* ]]
+  [[ "$stderr" == *"is not named stateful-pods-debian-cloud"* ]]
 }
 
 @test "an entry pinned by tag rather than by digest is refused" {

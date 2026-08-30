@@ -462,30 +462,24 @@ STUB
   PATH="$stub_dir:$PATH"
 }
 
-# `ubuntu-noble` publishes into `stateful-pods-ubuntu-cloud`, so every endpoint
-# this touches has to name that and not `ubuntu`, not `stateful-pods-ubuntu-noble`
-# and not `stateful-pods-ubuntu` either. The last of those is the one that would
-# do damage: it is a real package holding the builds a released chart still
-# resolves to, so a run that reached it would delete content nothing here would
-# notice was gone. A DELETE at the other wrong paths is a 404, which under errexit
-# ends the run in the middle of the deletions - after some of them.
+# `ubuntu-noble` publishes into `stateful-pods-ubuntu`, so every endpoint this
+# touches has to name that and not `ubuntu`, and not `stateful-pods-ubuntu-noble`
+# either. A DELETE at the wrong path is a 404, which under errexit ends the run
+# in the middle of the deletions - after some of them.
 @test "every call names the package the preset publishes into" {
   stub_registry
   run "$RETENTION" --owner tester --keep 1 ubuntu-noble
   [ "$status" -eq 0 ]
 
   grep --quiet --fixed-strings \
-    "/users/tester/packages/container/stateful-pods-ubuntu-cloud/versions?per_page=100" "$GH_CALLS"
+    "/users/tester/packages/container/stateful-pods-ubuntu/versions?per_page=100" "$GH_CALLS"
   grep --quiet --fixed-strings \
-    "DELETE /user/packages/container/stateful-pods-ubuntu-cloud/versions/13" "$GH_CALLS"
+    "DELETE /user/packages/container/stateful-pods-ubuntu/versions/13" "$GH_CALLS"
   grep --quiet --fixed-strings \
-    "DELETE /user/packages/container/stateful-pods-ubuntu-cloud/versions/14" "$GH_CALLS"
-  # The catalog's field on its own and the old package-per-preset name are
-  # repositories that do not exist; the variantless one exists and is not this
-  # preset's. The trailing slash is what keeps this from matching the package the
-  # run is supposed to reach.
-  ! grep --quiet --extended-regexp \
-    "container/(ubuntu|stateful-pods-ubuntu|stateful-pods-ubuntu-noble)/" "$GH_CALLS"
+    "DELETE /user/packages/container/stateful-pods-ubuntu/versions/14" "$GH_CALLS"
+  # The catalog's field on its own, and the old package-per-preset name, are both
+  # repositories that do not exist.
+  ! grep --quiet --extended-regexp "container/(ubuntu|stateful-pods-ubuntu-noble)/" "$GH_CALLS"
 }
 
 @test "a dry run reaches the same package and deletes nothing" {
@@ -496,7 +490,7 @@ STUB
   # The package it read from, asserted where the answer actually is: the note it
   # prints names the preset and the release, not the package.
   grep --quiet --fixed-strings \
-    "/users/tester/packages/container/stateful-pods-ubuntu-cloud/versions" "$GH_CALLS"
+    "/users/tester/packages/container/stateful-pods-ubuntu/versions" "$GH_CALLS"
   ! grep --quiet --fixed-strings "DELETE" "$GH_CALLS"
 }
 
@@ -509,7 +503,7 @@ STUB
   stub_registry
   run "$RETENTION" --owner tester --keep 1 ubuntu-noble
   [ "$status" -eq 0 ]
-  local repository="ghcr.io/tester/stateful-pods-ubuntu-cloud"
+  local repository="ghcr.io/tester/stateful-pods-ubuntu"
   # Whole lines. `:noble` is a prefix of `:noble-20260102_0500`, so a substring
   # match here is satisfied by the retained build alone and asserts nothing about
   # the rolling tag - which is the only thing this test is for.
@@ -527,7 +521,7 @@ STUB
   export CRANE_FAIL=":noble"
   run "$RETENTION" --owner tester --keep 1 ubuntu-noble
   [ "$status" -ne 0 ]
-  [[ "$output" == *"stateful-pods-ubuntu-cloud:noble no longer resolves"* ]]
+  [[ "$output" == *"stateful-pods-ubuntu:noble no longer resolves"* ]]
   # After the deletions, necessarily - there is nothing to check before them.
   # This is a report rather than a rescue, and it has to be loud.
   grep --quiet --fixed-strings "DELETE" "$GH_CALLS"

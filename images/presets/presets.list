@@ -36,15 +36,25 @@
 # preset added here and nowhere else is built, published, kept up to date and
 # checked against the shipped catalog without any of them being edited.
 #
-# The variant is `cloud` wherever the upstream publishes one, because the chart's
-# default provisioning backend is cloud-init and an image without it fails a
-# default install. An earlier revision of this file said the opposite - that the
-# `cloud` variants "carry cloud-init that this chart does not drive" - and that
-# clause is what stopped being true.
+# The variant is `cloud` wherever the upstream publishes one as a single build
+# covering both architectures, because the chart's default provisioning backend
+# is cloud-init and an image without it fails a default install. An earlier
+# revision of this file said the opposite - that the `cloud` variants "carry
+# cloud-init that this chart does not drive" - and that clause is what stopped
+# being true.
 #
-# Void is the exception, and not by preference: the upstream publishes only
-# `default` and `musl` for it. Its preset therefore carries no cloud-init and
-# serves the `native` backend only.
+# Void is the exception the upstream forces permanently: it publishes only
+# `default` and `musl` for Void. That preset carries no cloud-init and serves the
+# `native` backend only.
+#
+# Ubuntu is the exception the upstream forces temporarily. It publishes a `cloud`
+# variant, but its two architectures are currently on different builds - amd64
+# 20260829_07:42 against arm64 20260829_08:43 - and one tag cannot honestly name
+# two of them, so there is nothing here to take yet. `ubuntu-noble` therefore
+# stays on `default` and serves the `native` backend only, like Void, until the
+# upstream levels. Moving it is this line and a catalog entry: nothing here
+# switches a variant on its own, because the daily bump reads this field and
+# never writes it.
 #
 # Alpine also publishes `tinycloud`, which is tiny-cloud rather than cloud-init.
 # It is a different implementation with a different configuration surface, so it
@@ -55,6 +65,6 @@
 # published, because a machine's source has to stay resolvable, and it leaves
 # that release's rolling tag behind in a package other releases may still use.
 debian-trixie;debian;trixie;cloud;debian-cloud
-ubuntu-noble;ubuntu;noble;cloud;ubuntu-cloud
+ubuntu-noble;ubuntu;noble;default;ubuntu
 alpine-3.24;alpine;3.24;cloud;alpine-cloud
 void-current;voidlinux;current;default;void

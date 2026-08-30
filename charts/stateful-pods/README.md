@@ -7,7 +7,7 @@ Service.
 > **The machine boots.** Its root filesystem is filled from the source it declares, mounted as a
 > root, and handed to its own init system. Guest provisioning — SSH host keys, accounts — arrives in
 > a later change, so a machine starts with the identity and accounts its source shipped. cloud-init
-> is *present* in three of the four presets and inert: the upstream ships these images with it
+> is *present* in two of the four presets and inert: the upstream ships these images with it
 > disabled, a preset carries that unmodified, and nothing here yet writes a seed or enables it.
 
 ## Prerequisites
@@ -255,15 +255,20 @@ collision would not be reported, it would silently leave whichever variant arriv
 #### Which presets carry cloud-init
 
 The chart's provisioning backend will default to cloud-init, so a preset that cannot run it is a
-preset that cannot serve a default install. Three of the four are therefore built from their
-upstream's `cloud` variant. Void is built from `default` because its upstream publishes no cloud
-variant — only `default` and `musl` — and nothing is installed into a preset to make up the
-difference.
+preset that cannot serve a default install. Two of the four are therefore built from their upstream's
+`cloud` variant, and nothing is installed into a preset to make up the difference.
+
+Two are not, for different reasons. Void's upstream publishes no cloud variant — only `default` and
+`musl` — so it stays on `default` permanently. Ubuntu's upstream does publish one, but its two
+architectures are on different builds, and one tag cannot honestly name two of them; `ubuntu-noble`
+stays on `default` until the upstream levels, and moving it is one line in
+`images/presets/presets.list` plus a catalog entry. Nothing switches a variant on its own: the daily
+bump reads that field and never writes it.
 
 | Preset | Upstream variant | Provisioning it can serve | Uncompressed |
 | --- | --- | --- | --- |
 | `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
-| `ubuntu-noble` | `cloud` | cloud-init, native | 682 MiB |
+| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
 | `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
 | `void-current` | `default` | native only | 361 MiB |
 
@@ -566,21 +571,21 @@ this repository's CI.
 
 ## Upgrading
 
-### Three presets are now the upstream's cloud variant
+### Two presets are now the upstream's cloud variant
 
 **Breaking**, for what a preset resolves to and not for what a machine declares.
 `source: {kind: preset, name: debian-trixie}` is unchanged, and so are the other three names.
-`debian-trixie`, `ubuntu-noble` and `alpine-3.24` are now built from their upstream's `cloud`
-variant, so they carry cloud-init; `void-current` is unchanged because its upstream publishes no
-cloud variant.
+`debian-trixie` and `alpine-3.24` are now built from their upstream's `cloud` variant, so they carry
+cloud-init. `void-current` is unchanged because its upstream publishes no cloud variant, and
+`ubuntu-noble` is unchanged because its upstream's cloud architectures are not yet on one build.
 
-The package each one resolves to moved with the variant:
+The package each moved preset resolves to moved with the variant:
 
 | Was | Is now |
 | --- | --- |
 | `ghcr.io/kitsunoff/stateful-pods-debian` | `ghcr.io/kitsunoff/stateful-pods-debian-cloud` |
-| `ghcr.io/kitsunoff/stateful-pods-ubuntu` | `ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud` |
 | `ghcr.io/kitsunoff/stateful-pods-alpine` | `ghcr.io/kitsunoff/stateful-pods-alpine-cloud` |
+| `ghcr.io/kitsunoff/stateful-pods-ubuntu` | unchanged, for now |
 | `ghcr.io/kitsunoff/stateful-pods-void` | unchanged |
 
 **A machine that already exists is untouched**, for the same reason as below: seeding happens once
@@ -597,8 +602,9 @@ with an `/etc/cloud/cloud-init.disabled` marker, a preset carries it unmodified,
 chart yet removes it or writes a seed. A machine from a cloud preset boots as one from a default
 preset did.
 
-The three packages under the old names are not deleted. Chart `0.2.0` resolves to digests inside
-them, and they hold nothing else.
+The two packages under the old names are not deleted. Chart `0.2.0` resolves to digests inside
+them, and they hold nothing else. `stateful-pods-ubuntu` is not orphaned at all — `ubuntu-noble`
+still publishes into it, and the daily bump still moves it.
 
 ### A preset resolves into a package named for its distribution
 
