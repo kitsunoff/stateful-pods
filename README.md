@@ -18,13 +18,6 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 
 ---
 
-> [!WARNING]
-> **Nothing here has been released yet.** No chart, image or plugin has ever been published, so
-> every install is from a checkout, and the default `shim.image` points at an image built before the
-> chart's scripts moved into it — a default install renders containers whose command does not exist.
-> Pass `--set shim.image=<an image built from images/shim>` until the release that bumps the default
-> lands. [`RELEASE.md`](RELEASE.md) says which release that is and why it is the second one.
-
 > [!CAUTION]
 > **A machine's name is permanent.** Every object is named `<release>-<machine>`, and the root
 > filesystem lives in a PersistentVolumeClaim derived from that name. Renaming a machine or its
@@ -97,8 +90,8 @@ machines:
 ```
 
 ```bash
-helm install lab charts/stateful-pods --values my-machine.yaml \
-  --set shim.image=<an image built from images/shim>
+helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.1 \
+  --values my-machine.yaml
 ```
 
 A source is one of three kinds, named explicitly rather than inferred from which fields are present,
@@ -194,13 +187,6 @@ Changes go through [OpenSpec](openspec/): a proposal, a delta spec, a design and
 the code, and the specs under [`openspec/specs/`](openspec/specs) are what the chart is held to.
 
 ## Known limitations
-
-**Nothing is published.** No chart, image, plugin archive or preset has been released, and the
-GitHub Actions account is billing-blocked, so the tag build that would publish them cannot start.
-Every merge so far rests on the local suites alone. [`RELEASE.md`](RELEASE.md) has the ordering.
-
-**The preset packages are private,** so a `--preset` machine needs `--pull-secret <name>` until they
-are not. GitHub exposes no API for package visibility; it is a manual step.
 
 **One machine per release.** The map form is already in place so that lifting the restriction
 renames nothing that exists.
