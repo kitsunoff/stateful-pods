@@ -95,14 +95,12 @@ machines:
 ```
 
 ```bash
-helm install lab charts/stateful-pods --values my-machine.yaml
+helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.1 \
+  --values my-machine.yaml
 ```
 
-> **Until the next release, name the shim image explicitly.** The default
-> `shim.image` still points at an image published before the chart's scripts
-> moved into it, so a default install renders containers whose command does not
-> exist. Add `--set shim.image=<an image built from images/shim in this
-> repository>` until the release that bumps the default lands.
+`helm install lab charts/stateful-pods --values my-machine.yaml` installs the chart in a
+checkout instead, which is the same chart at whatever revision that checkout is on.
 
 Every object the release renders for that machine is named `<release>-<machine>` — `lab-web` for
 the example above. **That name is permanent**: the machine's root filesystem lives in a
@@ -140,17 +138,17 @@ it. There is no flag that does both.
 With krew, from a published release:
 
 ```bash
-kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/machine.yaml
+kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/machine.yaml
 ```
 
 Or without krew, since it is one file:
 
 ```bash
 curl --silent --show-error --location --fail --remote-name \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/kubectl-machine_v0.1.0.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/kubectl-machine_v0.1.1.tar.gz
 sha256sum --check <(curl --silent --location --fail \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.0/SHA256SUMS)
-tar --extract --gzip --file kubectl-machine_v0.1.0.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/SHA256SUMS)
+tar --extract --gzip --file kubectl-machine_v0.1.1.tar.gz
 install -m 0755 kubectl-machine /usr/local/bin/kubectl-machine
 ```
 
@@ -175,23 +173,28 @@ job in CI runs its suite and the shell lint against that bash on every push, bec
 construct that breaks the target runs perfectly in the Linux container the other suites use
 and fails on somebody's Mac.
 
-### Creating a machine, before the chart is published
+### Creating a machine
 
 `create` installs the chart by reference, and defaults that reference to the chart this
-project publishes at the plugin's own version. Until the first tag is cut there is nothing
-at that reference, so point it at a checkout:
+project publishes at the plugin's own version, so it needs no `--chart` of its own:
+
+```bash
+kubectl machine create web --preset debian-trixie --mode userns
+```
+
+`--chart` points it at a checkout instead, which is how a machine is created from a chart
+that has not been released:
 
 ```bash
 kubectl machine create web --chart ./charts/stateful-pods \
-  --preset debian-trixie --mode userns \
-  --set shim.image=<an image built from images/shim in this repository>
+  --preset debian-trixie --mode userns
 ```
 
 `--set` and `--values` reach `helm` unchanged, which is how anything the plugin has no flag
-for is supplied — the shim image above, a seccomp profile, a volume snapshot to restore
-from. A private source needs `--pull-secret <name>`, naming a `kubernetes.io/dockerconfigjson`
-secret in the namespace; the preset images this project publishes are private, so a
-`--preset` machine needs one until they are not.
+for is supplied — a seccomp profile, a volume snapshot to restore from. A private source
+needs `--pull-secret <name>`, naming a `kubernetes.io/dockerconfigjson` secret in the
+namespace; the preset images this project publishes are private, so a `--preset` machine
+needs one until they are not.
 
 ## Seeding
 
