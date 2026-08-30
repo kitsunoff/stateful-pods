@@ -5,8 +5,10 @@ pod. Each machine gets its own StatefulSet, its own rootfs PersistentVolume and 
 Service.
 
 > **The machine boots.** Its root filesystem is filled from the source it declares, mounted as a
-> root, and handed to its own init system. Guest provisioning — cloud-init, SSH host keys, accounts —
-> arrives in a later change, so a machine starts with the identity and accounts its source shipped.
+> root, and handed to its own init system. Guest provisioning — SSH host keys, accounts — arrives in
+> a later change, so a machine starts with the identity and accounts its source shipped. cloud-init
+> is *present* in three of the four presets and inert: the upstream ships these images with it
+> disabled, a preset carries that unmodified, and nothing here yet writes a seed or enables it.
 
 ## Prerequisites
 
@@ -263,7 +265,7 @@ difference.
 | `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
 | `ubuntu-noble` | `cloud` | cloud-init, native | 682 MiB |
 | `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
-| `void-current` | `default` | native only | 12 MiB |
+| `void-current` | `default` | native only | 361 MiB |
 
 Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
 runtime with it.

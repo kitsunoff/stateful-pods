@@ -171,7 +171,7 @@ preset is the distribution's own root filesystem or it is not a preset.
 | `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
 | `ubuntu-noble` | `cloud` | cloud-init, native | 682 MiB |
 | `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
-| `void-current` | `default` | native only | 12 MiB |
+| `void-current` | `default` | native only | 361 MiB |
 
 Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
 runtime with it. That is the cost of an Alpine that can be provisioned the same way the others are.
