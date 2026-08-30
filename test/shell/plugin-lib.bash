@@ -74,6 +74,12 @@ answer() {
     if [[ "$SP_ARGS" == *"stateful-pods.io/machine="* ]]; then
         body="$one"
         status="$SP_TEST_KUBECTL_STATUS"
+    elif [[ "$SP_ARGS" == *"app.kubernetes.io/instance="* ]]; then
+        # A broad read narrowed to one release: what that release holds, which is
+        # not what the namespace holds. Unset means "the same as the namespace".
+        body="${SP_TEST_NARROWED-$all}"
+        status="$SP_TEST_BROAD_STATUS"
+        [ "$SP_TEST_KUBECTL_STATUS" -ne 0 ] && status="$SP_TEST_KUBECTL_STATUS"
     else
         body="$all"
         status="$SP_TEST_BROAD_STATUS"

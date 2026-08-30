@@ -355,11 +355,18 @@ $matches
 Name the release it belongs to with --release, so that the right one is acted on."
 }
 
+# Where a message about "everything here" is true of. Once --release narrows what
+# is read, saying "there are no machines in namespace homelab" is a claim about
+# the namespace that the plugin did not look at and that is very likely false -
+# which is the same class of confidently wrong statement about the cluster that
+# this plugin exists to stop making.
 where_it_would_act() {
+    local scope=""
+    [ -n "$SP_RELEASE" ] && scope="release $SP_RELEASE in "
     if [ -n "$SP_NAMESPACE" ]; then
-        printf 'namespace %s' "$SP_NAMESPACE"
+        printf '%snamespace %s' "$scope" "$SP_NAMESPACE"
     else
-        printf 'the current namespace'
+        printf '%sthe current namespace' "$scope"
     fi
 }
 

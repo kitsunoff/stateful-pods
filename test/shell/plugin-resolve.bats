@@ -173,3 +173,34 @@ setup() { plugin_setup; }
     [[ "$output" == *"ready"* ]]
     [[ "$(calls)" == *"pods --selector stateful-pods.io/machine=web,app.kubernetes.io/instance=prod"* ]]
 }
+
+# Once --release narrows what is read, a message about "everything here" is about
+# that release. Saying it about the namespace is a claim about objects the plugin
+# did not look at, and in a namespace that holds other releases it is simply
+# false - the same class of confidently wrong answer the plugin exists to remove.
+@test "an empty release does not report the whole namespace as empty" {
+    export SP_TEST_ALL_STATEFULSETS="$(printf 'api|lab|lab-api\ndb|prod|prod-db\n')"
+    export SP_TEST_NARROWED=""
+    machine list --release nope --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"release nope"* ]]
+    [[ "$output" != "There are no machines in namespace homelab." ]]
+}
+
+@test "a name not in a release does not claim the namespace has no machines" {
+    export SP_TEST_STATEFULSETS=""
+    export SP_TEST_ALL_STATEFULSETS="$(printf 'api|lab|lab-api\ndb|prod|prod-db\n')"
+    export SP_TEST_NARROWED=""
+    machine status ghost --release nope --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"release nope"* ]]
+    [[ "$output" == *"no machines at all"* ]]
+}
+
+@test "without a release the messages still speak for the namespace" {
+    export SP_TEST_ALL_STATEFULSETS=""
+    machine list --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no machines in namespace homelab"* ]]
+    [[ "$output" != *"release"* ]]
+}
