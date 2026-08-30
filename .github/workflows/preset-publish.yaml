@@ -1,0 +1,121 @@
+# Publishes preset images.
+#
+# Dispatched by hand, and called by the daily bump. Nothing here runs on a push:
+# a preset's content comes from linuxcontainers.org and has nothing to do with a
+# commit, so building one on every push would republish identical bytes under a
+# tag that already exists and do nothing else.
+#
+# Publishing without review is safe in a way that changing the catalog is not. A
+# dated tag is immutable and new, so nothing that already exists changes, and
+# nothing uses it until the catalog says so - which is a reviewed pull request.
+name: preset-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      presets:
+        description: >-
+          Presets to publish, space separated. Empty publishes every preset in
+          images/presets/presets.list.
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      presets:
+        type: string
+        required: true
+    outputs:
+      published:
+        description: One line per preset - name, upstream build, digest-pinned reference.
+        value: ${{ jobs.publish.outputs.published }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      published: ${{ steps.build.outputs.published }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # No QEMU and no Buildx. A preset's layer is the upstream archive itself,
+      # so there is nothing to build and nothing for emulation to run: packaging
+      # a foreign architecture's root filesystem never executes it.
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to the registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | crane auth login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      # Before anything is fetched. A build that cannot establish what it is
+      # packaging must not package anything, and this is the cheapest place to
+      # find out that it cannot.
+      - name: Confirm the pinned signing key
+        run: ./hack/preset-build.sh --check-key
+
+      - name: Verify and publish
+        id: build
+        env:
+          PRESETS: ${{ inputs.presets }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          # Unquoted on purpose: this is a list of preset names, and an empty
+          # value has to become no arguments rather than one empty argument.
+          # shellcheck disable=SC2086
+          ./hack/preset-build.sh \
+            --repository "ghcr.io/${{ github.repository_owner }}/stateful-pods-" \
+            $PRESETS | tee published.tsv
+          {
+            echo 'published<<PUBLISHED_EOF'
+            cat published.tsv
+            echo 'PUBLISHED_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # A reference that resolves is the whole deliverable, and it is worth one
+      # line to find out here rather than from a machine that will not start.
+      - name: Confirm every published reference resolves
+        run: |
+          set -o errexit -o nounset -o pipefail
+          while IFS=$'\t' read -r preset build reference; do
+            [ -n "$reference" ] || continue
+            for platform in linux/amd64 linux/arm64; do
+              crane manifest --platform "$platform" "$reference" > /dev/null
+              echo "ok - $preset ($build) resolves for $platform"
+            done
+          done < published.tsv
+
+      # GHCR makes a new package private, and the failure that produces looks
+      # exactly like a typo in the reference. There is no API for changing it, so
+      # this reports rather than fixes - loudly enough that the first publication
+      # of a preset does not end with a package nobody outside can pull.
+      - name: Report each package's visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          while IFS=$'\t' read -r preset build reference; do
+            [ -n "$preset" ] || continue
+            package="stateful-pods-$preset"
+            visibility="$(gh api "/users/${{ github.repository_owner }}/packages/container/$package" \
+              --jq '.visibility' 2>/dev/null || echo unknown)"
+            echo "$package: $visibility"
+            if [ "$visibility" = "private" ]; then
+              {
+                echo "### \`$package\` is private"
+                echo
+                echo "A preset nobody can pull is a preset that does not work, and the"
+                echo "failure looks like a typo in the reference. Package visibility has"
+                echo "no REST API; change it under the package's settings, or leave it"
+                echo "private and give machines a \`pullSecretName\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < published.tsv

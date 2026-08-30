@@ -1,0 +1,92 @@
+# Keeps the five most recent builds of each preset and removes the older ones.
+#
+# Keeping every daily build for ever is unbounded storage for content nobody
+# references; keeping only the newest leaves no way back when a build turns out
+# to be broken. Five is a week of room to notice.
+#
+# It deletes nothing until somebody deliberately lets it. Two reasons, and both
+# of them are the same reason.
+#
+# The first is mechanical. Deleting a version of a package owned by a user goes
+# through /user/packages, which a workflow's GITHUB_TOKEN cannot reach whatever
+# permissions it is given - it needs a personal access token with
+# `delete:packages`. So without the PRESET_RETENTION_TOKEN secret this reports
+# what it would remove and stops, which is the only thing it could do anyway.
+#
+# The second is that this is the one job in the repository that can destroy
+# something already published, and the damage is silent: a retained tag whose
+# per-architecture manifests were swept away still exists and still resolves as
+# an index, and fails only when somebody installs a machine from it. A dry run
+# every day, in the log, before anyone hands it a token, is cheap.
+#
+# hack/preset-retention.jq is where the actual care lives, and it has fixtures in
+# test/presets/retention.bats for every way this is known to go wrong.
+name: preset-retention
+
+on:
+  schedule:
+    # After the daily bump has published, so that the count it works from is the
+    # one the bump just changed rather than yesterday's.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: How many builds of each preset to keep.
+        required: false
+        default: '5'
+
+permissions:
+  contents: read
+
+jobs:
+  retain:
+    name: retain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to the registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | crane auth login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Work out what would be removed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./hack/preset-retention.sh \
+            --owner "${{ github.repository_owner }}" \
+            --keep "${{ inputs.keep || '5' }}" \
+            --dry-run
+
+      # Only with a token that can actually delete. The step above has already
+      # printed the plan, so what runs here is never a surprise.
+      - name: Remove the builds past the limit
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.PRESET_RETENTION_TOKEN }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            {
+              echo '### Retention is reporting, not removing'
+              echo
+              echo 'Deleting a version of a user-owned package needs a personal access'
+              echo 'token with `delete:packages`; a workflow `GITHUB_TOKEN` cannot do it'
+              echo 'whatever permissions it is given. Add one as the'
+              echo '`PRESET_RETENTION_TOKEN` secret to turn this on. Until then the plan'
+              echo 'above is all this job produces, and nothing is ever removed.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "no PRESET_RETENTION_TOKEN; reported only"
+            exit 0
+          fi
+          ./hack/preset-retention.sh \
+            --owner "${{ github.repository_owner }}" \
+            --keep "${{ inputs.keep || '5' }}"

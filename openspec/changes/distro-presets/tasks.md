@@ -17,17 +17,17 @@
 
 ## 2. The build, for all four presets on both architectures
 
-- [ ] 2.1 Finish `hack/preset-build.sh`: take distro, release and architecture, do the full
+- [x] 2.1 Finish `hack/preset-build.sh`: take distro, release and architecture, do the full
   verify-then-package sequence, and abort with a named failure on a bad signature, a checksum
   mismatch, or an index line it cannot parse; verify by running it against a deliberately corrupted
   checksum and seeing it refuse before packaging
-- [ ] 2.2 Record provenance in the image's OCI labels — the upstream path, the upstream build date,
+- [x] 2.2 Record provenance in the image's OCI labels — the upstream path, the upstream build date,
   the verified checksum — and the standard `org.opencontainers.image.*` set the shim image already
   uses; verify by inspecting the built image's config
-- [ ] 2.3 Combine the per-architecture images into one multi-architecture index per preset, and
+- [x] 2.3 Combine the per-architecture images into one multi-architecture index per preset, and
   refuse to publish a preset whose release the upstream does not offer for both architectures;
   verify that `crane manifest` on the index lists both platforms
-- [ ] 2.4 Add a `make preset-build` target mirroring the existing `image-build` and `image-test`
+- [x] 2.4 Add a `make preset-build` target mirroring the existing `image-build` and `image-test`
   conventions; verify a local run produces the four presets for the host architecture
 
 ## 3. Publishing
@@ -62,29 +62,29 @@
 
 ## 5. The chart learns the preset kind
 
-- [ ] 5.1 Write the helm-unittest suites first: a machine naming a known preset renders the pinned
+- [x] 5.1 Write the helm-unittest suites first: a machine naming a known preset renders the pinned
   reference, an unknown name fails listing the available presets, a missing name fails, and a
   preset source carrying a `reference`, `url` or `sha256` fails naming the field; verify `make test`
   fails on the current chart for exactly those reasons
-- [ ] 5.2 Add `charts/stateful-pods/presets.yaml` with the four entries pinned by digest, and read
+- [x] 5.2 Add `charts/stateful-pods/presets.yaml` with the four entries pinned by digest, and read
   it in `_helpers.tpl` with `.Files.Get` and `fromYaml`; verify a `helm package` followed by a
   render from the package resolves a preset, which is what a values file could not do
-- [ ] 5.3 Validate the new kind in `stateful-pods.validate.semantics`, generating the list of
+- [x] 5.3 Validate the new kind in `stateful-pods.validate.semantics`, generating the list of
   accepted names from the table rather than writing it twice; verify `make test` passes the suites
   from 5.1
-- [ ] 5.4 Resolve the preset in `stateful-pods.machine.seedEnv` to `SP_SOURCE_KIND=oci` with the
+- [x] 5.4 Resolve the preset in `stateful-pods.machine.seedEnv` to `SP_SOURCE_KIND=oci` with the
   resolved reference, plus `SP_SOURCE_PRESET` carrying the name; verify no seeding script gains a
   branch and `make shell-lint` is unchanged
-- [ ] 5.5 Record `SP_SOURCE_PRESET` in the provisioning marker written by `prepare.sh` as an
+- [x] 5.5 Record `SP_SOURCE_PRESET` in the provisioning marker written by `prepare.sh` as an
   additive field, leaving the record's schema version alone; verify the bats suite asserts the field
   is present when set and absent when not
-- [ ] 5.6 Add a `hack/check-presets.sh` asserting every catalog entry is pinned by digest and names
+- [x] 5.6 Add a `hack/check-presets.sh` asserting every catalog entry is pinned by digest and names
   a distribution the project publishes, wire it into `make`, and document the kind in `values.yaml`
   with a comment above every key; verify `make docs` and the new check both pass
 
 ## 6. Prove it end to end
 
-- [ ] 6.1 Add an example values file using a preset, and extend `make conform` and `make lint`
+- [x] 6.1 Add an example values file using a preset, and extend `make conform` and `make lint`
   coverage to it; verify both pass
 - [ ] 6.2 Seed and boot a machine from each of the four presets in the integration test, asserting
   the machine's own init reaches a booted state — this is the first time Alpine and Void are

@@ -1,0 +1,45 @@
+# What can actually be tracked here, and a note on what cannot.
+#
+# The presets are built from a daily dated tarball on a plain HTTPS index at
+# images.linuxcontainers.org. That is not a package registry in any ecosystem
+# Dependabot implements, and there is no Containerfile for the presets to give it
+# something to look at - a preset's layer is the upstream archive itself, with no
+# base image and no build. `.github/workflows/preset-bump.yaml` is what keeps the
+# tarballs current, and the two do not overlap.
+version: 2
+updates:
+  # The actions the workflows below pin.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    # One at a time. A batch of action bumps in a single pull request is a batch
+    # nobody reviews, and this repository's workflows publish images.
+    open-pull-requests-limit: 5
+
+  # The base image the shim is built from. The only FROM in the repository that
+  # names something that moves; the preset build has no FROM at all.
+  - package-ecosystem: docker
+    directory: /images/shim
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+
+  # The base image the preset build's own test environment uses. Not shipped, but
+  # it is where the verification is proved, so it should not quietly rot.
+  - package-ecosystem: docker
+    directory: /test/presets
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test
+
+  - package-ecosystem: docker
+    directory: /test/shell
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test

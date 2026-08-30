@@ -1,0 +1,190 @@
+# Keeps the catalog up with the upstreams that produce it.
+#
+# The upstreams rebuild daily, mostly to pick up security updates. A catalog that
+# only moved when someone remembered to look would become, silently, a
+# distributor of stale root filesystems.
+#
+# It publishes first and proposes second. The other order would put a reference
+# in the catalog that does not exist yet and leave the digest to a second commit;
+# publishing first means every proposed entry is already resolvable, which is
+# also what the reviewer needs in order to review it.
+#
+# One pull request per preset, on a branch named for that preset, force-updated
+# when the upstream moves again before the previous one is merged. That is what
+# bounds this: four presets are four branches and at most four open pull
+# requests, for ever, however many days pass without anyone merging them. A
+# single combined pull request would make a problem with one distribution block
+# the other three; a branch per run would open one a day.
+name: preset-bump
+
+on:
+  schedule:
+    # Late enough that every upstream has finished its own daily rebuild. The
+    # architectures of one release have to be on the same build for a preset to
+    # be published at all, and catching an upstream mid-rebuild just means the
+    # preset is reported as not ready and tried again tomorrow.
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Report what has fallen behind and stop.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    name: survey
+    runs-on: ubuntu-latest
+    outputs:
+      behind: ${{ steps.survey.outputs.behind }}
+      any: ${{ steps.survey.outputs.any }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      # Which presets have fallen behind, and which are simply not ready. A
+      # preset whose architectures are mid-rebuild exits 3 rather than failing,
+      # because that is a state that resolves itself overnight and a red run
+      # every morning teaches people to ignore red runs.
+      - name: Compare the catalog against the upstream
+        id: survey
+        run: |
+          set -o errexit -o nounset -o pipefail
+          behind=""
+          while IFS=';' read -r preset rest; do
+            case "$preset" in ''|\#*) continue ;; esac
+            [ -n "$rest" ] || continue
+
+            resolved="$(./hack/preset-build.sh --resolve-only "$preset" 2>/tmp/why || true)"
+            if [ -z "$resolved" ]; then
+              echo "$preset: not ready - $(head -1 /tmp/why)"
+              continue
+            fi
+            reference="$(printf '%s' "$resolved" | cut --fields=3)"
+            tag="${reference##*:}"
+            current="$(sed -n "s|^${preset}: .*|&|p" charts/stateful-pods/presets.yaml)"
+
+            # The catalog holds a digest, so "is it behind" is answered against
+            # the registry rather than against the catalog's own text: the newest
+            # upstream build's tag either already resolves to what the catalog
+            # names, or the catalog is behind.
+            catalogued_digest="${current##*@}"
+            if published="$(crane digest "$reference" 2>/dev/null)" \
+               && [ "$published" = "$catalogued_digest" ]; then
+              echo "$preset: up to date ($tag)"
+            else
+              echo "$preset: behind - upstream has $tag"
+              behind="${behind:+$behind }$preset"
+            fi
+          done < images/presets/presets.list
+
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          if [ -n "$behind" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: publish
+    needs: survey
+    if: needs.survey.outputs.any == 'true' && !inputs.dry-run
+    uses: ./.github/workflows/preset-publish.yaml
+    with:
+      presets: ${{ needs.survey.outputs.behind }}
+    permissions:
+      contents: read
+      packages: write
+
+  propose:
+    name: propose
+    needs: [survey, publish]
+    if: needs.survey.outputs.any == 'true' && !inputs.dry-run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Open or update one pull request per preset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED: ${{ needs.publish.outputs.published }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          base="${GITHUB_REF_NAME}"
+
+          printf '%s\n' "$PUBLISHED" | while IFS=$'\t' read -r preset build reference; do
+            [ -n "$preset" ] || continue
+
+            # The reference has to exist before it is proposed. That is the whole
+            # reason this publishes first, so it is worth confirming rather than
+            # assuming.
+            crane manifest "$reference" > /dev/null
+
+            branch="preset-bump/$preset"
+            # -B has no long form; it creates the branch or resets an existing
+            # one, which is what makes this branch a standing proposal.
+            git checkout --force -B "$branch" "origin/$base"
+            if ! ./hack/preset-bump.sh "$preset" "$reference"; then
+              status=$?
+              if [ "$status" -eq 2 ]; then
+                echo "$preset: the catalog already names this reference"
+                continue
+              fi
+              exit "$status"
+            fi
+            ./hack/check-presets.sh
+
+            git add charts/stateful-pods/presets.yaml
+            git commit --signoff --message "$(printf '%s\n\n%s\n\n%s\n' \
+              "chore(presets): bump $preset to the $build upstream build" \
+              "The upstream rebuilt. The image below was published from that build after its detached signature over the published checksums verified against the key pinned at images/presets/signing-key.asc, and it resolves for every architecture this project supports." \
+              "  $reference")"
+
+            # Force, because this branch is one preset's standing proposal rather
+            # than one run's. An upstream that moves again before the previous
+            # bump is merged replaces it instead of opening a second one.
+            git push --force origin "$branch"
+
+            if gh pr view "$branch" --json number > /dev/null 2>&1; then
+              echo "$preset: updated the open pull request"
+            else
+              gh pr create \
+                --base "$base" \
+                --head "$branch" \
+                --title "chore(presets): bump $preset to the $build upstream build" \
+                --body "$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+                  "The $preset upstream rebuilt, and this points the catalog at the build it produced." \
+                  "\`$reference\`" \
+                  "It was published before this was opened, so the reference above already resolves, for every architecture this project supports. It was packaged from the upstream root filesystem only after the detached signature over that build's published checksums verified against the key pinned at \`images/presets/signing-key.asc\`, and the published layer was compared back against the archive that was verified." \
+                  "What the chart points at is a decision, which is why this is a proposal rather than a commit. The branch is this preset's standing proposal: if the upstream moves again before this merges, it is replaced rather than joined by a second one.")"
+            fi
+          done
+
+      - name: Say what was proposed
+        if: always()
+        env:
+          PUBLISHED: ${{ needs.publish.outputs.published }}
+        run: |
+          {
+            echo '### Presets published'
+            echo
+            echo '```'
+            printf '%s\n' "$PUBLISHED"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
