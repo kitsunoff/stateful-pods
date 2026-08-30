@@ -290,9 +290,12 @@ step "asserting the machine holds the capability set its mode names, and nothing
 # exceed it, so this is a statement about every process the machine will ever run
 # and not about the shell this exec started. `capsh` is in the source image
 # because it installs libcap2-bin for the file-capability assertion above.
-bounding="$(guest sh -c 'awk "/^CapBnd:/ {print \$2}" /proc/1/status' | tr -d '\r')"
-granted="$(guest capsh --decode="$bounding" | sed 's/^[^=]*=//' | tr ',' '\n' | tr -d '\r')"
-[[ -n "$granted" ]] || fail "could not read the machine's bounding capability set"
+# Both substitutions end in `|| true` so that a failure here is reported by the
+# check below rather than ending the run with errexit and no message at all.
+bounding="$(guest sh -c 'awk "/^CapBnd:/ {print \$2}" /proc/1/status' | tr -d '\r' || true)"
+granted="$(guest capsh --decode="$bounding" | sed 's/^[^=]*=//' | tr ',' '\n' | tr -d '\r' || true)"
+[[ -n "$granted" ]] \
+  || fail "could not read the machine's bounding capability set (CapBnd was '${bounding:-nothing}')"
 
 held() { grep --quiet --line-regexp --fixed-strings "$1" <<< "$granted"; }
 
