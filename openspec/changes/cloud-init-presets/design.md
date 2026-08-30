@@ -122,6 +122,52 @@ elif test -e /etc/cloud/cloud-init.disabled; then
 and cloud-init's systemd generator makes `cloud-init.target` a no-op the same way. So a machine
 installed before the provisioning change boots as it always did.
 
+### What a booted machine actually does, in both states
+
+A `debian-trixie` machine was installed on kind from the published preset and inspected, because
+none of the above is worth asserting from a file listing.
+
+**As shipped, with the marker in place.** The machine reached readiness in under two minutes, most
+of it seeding. Inside it: cloud-init 25.1.4, all nine units, `/etc/cloud`, and the marker.
+`systemctl is-system-running` reports `running`, not `degraded`; no unit failed; no cloud-init unit
+was even loaded, because the generator removed them from the transaction. Userspace start-up took
+412ms. The generator recorded why:
+
+```text
+checking for datasource
+ds-identify rc=2
+cloud-init is disabled by kernel command line or etc_file
+```
+
+**With the marker removed and still no seed** — the state the provisioning change will pass through
+if it removes the marker before it can write a seed. The machine came back ready in 20 seconds,
+`is-system-running` reported `running`, and again no unit failed and no stage ran. `ds-identify`
+recognised the environment correctly and declined:
+
+```text
+VIRT=lxc
+is_container=true
+No ds found [mode=search, notfound=disabled]. Disabled cloud-init [1]
+```
+
+So cloud-init gets out of the way rather than holding the boot up or leaving wreckage, in both
+states. That is the answer the next change needed before it could be built on top of this one.
+
+Three things it should take from the same run:
+
+- **Both the marker and the seed are required.** With the marker present the generator stops before
+  `ds-identify` runs at all, so writing a seed alone changes nothing; with the marker gone and no
+  seed, `ds-identify` finds nothing and disables cloud-init. Neither half works on its own.
+- **The seed goes where the upstream's own tooling puts it**, `/var/lib/cloud/seed/nocloud-net/`,
+  which is what Incus's templates write and what `ds-identify`'s NoCloud check looks for. Neither
+  image ships `/var/lib/cloud` at all, so its absence is also the cleanest evidence that no stage
+  has run.
+- **`datasource_list` is worth pinning.** `ds-identify` warned `no datasource_list found` and
+  searched thirty-odd datasources, one of which — OpenStack — came back `maybe`. It did not matter
+  here because the policy is `notfound=disabled` and `ON_MAYBE=none`, but a drop-in setting
+  `datasource_list: [ NoCloud, None ]` would make detection deterministic instead of nearly so.
+  That is a decision for the provisioning change, not this one.
+
 ## Decisions
 
 ### cloud-init gets into a preset by choosing an upstream build, never by adding to one

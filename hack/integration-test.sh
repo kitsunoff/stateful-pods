@@ -697,12 +697,14 @@ else
         # prevent, arrived at from a direction the rule does not name.
         check "cloud-init is disabled by the upstream's own marker" \
           osguest sh -c 'test -f /etc/cloud/cloud-init.disabled'
-        # The marker is honoured rather than merely present. cloud-init creates
-        # /run/cloud-init the moment any of its stages runs, so this is the
-        # difference between a machine that skipped it and one that ran it and
-        # found nothing.
+        # The marker is honoured rather than merely present. /var/lib/cloud is
+        # the right thing to look at: neither image ships it, and cloud-init
+        # creates it the moment a stage actually runs. /run/cloud-init is not -
+        # on a systemd guest the generator creates that directory to record that
+        # it found the marker, so it exists precisely when cloud-init did not
+        # run. That was established by booting one rather than by reading.
         check "no cloud-init stage ran behind the marker" \
-          osguest sh -c '! test -d /run/cloud-init'
+          osguest sh -c '! test -d /var/lib/cloud'
         ;;
       void-current)
         check "the machine booted an init that is neither systemd nor busybox" \
