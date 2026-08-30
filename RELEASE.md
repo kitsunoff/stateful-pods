@@ -41,7 +41,7 @@ a script fix is "an image release plus the digest below".
 
 ## Before anything
 
-GitHub Actions must actually start jobs. While the account is billing-blocked, runs complete in
+GitHub Actions must actually start jobs. When the account is billing-blocked, runs complete in
 three to five seconds having executed zero steps, and a tag pushed in that state produces no
 artefacts and a red release. Check first:
 
@@ -83,6 +83,15 @@ crane digest ghcr.io/kitsunoff/stateful-pods-shim:0.1.0
 That is the index digest, which is what to pin: it is the multi-architecture manifest list, so a node
 resolves its own architecture underneath it.
 
+A tag in a registry is a name and not a record of who wrote it, so confirm the version behind it is
+the one this tag build produced before pinning it. A hand-pushed image that got there first carries
+the same tag and reads out of `crane digest` exactly the same way:
+
+```bash
+gh api /user/packages/container/stateful-pods-shim/versions \
+  --jq '.[] | select(.metadata.container.tags | index("0.1.0")) | "\(.name) \(.created_at)"'
+```
+
 Then, on a branch:
 
 1. Set `shim.image` in [`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) to
@@ -115,11 +124,27 @@ kubectl machine status web
 
 ## Afterwards, by hand
 
-Neither of these has an API, and neither can be done by a workflow:
+The repository is public. A package published from it is not public with it, and is not reachable by
+a workflow just because the repository is — those are two separate settings, neither of which has an
+API. Both are per package, in the GitHub UI, under
+`https://github.com/users/<owner>/packages/container/<package>/settings`.
 
-- **Package visibility.** The repository is private, so everything published from it is private too —
-  the shim image, the chart and the four preset packages. If the release is meant to be usable by
-  anyone else, each package's visibility has to be set to public in the GitHub UI.
+- **A package a workflow created is already right.** `GITHUB_TOKEN` owns what it creates: the chart
+  package appeared during `v0.1.0`, linked to the repository and public, with nothing done to it by
+  hand.
+- **A package that was pushed by hand first is not, and it refuses the workflow.** Such a package is
+  not linked to any repository, so `GITHUB_TOKEN` has no access to it at all — the push fails with
+  `denied: permission_denied: read_package`, which reads like a missing `packages: write` and is not
+  one. The fix is **Manage Actions access → Add repository → `<owner>/<repo>`, role Write**. This is
+  what `v0.1.0` hit: the shim image had been pushed by hand during development, so the `image` job
+  went red on a tag whose other four jobs were green.
+
+  Recovering from that needs no new tag. Grant the access, then re-run the failed job in the same
+  run — `gh run rerun <id> --job <job-id>` — so what is published still comes from the recorded build
+  of the recorded commit. Deleting and re-pushing the tag is what would make the release
+  unreproducible.
+- **Visibility is separate again.** A linked, workflow-owned package can still be private. Each one
+  that anybody else is meant to pull has to be set to public under **Change visibility**.
 - **The krew index.** `dist/machine.yaml` from the release is the manifest to submit to
   [`kubernetes-sigs/krew-index`](https://github.com/kubernetes-sigs/krew-index). It needs the plugin
   archive to carry a licence, which it now does.
