@@ -589,14 +589,19 @@ else
   # whole reason the already-published path sets the tag at all, and it is a line
   # that can be deleted without any other assertion here noticing.
   step "moving a release tag off its build, the way an interrupted run would"
-  alpine_reference="$(grep --max-count 1 '^alpine-3.24	' <<< "$built" | cut --fields 3)"
+  alpine_release="$(preset_release alpine-3.24)"
+  # `|| true` on both, because the guard below is the diagnostic. Under errexit
+  # and pipefail a grep that matches nothing takes the script out before the
+  # message written for exactly that case can be printed.
+  alpine_reference="$(grep --max-count 1 '^alpine-3.24	' <<< "$built" | cut --fields 3 || true)"
+  [[ -n "$alpine_reference" ]] || fail "the build reported no reference for alpine-3.24"
   alpine_repository="${alpine_reference%@*}"
-  stray_tag="$(crane ls "$alpine_repository" | grep -- "-$node_arch\$" | head -1)"
+  stray_tag="$(crane ls "$alpine_repository" | grep --max-count 1 -- "-$node_arch\$" || true)"
   [[ -n "$stray_tag" ]] || fail "the alpine preset published no per-architecture tag to point at"
-  crane tag "$alpine_repository:$stray_tag" "3.24" \
-    || fail "could not move $alpine_repository:3.24 onto $stray_tag"
+  crane tag "$alpine_repository:$stray_tag" "$alpine_release" \
+    || fail "could not move $alpine_repository:$alpine_release onto $stray_tag"
   check "the release tag now names something other than the build" \
-    test "$(crane digest "$alpine_repository:3.24")" != "${alpine_reference##*@}"
+    test "$(crane digest "$alpine_repository:$alpine_release")" != "${alpine_reference##*@}"
 
   # A published tag is never republished, which is the promise that makes a
   # machine's origin reproducible. The build says so; this is where a registry
@@ -615,7 +620,7 @@ else
   check "the second build said it was leaving the published tags alone" \
     grep --quiet "is already published, leaving it alone" "$PRESET_CHART_DIR/rebuild.log"
   check "the second build put the release tag back on its build" \
-    test "$(crane digest "$alpine_repository:3.24")" = "${alpine_reference##*@}"
+    test "$(crane digest "$alpine_repository:$alpine_release")" = "${alpine_reference##*@}"
 
   for preset in alpine-3.24 void-current; do
     release="preset-${preset%%-*}"

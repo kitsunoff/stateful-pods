@@ -24,8 +24,13 @@ check() {
   run --separate-stderr "$CHECK" "$CATALOG" "$PRESET_LIST"
 }
 
+# Against the files where they live, rather than the copies the refusals below
+# work on. The check packages the chart beside the catalog it was given, so a
+# copy in a temporary directory is a chart that does not package - which would
+# fail this for a reason that has nothing to do with what it asserts, the day
+# helm appears in the image this suite runs in.
 @test "the pair this project ships agrees with itself" {
-  check
+  run --separate-stderr "$CHECK"
   [ "$status" -eq 0 ]
 }
 

@@ -426,9 +426,14 @@ package_arch() {
 # nothing else names, and retention would then be protecting a build it cannot
 # order.
 #
-# It can only ever move forward. The build packages whatever the upstream index
-# currently offers, which is that release's newest build, so there is no path
-# here that publishes an older one - and therefore none that walks the tag back.
+# Within a run it can only move forward: the build packages whatever the upstream
+# index currently offers, which is that release's newest build, so there is no
+# path here that publishes an older one. Across two runs at once it can go back -
+# a dispatch overlapping the nightly bump can resolve the older build, find the
+# newer one already published, take the path above and re-point the tag at what
+# it resolved. That lands in the same state an interrupted run leaves, which the
+# next run repairs and which retention protects either way, so it is a race worth
+# naming rather than one worth a lock.
 #
 # `crane tag` writes a manifest reference and uploads nothing, so the rolling tag
 # and the dated tag are two names for one package version rather than two copies.
