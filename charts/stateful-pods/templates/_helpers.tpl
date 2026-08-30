@@ -300,6 +300,29 @@ true
 {{- end -}}
 
 {{/*
+The digest that restarts a machine when its provisioning changes.
+
+Over everything the chart can see: the backend, the inline material, the
+references by name rather than by content, and the machine's own revision input.
+
+The references are in it by name because a machine that stops reading one Secret
+and starts reading another has changed even though neither Secret's content is
+visible from here. What is not in it is what those Secrets hold, which is why the
+revision input exists at all.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.provisioning.checksum" -}}
+{{- $resolved := include "stateful-pods.machine.provisioning.resolved" . | fromYaml -}}
+{{- $guest := .machine.guest | default dict -}}
+{{- $revision := "" -}}
+{{- if kindIs "map" $guest -}}
+{{- $revision = index $guest "provisioningRevision" | default "" | toString -}}
+{{- end -}}
+{{- printf "%s\n%s" (toYaml $resolved) $revision | sha256sum -}}
+{{- end -}}
+
+{{/*
 The environment the provisioning step reads, on top of the seeding environment
 every step already gets.
 

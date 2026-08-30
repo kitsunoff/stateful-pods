@@ -103,6 +103,8 @@ tests:
           path: spec.template.spec.initContainers[1].securityContext.capabilities
       - notExists:
           path: spec.template.spec.initContainers[2].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.initContainers[3].securityContext.capabilities
       - contains:
           path: spec.template.spec.containers[0].securityContext.capabilities.add
           content: SYS_ADMIN
@@ -122,6 +124,8 @@ tests:
           path: spec.template.spec.initContainers[0].securityContext.capabilities
       - notExists:
           path: spec.template.spec.initContainers[1].securityContext.capabilities
+      - notExists:
+          path: spec.template.spec.initContainers[3].securityContext.capabilities
       - equal:
           path: spec.template.spec.containers[0].securityContext.capabilities.add
           value:

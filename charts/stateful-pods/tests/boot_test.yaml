@@ -44,7 +44,7 @@ tests:
             - /usr/local/lib/stateful-pods/customize.sh
       - lengthEqual:
           path: spec.template.spec.initContainers
-          count: 3
+          count: 4
 
   - it: gives the guest container a terminal, so the machine's console reaches the logs
     asserts:

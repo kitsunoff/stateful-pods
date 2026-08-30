@@ -193,11 +193,14 @@ wait_ready() {
 # under it. Asserted on every source kind, because what they do differs: one
 # unpacks a flattened image fetched over HTTPS from a registry, the other a
 # template tarball fetched over HTTPS from a web server.
+#
+# The count is spelled out rather than derived, so that a step added without a
+# filter fails here rather than being counted as one of the ones that have one.
 assert_default_filter() {
   local pod="$1" filters
   filters="$(kc get pod "$pod" --output \
     "jsonpath={.spec.initContainers[*].securityContext.seccompProfile.type}")"
-  if [[ "$filters" == "RuntimeDefault RuntimeDefault RuntimeDefault" ]]; then
+  if [[ "$filters" == "RuntimeDefault RuntimeDefault RuntimeDefault RuntimeDefault" ]]; then
     pass "$pod: every preparation step ran under the runtime's default filter"
   else
     fail "$pod: the preparation steps declared '${filters:-nothing}'"

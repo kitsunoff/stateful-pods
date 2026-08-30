@@ -28,15 +28,15 @@
 
 ## 3. The pod: the Secret, the volume and the step
 
-- [ ] 3.1 Add `helm unittest` cases asserting that a machine supplying material renders a
+- [x] 3.1 Add `helm unittest` cases asserting that a machine supplying material renders a
   chart-owned Secret and a projected volume mounted only into the `provision` container, that a
   machine supplying nothing renders neither, that the guest container mounts neither, and that the
   pod annotation changes when inline material changes and when the revision input changes; verify
   they fail against the unmodified chart
-- [ ] 3.2 Add `templates/provisioning-secret.yaml` rendering the inline material, and extend
+- [x] 3.2 Add `templates/provisioning-secret.yaml` rendering the inline material, and extend
   `statefulset.yaml` with the projected volume, the `provision` init container and the
   `checksum/provisioning` annotation; verify `make test` and `make conform` are green
-- [ ] 3.3 Update the existing suites the fourth init container changes — the init-container,
+- [x] 3.3 Update the existing suites the fourth init container changes — the init-container,
   init-security and script-path suites — and `assert_default_filter` in `hack/integration-test.sh`,
   which asserts the filter of exactly three steps; verify `make test` is green and the integration
   helper counts four

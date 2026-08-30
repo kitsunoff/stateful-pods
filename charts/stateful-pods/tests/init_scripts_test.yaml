@@ -51,6 +51,10 @@ tests:
           value:
             - /usr/local/lib/stateful-pods/customize.sh
       - equal:
+          path: spec.template.spec.initContainers[3].command
+          value:
+            - /usr/local/lib/stateful-pods/provision.sh
+      - equal:
           path: spec.template.spec.containers[0].command
           value:
             - /usr/local/lib/stateful-pods/boot.sh
@@ -80,6 +84,11 @@ tests:
           count: 1
       - lengthEqual:
           path: spec.template.spec.initContainers[2].volumeMounts
+          count: 1
+      # This machine supplies no provisioning material, so the step that would
+      # mount it has only the rootfs too.
+      - lengthEqual:
+          path: spec.template.spec.initContainers[3].volumeMounts
           count: 1
       - lengthEqual:
           path: spec.template.spec.containers[0].volumeMounts

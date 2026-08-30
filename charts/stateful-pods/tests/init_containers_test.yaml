@@ -1,4 +1,4 @@
-suite: rendering - the seeding init containers
+suite: rendering - the preparation init containers
 templates:
   - statefulset.yaml
 release:
@@ -7,7 +7,7 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: renders exactly three preparation steps, in the order they must run
+  - it: renders exactly four preparation steps, in the order they must run
     set:
       machines.web:
         source:
@@ -20,7 +20,7 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.template.spec.initContainers
-          count: 3
+          count: 4
       - equal:
           path: spec.template.spec.initContainers[0].name
           value: seed
@@ -30,6 +30,9 @@ tests:
       - equal:
           path: spec.template.spec.initContainers[2].name
           value: customize
+      - equal:
+          path: spec.template.spec.initContainers[3].name
+          value: provision
 
   - it: mounts the machine's rootfs volume into both init containers
     set:

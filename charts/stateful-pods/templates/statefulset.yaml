@@ -13,6 +13,10 @@
 {{- if eq $source.kind "oci" }}
 {{- $pullSecret = index $source "pullSecretName" | default "" }}
 {{- end }}
+{{- /* The provisioning material, resolved once. Everything below sees the file
+       names the machine's inputs are materialized under and never the inputs. */ -}}
+{{- $provisioning := include "stateful-pods.machine.provisioning.resolved" $ctx | fromYaml }}
+{{- $hasMaterial := include "stateful-pods.machine.provisioning.hasMaterial" $ctx }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -60,6 +64,22 @@ spec:
         {{- end }}
   template:
     metadata:
+      {{- if $hasMaterial }}
+      annotations:
+        # What restarts a machine when its provisioning material changes. Helm
+        # renders the inline material itself, so a change to it changes this
+        # digest and the pod is replaced.
+        #
+        # It cannot see inside a Secret it does not own, so referenced material
+        # that has rotated produces no restart of its own. The revision folded in
+        # below is the pure-Helm way to ask for one; the other two answers - a
+        # controller that watches referenced Secrets, or `kubectl rollout
+        # restart` - are documented rather than built. Once a restart does
+        # happen the change applies either way, because the instance identity is
+        # recomputed from the files that were actually materialized. The gap is
+        # in triggering the restart, not in applying the change.
+        checksum/provisioning: {{ include "stateful-pods.machine.provisioning.checksum" $ctx | quote }}
+      {{- end }}
       labels:
         {{- include "stateful-pods.machine.labels" $ctx | nindent 8 }}
     spec:
@@ -71,8 +91,9 @@ spec:
       {{- with $machine.hostname }}
       hostname: {{ . }}
       {{- end }}
-      {{- if $pullSecret }}
+      {{- if or $pullSecret $hasMaterial }}
       volumes:
+        {{- if $pullSecret }}
         # The credentials for this machine's source, projected to the file name
         # every Docker client looks for so that the registry client finds them
         # the ordinary way. Mounted into the seeding step and nowhere else: the
@@ -83,6 +104,51 @@ spec:
             items:
               - key: .dockerconfigjson
                 path: config.json
+        {{- end }}
+        {{- if $hasMaterial }}
+        # The machine's provisioning material, assembled into one directory of
+        # fixed file names. This is where "inline or a reference" stops being two
+        # things: the step that reads this directory cannot tell which form an
+        # input arrived in, needs no API access and needs no ServiceAccount
+        # token.
+        #
+        # Each input has exactly one source, so the chart can guarantee at render
+        # time that no two of them map to the same file - a projected volume with
+        # a path collision is rejected by the kubelet, which surfaces as a
+        # machine that never starts a container.
+        #
+        # Mounted into the provisioning step and nowhere else. Mounted into the
+        # guest it would be readable from inside the machine for its whole life,
+        # through a path the machine never asked for.
+        - name: provisioning
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- if $provisioning.inline }}
+              - secret:
+                  name: {{ include "stateful-pods.machine.provisioning.secretName" $ctx | quote }}
+                  items:
+                    {{- range $path, $content := $provisioning.inline }}
+                    - key: {{ $path | quote }}
+                      path: {{ $path | quote }}
+                    {{- end }}
+              {{- end }}
+              {{- range $ref := $provisioning.refs }}
+              {{- if eq $ref.kind "secret" }}
+              - secret:
+                  name: {{ $ref.name | quote }}
+                  items:
+                    - key: {{ $ref.key | quote }}
+                      path: {{ $ref.path | quote }}
+              {{- else }}
+              - configMap:
+                  name: {{ $ref.name | quote }}
+                  items:
+                    - key: {{ $ref.key | quote }}
+                      path: {{ $ref.path | quote }}
+              {{- end }}
+              {{- end }}
+        {{- end }}
       {{- end }}
       # Every step below runs on every pod start, because Kubernetes has no
       # conditional init container. What makes seeding happen once is the record
@@ -153,6 +219,42 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
+        # Provisions the machine: the users, keys, packages and commands its
+        # values ask for, written into the machine's own root filesystem.
+        #
+        # A step of its own rather than the tail of the one above, for two
+        # reasons. The step above writes the three files the chart maintains and
+        # has no use for a Secret's contents, so giving it the material would put
+        # it in a container that does not need it. And a failure here should be
+        # legible as a failure to provision: an image that cannot run the backend
+        # its machine named fails the pod, and this is the container whose logs
+        # say so.
+        #
+        # Rendered under both backends. A pod whose shape changed with the
+        # backend would make a backend switch a replacement by a different kind
+        # of pod, and under `native` the step's one line of output is what says
+        # the chart deliberately did nothing.
+        #
+        # Last, because the drop-in it writes is about files the step above has
+        # already placed, and because there is nothing to inspect until the
+        # volume holds an operating system.
+        - name: provision
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /usr/local/lib/stateful-pods/provision.sh
+          env:
+            {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
+            {{- include "stateful-pods.machine.provisioning.env" $ctx | nindent 12 }}
+          securityContext:
+            {{- include "stateful-pods.machine.initSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: {{ $objectName }}
+              mountPath: /mnt/rootfs
+            {{- if $hasMaterial }}
+            - name: provisioning
+              mountPath: /provisioning
+              readOnly: true
+            {{- end }}
       # Proxmox's own TimeoutStopSec. An operating system needs longer to stop
       # than an application does, and being killed at the end of it is an unclean
       # shutdown of a pet on every ordinary delete.
