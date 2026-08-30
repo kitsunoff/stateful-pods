@@ -28,7 +28,7 @@ shim:
   # The guest container's process mounts the machine's filesystems, changes the
   # root to the volume, and then becomes the machine's own init. Override this only
   # if you are building your own shim.
-  image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:a9a24c72eb4a79d544de7bdc05c6e8573786e7cc3cb267670115d240de72c714
+  image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:3e7af746d685d4215902dabc8d80e8c6c080c4caa55d75a2abc5f08457e8e046
 
 # Machines to run, keyed by machine name.
 #
