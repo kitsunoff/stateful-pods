@@ -123,3 +123,9 @@ setup() { plugin_setup; }
     ! grep --quiet 'exec --stdin' "$RECORD"
     ! grep --quiet 'helm uninstall' "$RECORD"
 }
+
+@test "a machine name given to list is answered with the command that takes one" {
+    machine list web --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"status web"* ]]
+}

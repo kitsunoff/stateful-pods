@@ -611,8 +611,12 @@ cmd_list() {
                 list_help
                 return 0
                 ;;
-            *)
+            --*)
                 common_flag "$@" || die "unknown flag for list: $SP_FLAG"
+                ;;
+            *)
+                die "list takes no machine name; it lists them all.
+Did you mean: kubectl machine status $SP_FLAG"
                 ;;
         esac
         shift "$SP_SHIFT"
