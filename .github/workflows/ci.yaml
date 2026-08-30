@@ -189,6 +189,19 @@ jobs:
   image:
     name: image
     runs-on: ubuntu-latest
+    # The same argument the release job makes, which was not applied here. On a
+    # tag this publishes the shim, and it used to do so alongside the suites
+    # rather than after them - so a red `make test` or `make conform` left an
+    # image already pushed and immutable at that tag.
+    #
+    # It matters more than an ungated publish usually would. The chart pins this
+    # image by digest, so the two are a matched pair, and this was the half with
+    # no gate. The cost is that the image build now waits for the chart job on
+    # every pull request; that is accepted rather than split into a fourth job,
+    # because more publishing surface is worse than slower feedback.
+    needs:
+      - chart
+      - plugin
     permissions:
       contents: read
       packages: write

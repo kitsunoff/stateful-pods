@@ -18,21 +18,21 @@
 
 ## 3. Release-quality defects
 
-- [ ] 3.1 Write a failing unit test in `charts/stateful-pods/tests/values_rootfs_source_test.yaml`
+- [x] 3.1 Write a failing unit test in `charts/stateful-pods/tests/values_rootfs_source_test.yaml`
   for an unquoted all-digit `sha256`, for a wrong-length one, and for one carrying a character
   outside `0-9a-f`; verify each fails before the rule exists
-- [ ] 3.2 Add the form check to the `lxc` branch of `stateful-pods.validate.semantics` in
+- [x] 3.2 Add the form check to the `lxc` branch of `stateful-pods.validate.semantics` in
   `charts/stateful-pods/templates/_helpers.tpl`, naming quoting as the fix, and verify the tests
   from 3.1 now pass and a well-formed checksum still renders
-- [ ] 3.3 Write a failing case in `test/shell/seed-lxc.bats` for a template carrying a device node
+- [x] 3.3 Write a failing case in `test/shell/seed-lxc.bats` for a template carrying a device node
   under `./dev`, and verify it fails before the exclusions exist
-- [ ] 3.4 Build the runtime-directory exclusions from `SP_RUNTIME_DIRS` in `lib-lxc.sh` as a
+- [x] 3.4 Build the runtime-directory exclusions from `SP_RUNTIME_DIRS` in `lib-lxc.sh` as a
   space-separated word list, not an array, since the file is `sh`; verify 3.3 passes and
   `make shell-lint` reports nothing
-- [ ] 3.5 Make the `conform` recipe render each example on its own before piping it, mirroring the
+- [x] 3.5 Make the `conform` recipe render each example on its own before piping it, mirroring the
   guard the floor example already has, and verify a deliberately broken example makes
   `make conform` exit non-zero
-- [ ] 3.6 Add `needs: [chart, plugin]` to the `image` job in `.github/workflows/ci.yaml` and verify
+- [x] 3.6 Add `needs: [chart, plugin]` to the `image` job in `.github/workflows/ci.yaml` and verify
   the file still parses and that no other tag-triggered publishing job is left ungated
 
 ## 4. Documentation
