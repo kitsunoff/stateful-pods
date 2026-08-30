@@ -650,8 +650,18 @@ step "asserting provisioning did not take the machine's own configuration away"
 check "the machine still has the pod's host name" \
   ci sh -c '[ "$(cat /etc/hostname)" = "cloudinit-web-0" ]'
 check "the machine can still resolve names" ci sh -c 'grep -q nameserver /etc/resolv.conf'
-check "the machine still has the address the cluster gave it" \
-  ci sh -c 'ip -brief addr show eth0 | grep -q "10\\."'
+# The address the cluster assigned, as the machine itself sees it. Read from
+# /proc rather than with `ip`, which is a package a minimal image need not have -
+# and compared against what Kubernetes says the pod's address is rather than
+# against a prefix, so this cannot pass by matching some other 10.x route.
+#
+# This is the assertion behind the drop-in's `network: {config: disabled}`. The
+# CNI configured eth0 before any container started, and a configuration written
+# by cloud-init and applied on top of that takes the address away.
+pod_address="$(kc get pod cloudinit-web-0 --output jsonpath='{.status.podIP}')"
+[[ -n "$pod_address" ]] || fail "could not read the pod's address to compare against"
+check "the machine still has the address the cluster gave it ($pod_address)" \
+  ci sh -c "grep -qF '$pod_address' /proc/net/fib_trie"
 
 # ------------------------------------------- the failure the design forbids ---
 # The most important assertion in this file. On an image without cloud-init the
