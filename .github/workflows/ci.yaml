@@ -22,6 +22,9 @@ jobs:
   chart:
     name: chart
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -74,6 +77,104 @@ jobs:
 
       - name: Validate every example against the Kubernetes API schemas
         run: make conform
+
+      # Packaged on every run, published only on a tag. `kubectl machine create`
+      # installs the chart by reference, and a user who got the plugin from krew
+      # has no checkout for that reference to point at - so the chart has to be
+      # somewhere. Packaging always is what stops a tag build being the first
+      # time anyone finds out it does not package.
+      - name: Package the chart
+        run: |
+          helm package charts/stateful-pods --destination dist
+          echo "would push to oci://ghcr.io/${{ github.repository_owner }}/charts"
+          ls -l dist
+
+      # The plugin defaults the chart version to its own, so a chart published
+      # under a tag that disagrees with the version in Chart.yaml would be
+      # unreachable by the plugin that shipped with it.
+      - name: Check the tag against the chart's own version
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          chart="$(sed -n 's/^version: //p' charts/stateful-pods/Chart.yaml)"
+          if [ "$tag" != "$chart" ]; then
+            echo "the tag says $tag and Chart.yaml says $chart" >&2
+            exit 1
+          fi
+
+      - name: Log in to the registry
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the chart
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          helm push "dist/stateful-pods-${GITHUB_REF_NAME#v}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
+  # The plugin targets the bash macOS ships, which is 3.2 and will not change.
+  # Every construct that breaks that target - mapfile, an associative array,
+  # ${var^^} - runs perfectly in the Linux container the rest of the suites use
+  # and fails on somebody's Mac. This job is the whole enforcement of that; a
+  # comment in the file would not be.
+  plugin:
+    name: plugin (macOS bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install bats and shellcheck
+        run: brew install bats-core shellcheck
+
+      # Without this the job runs and proves nothing, which is the failure mode
+      # every check here is written to avoid.
+      - name: Check that the system bash really is the old one
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash --version | head -1 | grep --quiet 'version 3\.2' || {
+            echo "the system bash is no longer 3.2, so this job is not testing what it claims" >&2
+            exit 1
+          }
+
+      # The lint itself has to run here too: it is the check that guards every
+      # script in the repository, and it used to reach for a bash 4 builtin.
+      - name: Lint the shell scripts on the system bash
+        run: /bin/bash hack/shell-lint.sh
+
+      - name: Run the plugin's suite against the system bash
+        run: make plugin-test MACHINE_BASH=/bin/bash
+
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Refuses when the tag, the plugin and the chart do not say the same thing,
+      # and computes the published checksum from the archive it just wrote rather
+      # than from anywhere else.
+      - name: Build the plugin's archive, its checksum and the krew manifest
+        run: ./hack/release-archives.sh --version "${GITHUB_REF_NAME#v}"
+
+      - name: Publish them on the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/kubectl-machine_"$GITHUB_REF_NAME".tar.gz \
+            dist/SHA256SUMS \
+            dist/machine.yaml
 
   image:
     name: image

@@ -1,0 +1,60 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: machine
+spec:
+  # Rendered by hack/release-archives.sh on a tag build, which fills the version
+  # in and puts the checksum of the archive it actually wrote beside it. The
+  # placeholders are what is checked in, because a checksum written by hand is a
+  # checksum that stops being true on the next release.
+  version: __TAG__
+  homepage: https://github.com/kitsunoff/stateful-pods
+  shortDescription: Reach a stateful-pods machine by its own name
+  description: |
+    Works with machines - pets with a persistent root filesystem - that the
+    stateful-pods chart runs inside Kubernetes pods.
+
+    A machine is addressed by the name it was declared under, rather than by the
+    object name the chart derives from it:
+
+      kubectl machine list
+      kubectl machine shell web
+      kubectl machine console web
+      kubectl machine create web --preset debian-trixie --mode userns
+      kubectl machine delete web
+
+    A machine takes minutes to become usable, and this reports where it is in
+    that - being seeded, prepared, customized, booting, ready or stopped - rather
+    than reporting a container. When a machine cannot be entered, the reason
+    given is the stage it is in and the command whose output explains it.
+
+    It shells out to kubectl and helm and needs nothing else.
+  caveats: |
+    This is a bash program, so it runs on Linux and macOS and not on Windows.
+    Under WSL it works like any other Linux install.
+
+    'kubectl machine create' installs the stateful-pods chart, so it needs helm
+    on PATH. Every other command needs only kubectl.
+
+    Removing a machine leaves its root filesystem in place. The command prints
+    what would destroy it; nothing here does both at once.
+  platforms:
+    # One archive, and two selectors pointing at it. There is nothing per
+    # architecture about a shell script, and publishing four byte-identical
+    # tarballs with four identical checksums would look like a guarantee it is
+    # not making.
+    - selector:
+        matchExpressions:
+          - key: os
+            operator: In
+            values:
+              - darwin
+              - linux
+      uri: https://github.com/kitsunoff/stateful-pods/releases/download/__TAG__/kubectl-machine___TAG__.tar.gz
+      sha256: __SHA256__
+      bin: kubectl-machine
+      # Whatever the archive holds, which is the plugin and - once the repository
+      # has one - a licence beside it.
+      files:
+        - from: "*"
+          to: "."
