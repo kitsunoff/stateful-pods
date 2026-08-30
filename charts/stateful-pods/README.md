@@ -95,7 +95,7 @@ machines:
 ```
 
 ```bash
-helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.2 \
+helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.2.0 \
   --values my-machine.yaml
 ```
 
@@ -138,17 +138,17 @@ it. There is no flag that does both.
 With krew, from a published release:
 
 ```bash
-kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.2/machine.yaml
+kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/machine.yaml
 ```
 
 Or without krew, since it is one file:
 
 ```bash
 curl --silent --show-error --location --fail --remote-name \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.2/kubectl-machine_v0.1.2.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/kubectl-machine_v0.2.0.tar.gz
 sha256sum --check <(curl --silent --location --fail \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.2/SHA256SUMS)
-tar --extract --gzip --file kubectl-machine_v0.1.2.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/SHA256SUMS)
+tar --extract --gzip --file kubectl-machine_v0.2.0.tar.gz
 install -m 0755 kubectl-machine /usr/local/bin/kubectl-machine
 ```
 

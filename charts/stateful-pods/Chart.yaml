@@ -2,8 +2,8 @@ apiVersion: v2
 name: stateful-pods
 description: Run a machine as a pet in a Kubernetes pod, with its root filesystem on a PersistentVolume
 type: application
-version: 0.1.2
-appVersion: "0.1.2"
+version: 0.2.0
+appVersion: "0.2.0"
 # 1.30 is the floor for securityContext.appArmorProfile, which the guest container
 # declares in every mode: without that field a guest is confined by whatever
 # profile the node's runtime supplies, and every default one denies the mount the
