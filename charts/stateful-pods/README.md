@@ -153,7 +153,9 @@ A preset is stronger than an `lxc` source rather than merely shorter. Each one i
 distribution's own root filesystem, packaged unmodified — the archive that was verified *is* the
 image's layer, so there is no extraction for an extended attribute to be lost in — and it is
 packaged only after the detached GPG signature the upstream publishes over its checksums verifies
-against a key fingerprint pinned in this repository. A checksum you found yourself establishes that
+against a key fingerprint pinned in this repository. What was published is then compared back
+against what was verified: the layer's `diff_id` must equal the checksum of the decompressed
+archive. A checksum you found yourself establishes that
 the bytes did not change in transit from whoever served them, and nothing more.
 
 What a name resolves to is decided while the chart renders and at no later point, so the manifest
@@ -701,7 +703,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 
 | Scenario | Covered by |
 | --- | --- |
-| The contents are the upstream's | `hack/preset-build.sh` compares the published layer's `diff_id` against the checksum of the archive that was verified |
+| The contents are the upstream's | `hack/preset-build.sh` compares the published layer's `diff_id` against the checksum of the decompressed verified archive |
 | A preset carries no configuration of ours | `crane mutate` sets a platform and labels and nothing else |
 | An unsigned or wrongly signed checksum list stops the build | `test/presets/verification.bats` |
 | A checksum mismatch stops the build | `test/presets/verification.bats` |

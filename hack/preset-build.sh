@@ -27,8 +27,16 @@
 # ordinarily untagged package versions, and "delete untagged" is the standard way
 # a retention job destroys a tagged multi-architecture image. Tagging them does
 # not make the retention job's reference counting unnecessary - two builds can
-# still share an identical manifest - but it does mean the registry holds no
-# untagged versions for anything to sweep away by accident.
+# still share an identical manifest - but it does mean the image every reference
+# resolves through is one somebody named on purpose.
+#
+# It does not mean the registry holds no untagged versions. Packaging is two
+# pushes - `crane append` puts a manifest under the tag, `crane mutate` replaces
+# it with one carrying the platform and the labels - and the first is left
+# untagged and unreferenced. `crane mutate` reads only remote references, so
+# there is no way to do this in one push with the tool as it stands. Retention
+# leaves those alone deliberately: a version belonging to nothing it recognises
+# is not something it will delete on a guess.
 #
 # The parsing here is bash rather than awk, and the flags are the portable ones,
 # because this runs on a CI runner where `awk` is mawk and on a developer's
@@ -271,7 +279,7 @@ tag_date() {
 # Neither is fatal here: only publishing needs an owner, and the caller decides.
 remote_owner() {
   local url owner
-  url="$(git --git-dir "$ROOT_DIR/.git" config --get remote.origin.url 2>/dev/null || true)"
+  url="$(git -C "$ROOT_DIR" config --get remote.origin.url 2>/dev/null || true)"
   url="${url%.git}"
   [[ -n "$url" ]] || return 0
   owner="${url%/*}"

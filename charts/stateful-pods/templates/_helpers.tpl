@@ -419,13 +419,22 @@ Takes the root context.
 {{- $errors = append $errors (printf "machines.%s.source: must be a map naming the source kind and its fields, but is of type %s. Accepted kinds: oci, lxc, preset." $name (kindOf $source)) -}}
 {{- else -}}
 {{- $kind := $source.kind | default "" -}}
+{{- /* Not an input of any kind. `stateful-pods.machine.resolvedSource` sets this
+       on the resolved source to carry the preset's name into the seeding
+       environment, and `prepare.sh` records it. A value supplied here would be
+       carried through as though the chart had resolved it, and the volume would
+       assert a preset the machine was not made from - which is the one question
+       the record exists to answer. */ -}}
+{{- if not (kindIs "invalid" (index $source "preset")) -}}
+{{- $errors = append $errors (printf "machines.%s.source.preset: is not an input. It is set by the chart when a \"preset\" source resolves, and it is what the machine's provisioning record names, so a value supplied here would make that record claim a preset the machine was not made from. Remove the field; to choose a preset, set machines.%s.source.kind to \"preset\" and name it in machines.%s.source.name." $name $name $name) -}}
+{{- end -}}
 {{- if eq $kind "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.kind: not set. Name the source kind explicitly, so that a mistyped field cannot silently change where the machine's root filesystem comes from. Accepted kinds: oci, lxc, preset." $name) -}}
 {{- else if eq $kind "oci" -}}
 {{- if eq ($source.reference | default "") "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.reference: not set. An \"oci\" source requires an image reference, for example docker.io/library/debian:13." $name) -}}
 {{- end -}}
-{{- range $pair := list (list "url" "lxc") (list "sha256" "lxc") (list "name" "preset") (list "preset" "preset") -}}
+{{- range $pair := list (list "url" "lxc") (list "sha256" "lxc") (list "name" "preset") -}}
 {{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
 {{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
@@ -452,7 +461,7 @@ Takes the root context.
        user who also supplies one of those has expressed two intentions, and the
        one that would be silently discarded may be the one they believed was in
        effect. */ -}}
-{{- range $pair := list (list "reference" "oci") (list "url" "lxc") (list "sha256" "lxc") (list "preset" "preset") -}}
+{{- range $pair := list (list "reference" "oci") (list "url" "lxc") (list "sha256" "lxc") -}}
 {{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
 {{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"preset\"; it belongs to kind %q. A preset is a name for a reference this project pins and verified the provenance of, so it takes neither a reference nor a checksum of its own. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
@@ -466,7 +475,7 @@ Takes the root context.
 {{- if eq ($source.sha256 | default "" | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.sha256: not set. An \"lxc\" source requires the SHA-256 checksum of the template tarball, and there is no way to skip verification. The tarball is fetched over the network and unpacked into what becomes a privileged machine's root filesystem, and nothing about the transport establishes that the bytes are the intended ones." $name) -}}
 {{- end -}}
-{{- range $pair := list (list "reference" "oci") (list "pullSecretName" "oci") (list "name" "preset") (list "preset" "preset") -}}
+{{- range $pair := list (list "reference" "oci") (list "pullSecretName" "oci") (list "name" "preset") -}}
 {{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
 {{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}

@@ -227,7 +227,7 @@ catalog_names() {
 
 remote_owner() {
   local url owner
-  url="$(git --git-dir "$ROOT_DIR/.git" config --get remote.origin.url 2>/dev/null || true)"
+  url="$(git -C "$ROOT_DIR" config --get remote.origin.url 2>/dev/null || true)"
   url="${url%.git}"
   [[ -n "$url" ]] || return 0
   owner="${url%/*}"
@@ -274,6 +274,7 @@ main() {
   if [[ "${#presets[@]}" -eq 0 ]]; then
     mapfile -t presets < <(catalog_names)
   fi
+  [[ "${#presets[@]}" -gt 0 ]] || die "the catalog at $CATALOG_FILE lists no presets"
 
   local preset
   for preset in "${presets[@]}"; do

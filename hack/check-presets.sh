@@ -114,7 +114,7 @@ if command -v helm >/dev/null 2>&1; then
       --kube-version 1.33.0 2>&1)" || rendered=""
     # A literal prefix strip rather than a regex built by interpolation: a
     # preset name contains a dot, and in a pattern that is a wildcard.
-    expected="$(grep --fixed-strings -- "$first_preset: " "$CATALOG")"
+    expected="$(grep --max-count 1 --fixed-strings -- "$first_preset: " "$CATALOG")"
     expected="${expected#"$first_preset": }"
     if [[ -n "$expected" ]] && grep --quiet --fixed-strings -- "$expected" <<< "$rendered"; then
       echo "the catalog travels with the chart: $first_preset resolves from a package"

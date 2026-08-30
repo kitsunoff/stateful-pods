@@ -82,8 +82,9 @@ Non-goals:
   table, three workflows (build, daily bump, retention), and `.github/dependabot.yml`.
 - **Chart**: a source kind in `_helpers.tpl`'s validation and in the seeding environment; the
   resolved reference feeds the existing OCI path unchanged, so no seeding logic changes.
-- **Registry**: four new GHCR packages, at roughly 5 × 2 architectures × 4 presets stored at any
-  time.
+- **Registry**: four new GHCR packages. Each retained build is an index and two per-architecture
+  manifests, so roughly 5 builds × 3 × 4 presets, plus two untagged leftovers per build that
+  packaging cannot avoid and retention does not claim to remove - see `design.md`.
 - **Verification risks to settle first**: whether a `FROM scratch` plus `ADD` build preserves
   `security.capability` through the builder's own extraction — if it does not, the layer must be the
   upstream tarball itself, which `crane append` can do without a builder. And whether the retention

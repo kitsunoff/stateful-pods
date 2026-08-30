@@ -209,6 +209,24 @@ tests:
           path: spec.template.spec.initContainers[0].volumeMounts[1].mountPath
           value: /etc/stateful-pods/registry-auth
 
+  # Not a field of any kind: the chart sets it, on the resolved source, to carry
+  # the name into the seed environment. A message telling the user it belongs to
+  # the kind they already declared would send them in a circle.
+  - it: rejects a source that sets the field the chart writes for itself
+    set:
+      machines.web:
+        source:
+          kind: preset
+          name: debian-trixie
+          preset: something-else
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.preset: is not an input.*set by the chart'
+
   - it: names preset among the accepted kinds when the kind is wrong
     set:
       machines.web:

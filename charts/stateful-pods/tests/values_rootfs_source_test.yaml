@@ -241,7 +241,7 @@ tests:
           mode: userns
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.source\.preset: does not belong to source kind "oci".*"preset"'
+          errorPattern: '(?s)machines\.web\.source\.preset: is not an input.*set by the chart'
 
   - it: rejects an lxc source carrying a preset name
     set:
@@ -273,4 +273,4 @@ tests:
           mode: userns
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.source\.preset: does not belong to source kind "lxc".*"preset"'
+          errorPattern: '(?s)machines\.web\.source\.preset: is not an input.*set by the chart'

@@ -83,8 +83,9 @@ identical" is a claim rather than a hope.
 
 Making the layer the archive also makes the assertion better than the inventory this design first
 proposed. The published layer's `diff_id` is the SHA-256 of its uncompressed content, so comparing
-it against the checksum of the archive that was verified proves the two are the same bytes - every
-extended attribute, every mode, every ordering decision included. An inventory can only assert the
+it against the checksum of the decompressed archive - the same bytes the signed checksum covers,
+one xz frame away - proves the two are the same content: every extended attribute, every mode,
+every ordering decision included. An inventory can only assert the
 properties someone thought to enumerate, which is exactly how the ACLs were nearly missed. The
 check reads the config back from the registry, so what it compares is what was published rather
 than an intermediate nobody serves.
@@ -96,6 +97,13 @@ preset declares no command, no entrypoint and no environment.
 
 Either way the per-architecture images are combined into one multi-architecture index, because a
 preset that resolved to one architecture would push that choice into every user's values file.
+
+Packaging costs two pushes rather than one: `crane append` puts a manifest under the tag and
+`crane mutate` replaces it with one carrying the platform and the labels. The first is left in the
+registry untagged and referenced by nothing. `crane mutate` reads only remote references, so there
+is no single-push form of this with the tool as it stands, and the leftovers are the price. Retention
+does not sweep them up, because a version belonging to nothing it recognises is not something it
+deletes on a guess.
 
 ### Provenance is verified against a fingerprint pinned in the repository
 
@@ -168,9 +176,12 @@ the tarballs, and the two do not overlap.
   where "delete untagged" would have removed eight versions and broken all seven tags. Backed by
   resolving every retained tag for every architecture after a run that acts.
 - **New GHCR packages are private by default** → A preset nobody can pull is a preset that does not
-  work, and the failure looks like a typo in the reference. Each package's visibility is set to
-  public as part of first publication, and the check that a published reference resolves is run
-  unauthenticated.
+  work, and the failure looks like a typo in the reference. This turned out not to be fixable from a
+  workflow: GitHub exposes no API for package visibility, so the publish job reports what it found
+  and says what to do about it rather than setting it. The repository itself is private and so is the
+  shim package it already publishes, so the presets are consistent with what is there, and a preset
+  source accepts `pullSecretName` for exactly this reason. The check that a published reference
+  resolves therefore runs with credentials, which is what a machine in this project will have.
 - **The upstream index is a scrape, not an API** → A format change breaks parsing. The workflow
   fails loudly on a line it cannot parse rather than proposing whatever it managed to read.
 - **Alpine and Void are unusable until `shim-owned-scripts` lands** → Half right, and checked: the
@@ -201,7 +212,9 @@ the tarballs, and the two do not overlap.
    policy depend on it.
 2. Land the build and the workflows with the catalog empty, and publish the four presets by running
    the build workflow by hand. Nothing in the chart refers to them yet.
-3. Confirm every published reference resolves unauthenticated, on both architectures.
+3. Confirm every published reference resolves, on both architectures, with the credentials a machine
+   in this project would use. Not unauthenticated: the packages are private, for the reason under
+   Risks.
 4. Land the chart change — the source kind, its validation, the catalog file populated with the
    four digests — and the documentation.
 5. Enable the daily workflow and the retention job. Retention needs one thing more than being

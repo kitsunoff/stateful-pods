@@ -104,18 +104,26 @@ jobs:
             # upstream build's tag either already resolves to what the catalog
             # names, or the catalog is behind.
             catalogued_digest="${current##*@}"
-            # A read that fails is not a digest that differs. Reporting both
-            # as "behind" would hide a registry this job cannot reach behind a
-            # message that looks like ordinary news.
-            if ! published="$(crane digest "$reference" 2>&1)"; then
-              echo "$preset: could not read $reference from the registry: $published" >&2
-              exit 1
-            fi
-            if [ "$published" = "$catalogued_digest" ]; then
+            # Three outcomes, not two. The reference here names the newest
+            # upstream build, which is a tag this project has not pushed yet
+            # whenever a preset is behind - so "not found" is the ordinary way
+            # to learn there is work to do, and must not be confused with a
+            # registry this job cannot reach. Collapsing them either way is a
+            # bug: one direction proposes nothing for ever, the other reports
+            # everything as behind for ever.
+            status=0
+            published="$(crane digest "$reference" 2>&1)" || status=$?
+            if [ "$status" -eq 0 ] && [ "$published" = "$catalogued_digest" ]; then
               echo "$preset: up to date ($tag)"
-            else
-              echo "$preset: behind - upstream has $tag"
+            elif [ "$status" -eq 0 ]; then
+              echo "$preset: behind - $tag is published and the catalog names something else"
               behind="${behind:+$behind }$preset"
+            elif printf '%s' "$published" | grep --quiet --extended-regexp 'MANIFEST_UNKNOWN|NAME_UNKNOWN|not found'; then
+              echo "$preset: behind - upstream has $tag and it is not published yet"
+              behind="${behind:+$behind }$preset"
+            else
+              echo "$preset: could not reach the registry for $reference: $published" >&2
+              exit 1
             fi
           done < images/presets/presets.list
 
@@ -145,12 +153,23 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      packages: read
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
+
+      # This job confirms that what it is about to propose resolves, and the
+      # packages are private - so it needs the same credentials the survey does.
+      - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
 
       - name: Open or update one pull request per preset
         env:
