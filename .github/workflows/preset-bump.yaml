@@ -67,7 +67,11 @@ jobs:
               echo "$preset: not ready - $(head -1 /tmp/why)"
               continue
             fi
-            reference="$(printf '%s' "$resolved" | cut --fields=3)"
+            # The build's result is name, upstream build, reference - tab
+            # separated. Read with the shell rather than cut, for the reason
+            # hack/preset-build.sh gives at length: the portable flags are the
+            # ones that behave the same wherever someone runs this by hand.
+            IFS=$'\t' read -r _ _ reference <<< "$resolved"
             tag="${reference##*:}"
             current="$(sed -n "s|^${preset}: .*|&|p" charts/stateful-pods/presets.yaml)"
 
