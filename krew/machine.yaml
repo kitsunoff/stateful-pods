@@ -53,8 +53,8 @@ spec:
       uri: https://github.com/kitsunoff/stateful-pods/releases/download/__TAG__/kubectl-machine___TAG__.tar.gz
       sha256: __SHA256__
       bin: kubectl-machine
-      # Whatever the archive holds, which is the plugin and - once the repository
-      # has one - a licence beside it.
+      # Whatever the archive holds, which is the plugin and the licence beside
+      # it. The upstream krew index requires that licence to be in the archive.
       files:
         - from: "*"
           to: "."

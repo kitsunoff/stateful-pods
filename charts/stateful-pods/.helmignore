@@ -1,0 +1,28 @@
+# What `helm package` leaves out of the published chart.
+#
+# Without this file every path under the chart directory ships, which meant the
+# thirty-four helm-unittest suites travelled inside every install - roughly half
+# the chart directory by size, to a machine that cannot run them and has no
+# helm-unittest to run them with.
+#
+# What is NOT excluded is deliberate. `examples/` is referenced throughout the
+# README and is what `helm lint` and `make conform` render against; `presets.yaml`
+# is read at render time by the template that resolves a preset name; and
+# `profiles/` carries the seccomp profile an operator has to place on a node, so
+# it is needed precisely by the person who received the package.
+tests/
+
+# The suites are run against the chart directory, never against the package, so
+# excluding them here costs `make test` nothing.
+
+# Editor and platform noise, none of which is part of a chart.
+.DS_Store
+*~
+*.swp
+*.orig
+*.bak
+
+# Version control.
+.git/
+.gitignore
+.gitattributes

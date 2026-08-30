@@ -4,3 +4,24 @@
 # tables, long upstream URLs and quoted source snippets that cannot be wrapped
 # without hurting readability. Prose is wrapped at 100 columns by convention.
 MD013: false
+
+# MD033 (inline HTML) is narrowed rather than disabled. The repository README
+# opens with a centred block - the title, the tagline and the badge row - and
+# Markdown has no way to centre anything, so that one element is HTML. Only
+# `div` is allowed; every other element is still an error, which is the point of
+# narrowing the rule instead of turning it off.
+MD033:
+  allowed_elements:
+    - div
+
+# MD041 (first line should be a top-level heading) follows from the above: the
+# first line of the README is the opening `<div>`, and the H1 is immediately
+# inside it. The rule cannot see through the element.
+MD041: false
+
+# MD028 (blank line inside blockquote) fires on two consecutive GitHub alerts -
+# a `> [!WARNING]` block followed by a `> [!CAUTION]` one. The rule is warning
+# about an ambiguity that does not exist here: a blank line between two
+# blockquotes separates them in CommonMark, and GitHub renders the pair as two
+# distinct alerts. Front-loading two of them is deliberate.
+MD028: false

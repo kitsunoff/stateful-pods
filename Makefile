@@ -149,8 +149,15 @@ render:
 ## conform: validate every example's rendered manifest against the Kubernetes API
 #  schemas, at the version this chart is developed against and at its own floor
 conform:
+	@#  Each example is rendered on its own before it is piped, for the reason
+	@#  spelled out below the loop: in a pipeline the exit status is
+	@#  kubeconform's, and kubeconform is content with the empty input a failed
+	@#  render hands it. Without this the loop reports success for an example
+	@#  that does not render at all - which is every validation this chart makes.
 	@for values in $(EXAMPLES); do \
 		echo "==> kubeconform $$values (Kubernetes $(KUBE_VERSION))"; \
+		$(HELM) template stateful-pods $(CHART) --values $$values --kube-version $(KUBE_VERSION) \
+			> /dev/null || exit 1; \
 		$(HELM) template stateful-pods $(CHART) --values $$values --kube-version $(KUBE_VERSION) \
 			| $(KUBECONFORM) -strict -summary -kubernetes-version $(KUBE_VERSION) || exit 1; \
 	done

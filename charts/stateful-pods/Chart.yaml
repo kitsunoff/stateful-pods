@@ -29,3 +29,8 @@ maintainers:
   - name: Maxim Belyy
     email: maximbel2003@gmail.com
     url: https://github.com/kitsunoff
+# A chart carries no licence field of its own, so the licence the repository is
+# under is recorded as the annotation the chart registries read. A packaged
+# chart travels on its own, without the LICENSE file beside it in the tree.
+annotations:
+  artifacthub.io/license: MIT

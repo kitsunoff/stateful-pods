@@ -474,6 +474,23 @@ Takes the root context.
 {{- end -}}
 {{- if eq ($source.sha256 | default "" | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.sha256: not set. An \"lxc\" source requires the SHA-256 checksum of the template tarball, and there is no way to skip verification. The tarball is fetched over the network and unpacked into what becomes a privileged machine's root filesystem, and nothing about the transport establishes that the bytes are the intended ones." $name) -}}
+{{- /* Requiring a checksum is not the same as requiring a checksum. The
+       verification this input exists for happens in the guest, after the whole
+       template has been fetched, so every malformed value that renders is a
+       machine that downloads gigabytes and then crash-loops - and the value is
+       checked here rather than there for exactly that reason.
+
+       The check is on the string's shape and not on its YAML type, because the
+       type is already lost. A checksum of sixty-four digits and no letters is a
+       valid YAML number, so it is resolved to a float before any template
+       function sees it; the `toString` above is not missing, and it faithfully
+       renders 1.23...e+61. Anchoring on the shape catches that, the truncated
+       paste, the uppercase digest that can never equal the lowercase one
+       sha256sum prints, and the whole sha256sum line pasted with its filename -
+       and keeps working if a future YAML library resolves the scalar
+       differently. */ -}}
+{{- else if not (regexMatch "^[0-9a-f]{64}$" ($source.sha256 | toString)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.sha256: %q is not a SHA-256 checksum. It must be exactly sixty-four lowercase hexadecimal characters. Quote the value: a checksum that happens to be all digits is read by YAML as a number, and what reaches the machine is the number in exponent form rather than the digest. The template is verified in the guest, after it has been downloaded in full, so a checksum that cannot match costs the whole fetch before it fails." $name ($source.sha256 | toString)) -}}
 {{- end -}}
 {{- range $pair := list (list "reference" "oci") (list "pullSecretName" "oci") (list "name" "preset") -}}
 {{- $field := index $pair 0 -}}
