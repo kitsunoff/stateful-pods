@@ -161,6 +161,12 @@ A preset is a whole distribution rather than a base image, and each is pinned by
 is that you do not have to research a reference: a typo is refused and told which names exist,
 instead of resolving to nothing or to somebody's default.
 
+The images are published a package per distribution and a tag per release, so
+`ghcr.io/kitsunoff/stateful-pods-ubuntu:noble` is a thing you can pull. That tag follows the newest
+build, and beside it is an immutable one naming the upstream build it came from. The chart resolves
+neither: it pins a digest, which is what keeps a machine's disk reproducible while the name in front
+of it stays short.
+
 ## Working on it
 
 Everything below runs without a cluster except the last two. `make image-test` needs only a

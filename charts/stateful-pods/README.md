@@ -239,6 +239,12 @@ The names, and the digest-pinned reference each resolves to, are in `presets.yam
 Today they are `debian-trixie`, `ubuntu-noble`, `alpine-3.24` and `void-current`. An unknown name
 fails rendering and lists the ones that exist.
 
+The images themselves are a package per distribution and a tag per release —
+`ghcr.io/kitsunoff/stateful-pods-ubuntu:noble`, `…-debian:trixie`, `…-alpine:3.24`,
+`…-void:current` — beside an immutable tag naming the upstream build,
+`noble-20260829_0742`. The release tag follows the newest build and is there for a person who
+wants to pull one; `presets.yaml` names neither, because what a machine is seeded from is a digest.
+
 A preset is stronger than an `lxc` source rather than merely shorter. Each one is an upstream
 distribution's own root filesystem, packaged unmodified — the archive that was verified *is* the
 image's layer, so there is no extraction for an extended attribute to be lost in — and it is
@@ -250,8 +256,9 @@ the bytes did not change in transit from whoever served them, and nothing more.
 
 What a name resolves to is decided while the chart renders and at no later point, so the manifest
 you review carries the same source the pod will use. The catalog moves only through a reviewed
-change, even though the builds behind it are published automatically: a newer upstream build is
-almost certainly better, but what the chart points at is still a decision.
+change, even though the builds behind it are published automatically, and even though the release
+tag moves with them: a newer upstream build is almost certainly better, but what the chart points
+at is still a decision.
 
 The presets carry a `pullSecretName` like any other source, because the registry serving them may
 want credentials — a preset is a name for a reference, not a promise about who may fetch it.
@@ -802,13 +809,20 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | What was verified is recorded | the `io.stateful-pods.preset.upstream.*` labels |
 | One reference serves both architectures | `hack/preset-build.sh`, asserted in `preset-publish.yaml` |
 | A preset with an incomplete upstream is not published | `test/presets/verification.bats` |
-| A published tag keeps its content | the preset stage of `hack/integration-test.sh`, which builds twice and compares |
-| No tag tracks the newest build | every tag names an upstream build date |
+| One repository holds a distribution | `test/presets/verification.bats`, which resolves a preset and checks the repository it names |
+| The tag names the release | `hack/preset-build.sh` composes every tag from the release |
+| A repository serves every release of its distribution | the package is a field in `images/presets/presets.list`, not a rule about the preset's name |
+| A published dated tag keeps its content | the preset stage of `hack/integration-test.sh`, which builds twice and compares |
+| A build is counted by its dated tag | `test/presets/retention.bats`: a rolling tag is not a build, and an unreadable tag stops the run |
+| The rolling tag follows the newest build | `preset-publish.yaml` compares it against the digest just published |
+| The rolling tag covers every architecture | `preset-publish.yaml` resolves it for each one |
+| No machine is seeded from a rolling tag | `hack/check-presets.sh` fails the build if a catalog entry is not a digest |
 | A named preset renders as a pinned reference | `values_preset_source_test.yaml` |
 | The table is part of the chart | `hack/check-presets.sh`, which packages the chart and renders a preset from the package |
 | The five newest builds of a preset remain | `test/presets/retention.bats` |
-| Retention is per preset | `hack/preset-retention.sh` runs per package |
+| Retention is per preset | `hack/preset-retention.sh` plans one release at a time, over a package its releases share |
 | A kept build stays whole | `test/presets/retention.bats`, and asserted after every run |
+| The rolling tag survives | `test/presets/retention.bats`, and resolved after every run that deletes |
 | A newer upstream build is proposed | `preset-bump.yaml`, `test/presets/bump.bats` |
 | An unchanged upstream proposes nothing | `test/presets/bump.bats` |
 | A proposal names a reference that already exists | `preset-bump.yaml` publishes before it proposes |
