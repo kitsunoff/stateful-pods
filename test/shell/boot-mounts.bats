@@ -113,3 +113,52 @@ EOF
     [ -d "$ROOTFS/sys" ]
     [ -d "$ROOTFS/run" ]
 }
+
+# The pseudo-terminal filesystem.
+#
+# `newinstance` is what makes the terminals a machine hands out its own rather
+# than the node's, and it is also what makes the multiplexer at the conventional
+# path a link rather than a node: the instance has its own multiplexer, and a
+# node made anywhere else allocates from a different one. The two assertions
+# below are a pair - the first pins the option, the second the link it forces.
+
+@test "the pseudo-terminal filesystem is a private instance an unprivileged process can use" {
+    options="$(plan | awk '$1 == "devpts" {print $4}')"
+    [ -n "$options" ]
+    [[ ",$options," == *",newinstance,"* ]] || { echo "not a private instance: $options"; false; }
+    [[ ",$options," == *",ptmxmode=0666,"* ]] || { echo "multiplexer is not usable unprivileged: $options"; false; }
+}
+
+@test "preparing the devices leaves the pseudo-terminal multiplexer at the path programs open" {
+    cat > "$STUB_DIR/mount" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$STUB_DIR/mount"
+    mkdir -p "$ROOTFS/dev"
+    PATH="$STUB_DIR:$PATH" run sp_bind_devices "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ -L "$ROOTFS/dev/ptmx" ] || { echo "/dev/ptmx is not a symbolic link"; false; }
+    # Relative, so that it resolves to the machine's own instance both before the
+    # root change - when the machine is still at $ROOTFS - and after it.
+    [ "$(readlink "$ROOTFS/dev/ptmx")" = "pts/ptmx" ]
+}
+
+@test "the multiplexer is not left as a device node of its own" {
+    cat > "$STUB_DIR/mount" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$STUB_DIR/mount"
+    mkdir -p "$ROOTFS/dev"
+    PATH="$STUB_DIR:$PATH" run sp_bind_devices "$ROOTFS"
+    [ "$status" -eq 0 ]
+    # A node here would allocate from whichever instance it is associated with,
+    # which is not the machine's, and creating one is refused outright for a pod
+    # in its own user namespace.
+    [ ! -c "$ROOTFS/dev/ptmx" ] || { echo "/dev/ptmx is a character device"; false; }
+    # Nor is it bound from the pod's own, which belongs to the node's instance.
+    [ -n "$SP_DEVICE_NODES" ]
+    [[ " $SP_DEVICE_NODES " != *" ptmx "* ]] \
+        || { echo "ptmx is bound from the pod: $SP_DEVICE_NODES"; false; }
+}

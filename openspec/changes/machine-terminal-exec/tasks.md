@@ -1,25 +1,26 @@
 ## 1. Reproduce the failure before fixing it
 
-- [ ] 1.1 On a cluster running a machine from the published shim, list the machine's `/dev` and
+- [x] 1.1 On a cluster running a machine from the published shim, list the machine's `/dev` and
   confirm `/dev/ptmx` is absent while `/dev/pts/ptmx` exists; verify that `kubectl exec` without a
   terminal succeeds and that the same exec with `--stdin --tty`, given a real pseudo-terminal, fails
   with `open /dev/ptmx: no such file or directory`
-- [ ] 1.2 Create the link by hand inside that running machine and confirm the same terminal exec
+- [x] 1.2 Create the link by hand inside that running machine and confirm the same terminal exec
   then succeeds and reports a `/dev/pts/*` terminal; verify the diagnosis is the whole cause and not
   one of several
-- [ ] 1.3 Compare the machine's `/dev` against what a container runtime provides by default and
+- [x] 1.3 Compare the machine's `/dev` against what a container runtime provides by default and
   record every difference; verify by listing both, and decide each difference in `proposal.md`
   rather than leaving it unmentioned
 
 ## 2. The unit assertion, before the fix
 
-- [ ] 2.1 Add a case to `test/shell/boot-mounts.bats` asserting that `sp_bind_devices` leaves
+- [x] 2.1 Add a case to `test/shell/boot-mounts.bats` asserting that `sp_bind_devices` leaves
   `dev/ptmx` a symbolic link pointing at the multiplexer of the machine's own pseudo-terminal
-  instance, and a case asserting it is not left a device node; verify both fail against the
-  unmodified `lib-boot.sh`, for the right reason
-- [ ] 2.2 Add a case asserting the pseudo-terminal filesystem is mounted with a private instance and
-  a world-readable-and-writable multiplexer, which is what makes the link both necessary and usable
-  by an unprivileged process; verify it passes already, since it pins the option the fix depends on
+  instance; verify it fails against the unmodified `lib-boot.sh`, for the right reason
+- [x] 2.2 Add the two cases that guard the fix rather than detect the bug, and which therefore pass
+  already: that the pseudo-terminal filesystem is mounted with a private instance and a
+  world-readable-and-writable multiplexer, which is what makes the link both necessary and usable
+  unprivileged, and that the multiplexer is left neither a device node nor bound from the pod —
+  the two wrong ways to satisfy 2.1. Verify both pass before the fix and after it
 
 ## 3. The fix
 
