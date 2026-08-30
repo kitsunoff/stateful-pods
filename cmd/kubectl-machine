@@ -249,6 +249,18 @@ get_pods() {
     kubectl_run get pods --selector "$1" --output "go-template=$POD_TEMPLATE"
 }
 
+# A read that failed is not an empty answer. Without this, a cluster that cannot
+# be reached - a context that does not exist, a namespace with no access - is
+# reported as a namespace with no machines in it, which is the same confidently
+# wrong answer that "cannot exec into container guest" is, one level up.
+#
+# It has to be said at the call site rather than inside the read: a read happens
+# inside a command substitution, and exiting from there ends the substitution
+# rather than the program.
+read_failed() {
+    die "kubectl could not read the machines in $(where_it_would_act); its own error is above."
+}
+
 # ---------------------------------------------------------------------------
 # Resolving a name
 #
@@ -264,14 +276,19 @@ SP_MACHINE_RELEASE=""
 SP_OBJECT=""
 
 resolve_machine() {
-    local name="$1" found=0 machine release object
+    local name="$1" found=0 machine release object matches
+    # Through a variable rather than a process substitution: the exit status of
+    # the read is lost in one, and losing it is how a failure becomes an answer.
+    matches="$(get_statefulsets "$(machine_selector "$name")")" || read_failed
     while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         found=$((found + 1))
         SP_MACHINE="$machine"
         SP_MACHINE_RELEASE="$release"
         SP_OBJECT="$object"
-    done < <(get_statefulsets "$(machine_selector "$name")")
+    done <<EOF
+$matches
+EOF
 
     if [ "$found" -eq 0 ]; then
         report_unknown "$name"
@@ -287,7 +304,9 @@ report_unknown() {
         [ -n "$other" ] || continue
         listing="$listing  $other in release $release ($stage)
 "
-    done < <(machine_rows || true)
+    done <<EOF
+$(machine_rows || read_failed)
+EOF
     if [ -n "$listing" ]; then
         die "no machine called $name in $(where_it_would_act). These are there:
 $listing"
@@ -296,12 +315,15 @@ $listing"
 }
 
 report_ambiguous() {
-    local name="$1" machine release object matches=""
+    local name="$1" machine release object found matches=""
+    found="$(get_statefulsets "$(machine_selector "$name")")" || read_failed
     while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         matches="$matches  $machine in release $release ($object)
 "
-    done < <(get_statefulsets "$(machine_selector "$name")")
+    done <<EOF
+$found
+EOF
     die "more than one machine is called $name in $(where_it_would_act):
 $matches
 Name the release it belongs to with --release, so that the right one is acted on."
@@ -529,14 +551,17 @@ SP_POD=""
 # Fills SP_POD and the stage variables for the resolved machine. Reports whether
 # a pod was found at all.
 read_machine_pod() {
-    local machine release pod inits containers found=0
+    local machine release pod inits containers found=0 pods
     SP_POD=""
+    pods="$(get_pods "$(machine_selector "$SP_MACHINE")")" || read_failed
     while IFS="$(printf '\t')" read -r machine release pod _ inits containers || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         SP_POD="$pod"
         derive_stage "$inits" "$containers"
         found=1
-    done < <(get_pods "$(machine_selector "$SP_MACHINE")")
+    done <<EOF
+$pods
+EOF
     [ "$found" -eq 1 ]
 }
 
@@ -558,8 +583,10 @@ EOF
 # release declares is a machine that exists.
 machine_rows() {
     local machine release object inits containers stage
-    local pods="" line
-    pods="$(get_pods "$SP_MACHINE_LABEL" || true)"
+    local pods="" sets="" line
+    # Reported by the caller, which is in the shell that can act on it.
+    pods="$(get_pods "$SP_MACHINE_LABEL")" || return 1
+    sets="$(get_statefulsets "$SP_MACHINE_LABEL")" || return 1
     while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
         [ -n "$machine" ] || continue
         stage="not running"
@@ -571,7 +598,9 @@ machine_rows() {
 $pods
 EOF
         printf '%s\t%s\t%s\t%s\n' "$machine" "$release" "$stage" "$object"
-    done < <(get_statefulsets "$SP_MACHINE_LABEL")
+    done <<EOF
+$sets
+EOF
 }
 
 cmd_list() {
@@ -592,7 +621,7 @@ cmd_list() {
 
     local rows name release stage object
     local name_width=4 release_width=7 stage_width=5
-    rows="$(machine_rows)"
+    rows="$(machine_rows)" || read_failed
     if [ -z "$rows" ]; then
         printf 'There are no machines in %s.\n' "$(where_it_would_act)"
         return 0

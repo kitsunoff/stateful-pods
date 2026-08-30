@@ -96,3 +96,30 @@ setup() { plugin_setup; }
     [[ "$(calls)" == *"--namespace homelab"* ]]
     [[ "$(calls)" == *"--context other"* ]]
 }
+
+# A read that failed is not an empty answer. Reporting an unreachable cluster as
+# a namespace with no machines in it would be the same confidently wrong answer
+# that "cannot exec into container guest" is, one level up.
+@test "a cluster that cannot be read is not reported as an empty namespace" {
+    export SP_TEST_KUBECTL_STATUS=1
+    machine list --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"no machines in"* ]]
+}
+
+@test "a read that failed does not become a machine that is not there" {
+    export SP_TEST_KUBECTL_STATUS=1
+    machine status web --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"no machines at all"* ]]
+}
+
+@test "a read that failed opens no shell and uninstalls nothing" {
+    export SP_TEST_KUBECTL_STATUS=1
+    machine shell web --namespace homelab
+    [ "$status" -ne 0 ]
+    machine delete web --namespace homelab --yes
+    [ "$status" -ne 0 ]
+    ! grep --quiet 'exec --stdin' "$RECORD"
+    ! grep --quiet 'helm uninstall' "$RECORD"
+}
