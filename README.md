@@ -90,7 +90,7 @@ machines:
 ```
 
 ```bash
-helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.1 \
+helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.2 \
   --values my-machine.yaml
 ```
 
