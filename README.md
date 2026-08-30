@@ -161,11 +161,30 @@ A preset is a whole distribution rather than a base image, and each is pinned by
 is that you do not have to research a reference: a typo is refused and told which names exist,
 instead of resolving to nothing or to somebody's default.
 
-The images are published a package per distribution and a tag per release, so
-`ghcr.io/kitsunoff/stateful-pods-ubuntu:noble` is a thing you can pull. That tag follows the newest
-build, and beside it is an immutable one naming the upstream build it came from. The chart resolves
-neither: it pins a digest, which is what keeps a machine's disk reproducible while the name in front
-of it stays short.
+Two of the four are built from their upstream's **cloud** variant, so they carry cloud-init as the
+distribution assembled it. Nothing is installed into a preset to make up the difference: a preset is
+the distribution's own root filesystem or it is not a preset.
+
+Void has no cloud variant upstream at all — only `default` and `musl` — so it never gets one.
+Ubuntu does have one, but its two architectures are currently on different upstream builds, and a
+preset covers every architecture or it is not published; it moves to `cloud` once the upstream
+levels.
+
+| Preset | Upstream variant | Provisioning it can serve | Uncompressed |
+| --- | --- | --- | --- |
+| `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
+| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
+| `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
+| `void-current` | `default` | native only | 361 MiB |
+
+Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
+runtime with it. That is the cost of an Alpine that can be provisioned the same way the others are.
+
+The images are published a package per distribution and variant, and a tag per release, so
+`ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud:noble` is a thing you can pull. That tag follows the
+newest build, and beside it is an immutable one naming the upstream build it came from. The chart
+resolves neither: it pins a digest, which is what keeps a machine's disk reproducible while the name
+in front of it stays short.
 
 ## Working on it
 
@@ -208,8 +227,12 @@ that a registry whose name ends in `.local` is spoken to over plain HTTP — and
 lets a machine seed from an in-cluster `<service>.<namespace>.svc.cluster.local` registry with no
 insecure-registry input in the chart.
 
-**Guest provisioning is not here.** Cloud-init, SSH host keys and accounts arrive in a later change,
-so a machine starts with the identity and accounts its source shipped.
+**Guest provisioning is not here.** SSH host keys and accounts arrive in a later change, so a
+machine starts with the identity and accounts its source shipped. cloud-init is *present* in two of
+the four presets and does nothing: the upstream ships its LXC images with cloud-init installed
+and disabled by an `/etc/cloud/cloud-init.disabled` marker, a preset carries that marker unmodified,
+and nothing yet removes it or writes a seed for it to read. A machine installed today therefore
+boots exactly as it did before the presets moved to the cloud variant.
 
 ## License
 

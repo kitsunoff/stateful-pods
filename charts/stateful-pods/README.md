@@ -5,8 +5,10 @@ pod. Each machine gets its own StatefulSet, its own rootfs PersistentVolume and 
 Service.
 
 > **The machine boots.** Its root filesystem is filled from the source it declares, mounted as a
-> root, and handed to its own init system. Guest provisioning — cloud-init, SSH host keys, accounts —
-> arrives in a later change, so a machine starts with the identity and accounts its source shipped.
+> root, and handed to its own init system. Guest provisioning — SSH host keys, accounts — arrives in
+> a later change, so a machine starts with the identity and accounts its source shipped. cloud-init
+> is *present* in two of the four presets and inert: the upstream ships these images with it
+> disabled, a preset carries that unmodified, and nothing here yet writes a seed or enables it.
 
 ## Prerequisites
 
@@ -239,11 +241,47 @@ The names, and the digest-pinned reference each resolves to, are in `presets.yam
 Today they are `debian-trixie`, `ubuntu-noble`, `alpine-3.24` and `void-current`. An unknown name
 fails rendering and lists the ones that exist.
 
-The images themselves are a package per distribution and a tag per release —
-`ghcr.io/kitsunoff/stateful-pods-ubuntu:noble`, `…-debian:trixie`, `…-alpine:3.24`,
-`…-void:current` — beside an immutable tag naming the upstream build,
+The images themselves are a package per distribution and variant, and a tag per release —
+`ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud:noble`, `…-debian-cloud:trixie`,
+`…-alpine-cloud:3.24`, `…-void:current` — beside an immutable tag naming the upstream build,
 `noble-20260829_0742`. The release tag follows the newest build and is there for a person who
 wants to pull one; `presets.yaml` names neither, because what a machine is seeded from is a digest.
+
+The variant is in the package name rather than in the tag because two variants of one release carry
+the same upstream serial. A tag naming only the release and that serial would name two different
+root filesystems, and the build refuses to republish a dated tag it already published — so the
+collision would not be reported, it would silently leave whichever variant arrived first in place.
+
+#### Which presets carry cloud-init
+
+The chart's provisioning backend will default to cloud-init, so a preset that cannot run it is a
+preset that cannot serve a default install. Two of the four are therefore built from their upstream's
+`cloud` variant, and nothing is installed into a preset to make up the difference.
+
+Two are not, for different reasons. Void's upstream publishes no cloud variant — only `default` and
+`musl` — so it stays on `default` permanently. Ubuntu's upstream does publish one, but its two
+architectures are on different builds, and one tag cannot honestly name two of them; `ubuntu-noble`
+stays on `default` until the upstream levels, and moving it is one line in
+`images/presets/presets.list` plus a catalog entry. Nothing switches a variant on its own: the daily
+bump reads that field and never writes it.
+
+| Preset | Upstream variant | Provisioning it can serve | Uncompressed |
+| --- | --- | --- | --- |
+| `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
+| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
+| `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
+| `void-current` | `default` | native only | 361 MiB |
+
+Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
+runtime with it.
+
+**cloud-init is present, not enabled.** The upstream's own builder disables cloud-init in the LXC
+images this project packages, by writing an empty `/etc/cloud/cloud-init.disabled` into them — its
+LXD and Incus outputs write a seed and enable cloud-init in one step, and the plain LXC archive is
+that with the enabling left out. A preset carries the marker unmodified, because a preset carries
+everything unmodified. Removing it belongs to whatever writes the seed, and until that exists a
+machine from a cloud preset boots exactly as one from a default preset did: cloud-init's units are
+present, they check the marker, they warn and they stop.
 
 A preset is stronger than an `lxc` source rather than merely shorter. Each one is an upstream
 distribution's own root filesystem, packaged unmodified — the archive that was verified *is* the
@@ -532,6 +570,41 @@ rendered, and it is verified against the cluster version at render time, but it 
 this repository's CI.
 
 ## Upgrading
+
+### Two presets are now the upstream's cloud variant
+
+**Breaking**, for what a preset resolves to and not for what a machine declares.
+`source: {kind: preset, name: debian-trixie}` is unchanged, and so are the other three names.
+`debian-trixie` and `alpine-3.24` are now built from their upstream's `cloud` variant, so they carry
+cloud-init. `void-current` is unchanged because its upstream publishes no cloud variant, and
+`ubuntu-noble` is unchanged because its upstream's cloud architectures are not yet on one build.
+
+The package each moved preset resolves to moved with the variant:
+
+| Was | Is now |
+| --- | --- |
+| `ghcr.io/kitsunoff/stateful-pods-debian` | `ghcr.io/kitsunoff/stateful-pods-debian-cloud` |
+| `ghcr.io/kitsunoff/stateful-pods-alpine` | `ghcr.io/kitsunoff/stateful-pods-alpine-cloud` |
+| `ghcr.io/kitsunoff/stateful-pods-ubuntu` | unchanged, for now |
+| `ghcr.io/kitsunoff/stateful-pods-void` | unchanged |
+
+**A machine that already exists is untouched**, for the same reason as below: seeding happens once
+in the life of a volume.
+
+**A machine created after the upgrade gets a different and larger root filesystem.** That is the
+break, and it is a sharper one than a rename: the same values now seed a different operating system
+image. Debian grows about a third; Alpine grows sixfold, because cloud-init brings a Python runtime
+into a distribution whose appeal is not having one. Check `rootfs.size` before upgrading a values
+file that was sized against an Alpine machine.
+
+**Nothing is provisioned yet.** cloud-init is present and inert — the upstream ships these images
+with an `/etc/cloud/cloud-init.disabled` marker, a preset carries it unmodified, and nothing in this
+chart yet removes it or writes a seed. A machine from a cloud preset boots as one from a default
+preset did.
+
+The two packages under the old names are not deleted. Chart `0.2.0` resolves to digests inside
+them, and they hold nothing else. `stateful-pods-ubuntu` is not orphaned at all — `ubuntu-noble`
+still publishes into it, and the daily bump still moves it.
 
 ### A preset resolves into a package named for its distribution
 
@@ -855,6 +928,18 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A newer upstream build is proposed | `preset-bump.yaml`, `test/presets/bump.bats` |
 | An unchanged upstream proposes nothing | `test/presets/bump.bats` |
 | A proposal names a reference that already exists | `preset-bump.yaml` publishes before it proposes |
+
+### distro-presets (added and modified by cloud-init-presets)
+
+| Scenario | Covered by |
+| --- | --- |
+| A preset built from a cloud variant carries cloud-init | the preset stage of `hack/integration-test.sh`, asserted inside the booted machine |
+| A distribution with no cloud variant keeps the default one | `images/presets/presets.list` keeps `void-current` on `default`; the same stage asserts the Void machine carries no cloud-init |
+| The variant is looked up, not assumed | `test/presets/verification.bats`: an index offering only the default build is refused as an upstream that is not ready |
+| The disable marker is published as the upstream wrote it | the preset stage of `hack/integration-test.sh` |
+| A machine boots unaffected while the marker is in place | the same stage: the machine reaches readiness and no cloud-init stage has run |
+| One repository holds a distribution | `test/presets/verification.bats`, which resolves a preset and checks the repository it names, variant included |
+| Two variants of one release do not collide | the variant is part of the package in `images/presets/presets.list`, and `test/presets/catalog.bats` refuses a catalog entry naming the variantless package |
 
 ### values-validation (added by distro-presets)
 

@@ -30,6 +30,12 @@ FIXTURES="test/presets/fixtures"
 FIXTURE_DATE="20260829_05:24"
 FIXTURE_SHA256="c2eed8f2bf4fe70287ba9244161f30aefdb86328f5759d7efcdbf2b8a92288d6"
 
+# The variant `debian-trixie` names in images/presets/presets.list. Every fixture
+# below lays its build down under this variant and nowhere else, so that a build
+# the catalog does not name is never what a refusal was actually refusing. That
+# the field is read at all is asserted on its own, below.
+VARIANT="cloud"
+
 setup() {
   MIRROR="$BATS_TEST_TMPDIR/mirror"
   mkdir --parents "$MIRROR/meta/1.0"
@@ -45,9 +51,10 @@ mirror_build_append() {
   shift 2
   local arch dir
   for arch in "$@"; do
-    printf 'debian;trixie;%s;default;%s;/images/debian/trixie/%s/default/%s/\n' \
-      "$arch" "$date" "$arch" "$date" >> "$MIRROR/meta/1.0/index-system"
-    dir="$MIRROR/images/debian/trixie/$arch/default/$date"
+    printf 'debian;trixie;%s;%s;%s;/images/debian/trixie/%s/%s/%s/\n' \
+      "$arch" "$VARIANT" "$date" "$arch" "$VARIANT" "$date" \
+      >> "$MIRROR/meta/1.0/index-system"
+    dir="$MIRROR/images/debian/trixie/$arch/$VARIANT/$date"
     mkdir --parents "$dir"
     cp "$FIXTURES/SHA256SUMS" "$FIXTURES/SHA256SUMS.asc" "$dir/"
     printf '%s' "$content" > "$dir/rootfs.tar.xz"
@@ -76,7 +83,7 @@ build() {
   local arch
   for arch in arm64 amd64; do
     sed 's/^c2ee/c2ef/' "$FIXTURES/SHA256SUMS" \
-      > "$MIRROR/images/debian/trixie/$arch/default/$FIXTURE_DATE/SHA256SUMS"
+      > "$MIRROR/images/debian/trixie/$arch/$VARIANT/$FIXTURE_DATE/SHA256SUMS"
   done
 
   build debian-trixie
@@ -91,7 +98,7 @@ build() {
   local arch
   for arch in arm64 amd64; do
     printf 'not a signature\n' \
-      > "$MIRROR/images/debian/trixie/$arch/default/$FIXTURE_DATE/SHA256SUMS.asc"
+      > "$MIRROR/images/debian/trixie/$arch/$VARIANT/$FIXTURE_DATE/SHA256SUMS.asc"
   done
 
   build debian-trixie
@@ -101,7 +108,7 @@ build() {
 
 @test "a checksum list the upstream never served stops the build" {
   mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
-  rm --force "$MIRROR"/images/debian/trixie/*/default/"$FIXTURE_DATE"/SHA256SUMS.asc
+  rm --force "$MIRROR"/images/debian/trixie/*/"$VARIANT"/"$FIXTURE_DATE"/SHA256SUMS.asc
 
   build debian-trixie
   [ "$status" -ne 0 ]
@@ -124,7 +131,7 @@ build() {
   local arch
   for arch in arm64 amd64; do
     grep --invert-match 'rootfs.tar.xz' "$FIXTURES/SHA256SUMS" \
-      > "$MIRROR/images/debian/trixie/$arch/default/$FIXTURE_DATE/SHA256SUMS"
+      > "$MIRROR/images/debian/trixie/$arch/$VARIANT/$FIXTURE_DATE/SHA256SUMS"
   done
 
   # The list no longer verifies, because removing a line changed the signed
@@ -183,14 +190,40 @@ build() {
   [[ "$output" == *"$FIXTURE_DATE"* ]]
 }
 
-# The repository is named for the distribution and the tag for the release.
+# The repository is named for the distribution and the variant, and the tag for
+# the release. The variant is in the repository rather than in the tag because
+# two variants of one release carry the same upstream serial, so a tag naming
+# only the release and the serial would name two different root filesystems and
+# the build's already-published path would keep whichever arrived first.
 @test "a preset resolves into the package named in the catalog, tagged with its release" {
   mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
 
   build --resolve-only debian-trixie
   [ "$status" -eq 0 ]
   IFS=$'\t' read -r _ _ reference <<< "$output"
-  [ "$reference" = "${NOWHERE}debian:trixie-20260829_0524" ]
+  [ "$reference" = "${NOWHERE}debian-cloud:trixie-20260829_0524" ]
+}
+
+# The variant is looked up rather than assumed. An index carrying only the
+# `default` build of debian trixie is an index that does not offer `debian-trixie`
+# at all, because the catalog names `cloud` - and the build has to say so rather
+# than take the build that is there. Nothing else in this file would notice the
+# field being ignored: every other fixture lays its build down under the variant
+# the catalog names, so a build reading a fixed `default` would find them all.
+@test "a variant the catalog does not name is not what a preset resolves to" {
+  : > "$MIRROR/meta/1.0/index-system"
+  local arch
+  for arch in arm64 amd64; do
+    printf 'debian;trixie;%s;default;%s;/images/debian/trixie/%s/default/%s/\n' \
+      "$arch" "$FIXTURE_DATE" "$arch" "$FIXTURE_DATE" \
+      >> "$MIRROR/meta/1.0/index-system"
+  done
+
+  build --resolve-only debian-trixie
+  # The upstream-not-ready code: it offers no `cloud` build, which is the same
+  # shape of answer as offering one for a single architecture.
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"cloud"* ]]
 }
 
 # The package is a field in the catalog rather than a rule about anything, and
