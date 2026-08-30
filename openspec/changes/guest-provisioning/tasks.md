@@ -43,29 +43,29 @@
 
 ## 4. The provisioning step, in the shim image
 
-- [ ] 4.1 Write `test/shell/provision.bats` for the `native` backend: the step writes nothing into
+- [x] 4.1 Write `test/shell/provision.bats` for the `native` backend: the step writes nothing into
   a fixture root filesystem, removes nothing, and says what it did; verify it fails with no script
   present
-- [ ] 4.2 Write the cases for the fail-loud check against three fixture root filesystems — one with
+- [x] 4.2 Write the cases for the fail-loud check against three fixture root filesystems — one with
   no cloud-init at all, one with the program but no init integration, and one with both — asserting
   that the first two fail with a message naming `guest.provisioning: native` and that neither leaves
   a seed behind; verify they fail before the script exists
-- [ ] 4.3 Write the cases for what the cloud-init backend writes: the four seed paths, the drop-in
+- [x] 4.3 Write the cases for what the cloud-init backend writes: the four seed paths, the drop-in
   with the six settings, the removal of `/etc/cloud/cloud-init.disabled`, and that a root filesystem
   with no `/etc/cloud` at all still ends up with a usable drop-in
-- [ ] 4.4 Write the cases for composition and shadowing: structured inputs compose a cloud-config
+- [x] 4.4 Write the cases for composition and shadowing: structured inputs compose a cloud-config
   that is valid JSON, list-valued inputs become arrays one item per line, a supplied `userData`
   is used verbatim and the structured inputs for it are ignored, and shadowing does not affect
   `network-config`
-- [ ] 4.5 Write the cases for the instance identity: the same material yields the same identity
+- [x] 4.5 Write the cases for the instance identity: the same material yields the same identity
   across two runs, changed material changes it, a changed machine name changes it, and the same
   content supplied by two different forms yields the same identity
-- [ ] 4.6 Implement `images/shim/scripts/lib-provision.sh` and `provision.sh` until the suites in
+- [x] 4.6 Implement `images/shim/scripts/lib-provision.sh` and `provision.sh` until the suites in
   4.1–4.5 pass; verify `make shell-test` is green
-- [ ] 4.7 Mark `provision.sh` executable in `images/shim/Containerfile` and add an assertion to
+- [x] 4.7 Mark `provision.sh` executable in `images/shim/Containerfile` and add an assertion to
   `hack/image-test.sh` that it is; verify `make image-test` is green — a container whose command is
   not executable fails at start, which is the failure this line prevents
-- [ ] 4.8 Run `make shell-lint`; verify shellcheck reports nothing
+- [x] 4.8 Run `make shell-lint`; verify shellcheck reports nothing
 
 ## 5. Prove both halves on a cluster, as a user
 
