@@ -19,6 +19,9 @@
 # reached the packaging step the failure would be a connection error, so the
 # assertions on the message are also assertions that nothing was packaged.
 
+# --separate-stderr, so that a refusal written to stderr is not read as output.
+bats_require_minimum_version 1.5.0
+
 BUILD="hack/preset-build.sh"
 NOWHERE="localhost:1/unused-"
 FIXTURES="test/presets/fixtures"
