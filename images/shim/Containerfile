@@ -53,6 +53,7 @@ RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
  && chmod 0755 /usr/local/lib/stateful-pods/boot.sh \
       /usr/local/lib/stateful-pods/customize.sh \
       /usr/local/lib/stateful-pods/prepare.sh \
+      /usr/local/lib/stateful-pods/provision.sh \
       /usr/local/lib/stateful-pods/ready.sh \
       /usr/local/lib/stateful-pods/seed-lxc.sh \
       /usr/local/lib/stateful-pods/seed-oci.sh \

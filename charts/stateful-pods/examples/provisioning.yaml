@@ -1,0 +1,66 @@
+# A machine provisioned by cloud-init, supplying its inputs both ways at once.
+#
+# The two forms are per input rather than per release, which is what makes this
+# shape possible: what is not sensitive stays readable in the values file, and
+# what is sensitive is named rather than spelled out and appears neither here nor
+# in the Helm release.
+#
+# The preset carries cloud-init, which the default backend requires. `void-current`
+# does not and would have to say `guest.provisioning: native` instead.
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    guest:
+      # The default, named here because this example is about it.
+      provisioning: cloud-init
+
+      # Bumped by hand to restart the machine when a referenced Secret has
+      # rotated. Helm cannot see the content of one, so nothing else here would
+      # notice.
+      provisioningRevision: "1"
+
+    cloudInit:
+      # Not sensitive: inline is easier to read and easier to hand to someone.
+      user:
+        value: maxim
+
+      sshAuthorizedKeys:
+        value: |
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample maxim@workstation
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAnother maxim@laptop
+
+      # Sensitive, so it is named rather than written. A crypt(3) hash belongs
+      # in this Secret, not a plaintext password.
+      password:
+        valueFrom:
+          secretKeyRef:
+            name: machine-secrets
+            key: root-password-hash
+
+      # One item per line, so that the inline form and a Secret's bytes are the
+      # same shape.
+      packages:
+        value: |
+          htop
+          tmux
+
+      runcmd:
+        value: |
+          systemctl enable --now ssh
+
+      # A ConfigMap is accepted wherever a Secret is: a package list is not a
+      # secret, and forcing one into a Secret would be friction with no benefit.
+      packageUpgrade:
+        valueFrom:
+          configMapKeyRef:
+            name: machine-config
+            key: package-upgrade

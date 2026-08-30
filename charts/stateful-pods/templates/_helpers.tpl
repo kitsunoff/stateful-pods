@@ -163,6 +163,183 @@ Takes (dict "root" $ "name" $name "machine" $machine).
 {{- end -}}
 
 {{/*
+--------------------------------------------------------------------------------
+Guest provisioning
+--------------------------------------------------------------------------------
+
+The backend a machine selects, the inputs each backend accepts, and how those
+inputs are turned into the two things the pod needs: entries for the chart's own
+Secret, and sources for the projected volume that assembles them.
+
+Nothing here reads a value into script text. The provisioning step is handed a
+directory of files with fixed names and never learns whether a file was written
+from the values or projected from somebody else's Secret - which is what makes
+"inline or reference" a property of the values rather than a branch in the code.
+*/}}
+
+{{/*
+The inputs the cloud-init backend accepts, mapped to the file name each one is
+materialized under.
+
+The file names are the contract between the chart and the provisioning script.
+They are deliberately not the field names: `user-data`, `network-config` and
+`vendor-data` are cloud-init's own names for the seed files, and the rest follow
+the same spelling so that one directory listing reads as one thing.
+
+Takes no context. Emits YAML.
+*/}}
+{{- define "stateful-pods.provisioning.cloudInit.inputs" -}}
+userData: user-data
+networkConfig: network-config
+vendorData: vendor-data
+user: user
+password: password
+sshAuthorizedKeys: ssh-authorized-keys
+packages: packages
+runcmd: runcmd
+packageUpgrade: package-upgrade
+{{- end -}}
+
+{{/*
+The backend a machine is provisioned by.
+
+`cloud-init` when the machine names none, per the design: it is what people
+actually want, and what the images this project publishes carry. A value of the
+wrong type resolves to the default here and is reported by the validation stage,
+so that one mistake produces one message.
+
+Takes (dict "root" $ "name" $name "machine" $machine).
+*/}}
+{{- define "stateful-pods.machine.provisioning.backend" -}}
+{{- $guest := .machine.guest | default dict -}}
+{{- $declared := "" -}}
+{{- if kindIs "map" $guest -}}
+{{- $declared = index $guest "provisioning" -}}
+{{- end -}}
+{{- if and (kindIs "string" $declared) (ne ($declared | toString) "") -}}
+{{- $declared | toString -}}
+{{- else -}}
+cloud-init
+{{- end -}}
+{{- end -}}
+
+{{/*
+What a machine's provisioning inputs resolve to.
+
+Emits YAML with three keys:
+
+  backend  the backend name
+  inline   file name -> content, for the chart's own Secret
+  refs     one entry per referenced input, each with the file name it is
+           projected to and the object and key it comes from
+
+Validation has already run by the time anything calls this, so it assumes the
+inputs are well formed. Rendering is deterministic: the catalog is a map, and
+Helm iterates a map in key order.
+
+Takes (dict "root" $ "name" $name "machine" $machine).
+*/}}
+{{- define "stateful-pods.machine.provisioning.resolved" -}}
+{{- $backend := include "stateful-pods.machine.provisioning.backend" . -}}
+{{- $inline := dict -}}
+{{- $refs := list -}}
+{{- if eq $backend "cloud-init" -}}
+{{- $catalog := include "stateful-pods.provisioning.cloudInit.inputs" . | fromYaml -}}
+{{- $given := .machine.cloudInit | default dict -}}
+{{- if kindIs "map" $given -}}
+{{- range $field, $path := $catalog -}}
+{{- $input := index $given $field -}}
+{{- if kindIs "map" $input -}}
+{{- $value := index $input "value" -}}
+{{- if not (kindIs "invalid" $value) -}}
+{{- $_ := set $inline $path ($value | toString) -}}
+{{- else -}}
+{{- $from := index $input "valueFrom" | default dict -}}
+{{- if kindIs "map" (index $from "secretKeyRef") -}}
+{{- $ref := index $from "secretKeyRef" -}}
+{{- $refs = append $refs (dict "path" $path "kind" "secret" "name" ($ref.name | toString) "key" ($ref.key | toString)) -}}
+{{- else if kindIs "map" (index $from "configMapKeyRef") -}}
+{{- $ref := index $from "configMapKeyRef" -}}
+{{- $refs = append $refs (dict "path" $path "kind" "configMap" "name" ($ref.name | toString) "key" ($ref.key | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml (dict "backend" $backend "inline" $inline "refs" $refs) }}
+{{- end -}}
+
+{{/*
+The name of the Secret the chart renders for a machine's inline material.
+
+A machine of its own rather than one per release: the material belongs to the
+machine, and a release that grows a second machine must not have to rename the
+first one's Secret.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.provisioning.secretName" -}}
+{{- printf "%s-provisioning" (include "stateful-pods.machine.name" .) -}}
+{{- end -}}
+
+{{/*
+Whether a machine supplies any provisioning material at all.
+
+Emits "true" or "". A machine that supplies nothing renders no Secret and no
+volume - an empty projected volume would be a mount that carries nothing, and a
+Secret with no keys would be an object nobody can explain.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.provisioning.hasMaterial" -}}
+{{- $resolved := include "stateful-pods.machine.provisioning.resolved" . | fromYaml -}}
+{{- if or $resolved.inline $resolved.refs -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+The digest that restarts a machine when its provisioning changes.
+
+Over everything the chart can see: the backend, the inline material, the
+references by name rather than by content, and the machine's own revision input.
+
+The references are in it by name because a machine that stops reading one Secret
+and starts reading another has changed even though neither Secret's content is
+visible from here. What is not in it is what those Secrets hold, which is why the
+revision input exists at all.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.provisioning.checksum" -}}
+{{- $resolved := include "stateful-pods.machine.provisioning.resolved" . | fromYaml -}}
+{{- $guest := .machine.guest | default dict -}}
+{{- $revision := "" -}}
+{{- if kindIs "map" $guest -}}
+{{- $revision = index $guest "provisioningRevision" | default "" | toString -}}
+{{- end -}}
+{{- printf "%s\n%s" (toYaml $resolved) $revision | sha256sum -}}
+{{- end -}}
+
+{{/*
+The environment the provisioning step reads, on top of the seeding environment
+every step already gets.
+
+The backend and the directory the material is mounted at. Nothing else: the
+identity the instance is keyed on is composed by the script from SP_NAMESPACE,
+SP_RELEASE and SP_MACHINE, which the seeding environment already carries.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.provisioning.env" -}}
+- name: SP_PROVISIONING
+  value: {{ include "stateful-pods.machine.provisioning.backend" . | quote }}
+- name: SP_PROVISIONING_DIR
+  value: /provisioning
+{{- end -}}
+
+{{/*
 The security context of the steps that run before the guest.
 
 The privilege a machine's mode names belongs to the guest container and to nothing
@@ -313,6 +490,147 @@ empty.
 {{- $errors = append $errors (printf "machines.%s.source.pullSecretName: is empty. Name the Secret in this release's namespace that holds the registry credentials, or remove the field entirely to fetch the source anonymously." $name) -}}
 {{- else if or (gt (len ($pullSecret | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($pullSecret | toString))) -}}
 {{- $errors = append $errors (printf "machines.%s.source.pullSecretName: %q is not a valid Secret name. It must be a DNS-1123 subdomain: at most 253 lowercase alphanumeric characters, '-' or '.', with each dot-separated part starting and ending with an alphanumeric character." $name ($pullSecret | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+
+{{/*
+The checks on one provisioning input: that it is supplied exactly one way, and
+that the way it is supplied is complete.
+
+Both forms present is not a preference the chart can resolve. Picking one would
+mean the material the user believed was in effect is the one that was discarded,
+and they would learn that from a machine that behaves wrongly rather than from a
+message.
+
+Takes (dict "field" $prefix "input" $input). Emits a YAML list of errors,
+possibly empty.
+*/}}
+{{- define "stateful-pods.validate.valueSource" -}}
+{{- $field := .field -}}
+{{- $input := .input -}}
+{{- $errors := list -}}
+{{- if not (kindIs "map" $input) -}}
+{{- $errors = append $errors (printf "%s: must be a map naming `value` or `valueFrom`, but is of type %s. Every provisioning input takes one of those two forms, so a bare scalar has to be given under `value`." $field (kindOf $input)) -}}
+{{- else -}}
+{{- $value := index $input "value" -}}
+{{- $from := index $input "valueFrom" -}}
+{{- $hasValue := not (kindIs "invalid" $value) -}}
+{{- $hasFrom := not (kindIs "invalid" $from) -}}
+{{- if and $hasValue $hasFrom -}}
+{{- $errors = append $errors (printf "%s: carries both `value` and `valueFrom`. Supply exactly one: `value` puts the content in the values file and in the Helm release, `valueFrom` names a Secret or ConfigMap key so that it appears in neither." $field) -}}
+{{- else if $hasValue -}}
+{{- /* A Secret key is bytes, so both forms carry a string. Accepting a list
+       here would make the two forms different shapes, which is the one property
+       of this contract worth more than the convenience. */ -}}
+{{- if not (kindIs "string" $value) -}}
+{{- $errors = append $errors (printf "%s.value: must be a string, but is of type %s. A referenced Secret key is bytes, so the inline form carries a string too; give a list as a block scalar with one item per line." $field (kindOf $value)) -}}
+{{- end -}}
+{{- else if $hasFrom -}}
+{{- if not (kindIs "map" $from) -}}
+{{- $errors = append $errors (printf "%s.valueFrom: must be a map naming one source, but is of type %s. Accepted sources: secretKeyRef, configMapKeyRef." $field (kindOf $from)) -}}
+{{- else -}}
+{{- $named := list -}}
+{{- range $source := list "secretKeyRef" "configMapKeyRef" -}}
+{{- if not (kindIs "invalid" (index $from $source)) -}}
+{{- $named = append $named $source -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $named) 1 -}}
+{{- $errors = append $errors (printf "%s.valueFrom: names more than one source. Exactly one of secretKeyRef, configMapKeyRef, so that the content of an input has a single origin." $field) -}}
+{{- else if eq (len $named) 0 -}}
+{{- $errors = append $errors (printf "%s.valueFrom: names no source the chart accepts. Accepted sources: secretKeyRef, configMapKeyRef - a key in a Secret or in a ConfigMap in this release's namespace." $field) -}}
+{{- else -}}
+{{- $source := index $named 0 -}}
+{{- $ref := index $from $source -}}
+{{- $object := ternary "Secret" "ConfigMap" (eq $source "secretKeyRef") -}}
+{{- if not (kindIs "map" $ref) -}}
+{{- $errors = append $errors (printf "%s.valueFrom.%s: must be a map naming the %s and the key inside it, but is of type %s." $field $source $object (kindOf $ref)) -}}
+{{- else -}}
+{{- if eq (index $ref "name" | default "" | toString) "" -}}
+{{- $errors = append $errors (printf "%s.valueFrom.%s.name: not set. Name the %s in this release's namespace that holds this input's content." $field $source $object) -}}
+{{- end -}}
+{{- if eq (index $ref "key" | default "" | toString) "" -}}
+{{- $errors = append $errors (printf "%s.valueFrom.%s.key: not set. Name the key inside that %s whose content becomes this input." $field $source $object) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- $errors = append $errors (printf "%s: names neither `value` nor `valueFrom`. Give the content inline under `value`, or name a Secret or ConfigMap key under `valueFrom`." $field) -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+
+{{/*
+The checks on a machine's provisioning: the backend it names, and the inputs it
+supplies for that backend.
+
+An input belonging to a backend the machine did not select is an error rather
+than something ignored. Silently ignoring it leaves the user believing the
+machine is configured to do something it is not, which is the same class of
+outcome as the silent no-op this whole capability exists to prevent.
+
+Takes (dict "name" $name "machine" $machine). Emits a YAML list of errors,
+possibly empty.
+*/}}
+{{- define "stateful-pods.validate.provisioning" -}}
+{{- $name := .name -}}
+{{- $machine := .machine -}}
+{{- $errors := list -}}
+{{- $backend := "cloud-init" -}}
+{{- $backendKnown := true -}}
+{{- $guest := $machine.guest | default dict -}}
+{{- if kindIs "map" $guest -}}
+{{- $declared := index $guest "provisioning" -}}
+{{- if not (kindIs "invalid" $declared) -}}
+{{- if not (kindIs "string" $declared) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: must name a provisioning backend, but is of type %s. Accepted backends: cloud-init, native." $name (kindOf $declared)) -}}
+{{- $backendKnown = false -}}
+{{- else if eq ($declared | toString) "systemd-credentials" -}}
+{{- /* Not a typo on the user's part. The design describes three backends, and
+       telling someone who read it that the name is wrong would send them
+       looking for the right spelling of something that is not there. */ -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: \"systemd-credentials\" is not implemented yet. The design describes it - credentials projected into a tmpfs at /run/host/credentials, so that nothing sensitive is written to the machine's volume - and this chart does not implement it. Accepted backends: cloud-init, native." $name) -}}
+{{- $backendKnown = false -}}
+{{- else if not (has ($declared | toString) (list "cloud-init" "native")) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: %q is not a provisioning backend. Accepted backends: cloud-init, native. cloud-init writes a NoCloud seed into the machine and needs cloud-init in the image; native writes nothing beyond the files the chart already maintains and works with any image." $name ($declared | toString)) -}}
+{{- $backendKnown = false -}}
+{{- else -}}
+{{- $backend = $declared | toString -}}
+{{- end -}}
+{{- end -}}
+{{- $revision := index $guest "provisioningRevision" -}}
+{{- if not (kindIs "invalid" $revision) -}}
+{{- if not (or (kindIs "string" $revision) (kindIs "float64" $revision) (kindIs "int" $revision) (kindIs "int64" $revision)) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioningRevision: must be a string or a number, but is of type %s. It is folded into the annotation that restarts a machine, and it exists for material the chart cannot see the content of - a referenced Secret that has rotated." $name (kindOf $revision)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- $given := index $machine "cloudInit" -}}
+{{- if not (kindIs "invalid" $given) -}}
+{{- if not (kindIs "map" $given) -}}
+{{- $errors = append $errors (printf "machines.%s.cloudInit: must be a map of provisioning inputs, but is of type %s. Each input under it takes a `value` or a `valueFrom`." $name (kindOf $given)) -}}
+{{- else if and $backendKnown (ne $backend "cloud-init") -}}
+{{- $errors = append $errors (printf "machines.%s.cloudInit: belongs to the \"cloud-init\" backend, but this machine selected %q. Remove these inputs, or set machines.%s.guest.provisioning to \"cloud-init\"." $name $backend $name) -}}
+{{- else -}}
+{{- $catalog := include "stateful-pods.provisioning.cloudInit.inputs" . | fromYaml -}}
+{{- range $field, $path := $catalog -}}
+{{- $input := index $given $field -}}
+{{- if not (kindIs "invalid" $input) -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.valueSource" (dict "field" (printf "machines.%s.cloudInit.%s" $name $field) "input" $input) | fromYamlArray) -}}
+{{- end -}}
+{{- end -}}
+{{- /* Reported after the inputs that exist, so that a machine with a real
+       mistake and a typo is told about the mistake first. */ -}}
+{{- range $field, $input := $given -}}
+{{- if kindIs "invalid" (index $catalog $field) -}}
+{{- $errors = append $errors (printf "machines.%s.cloudInit.%s: is not an input of the \"cloud-init\" backend. Accepted inputs: %s." $name $field (join ", " (keys $catalog | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{ toYaml $errors }}
@@ -517,6 +835,9 @@ Takes the root context.
 {{- if and (kindIs "map" $guest) (not (kindIs "invalid" (index $guest "init"))) -}}
 {{- $errors = append $errors (printf "machines.%s.guest.init: not supported. The shim runs /sbin/init and detects the guest's init system at boot, so there is nothing to select. Remove this input." $name) -}}
 {{- end -}}
+
+{{- /* How the machine is provisioned, and the inputs it supplies for it. */ -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.provisioning" (dict "name" $name "machine" $machine) | fromYamlArray) -}}
 
 {{- end -}}
 

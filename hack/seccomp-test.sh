@@ -288,11 +288,15 @@ sed -e '/^      hostUsers: false$/d' "$RAW_MANIFEST" > "$MACHINE_MANIFEST"
 # an assertion that passes for no reason.
 sed -e '/^ *seccompProfile:$/{N;/type: "Unconfined"/d;}' \
   "$MACHINE_MANIFEST" > "$DEFECTIVE_MANIFEST"
-# Three filters left, and none of them the guest's: the preparation steps declare
-# RuntimeDefault, and the guest is the only container in this manifest that
-# declares Unconfined. Checked by shape rather than by counting the word, because
-# the guest declares an access-control profile that is Unconfined as well.
-[[ "$(grep --count '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" || true)" -eq 3 ]] \
+# Four filters left, and none of them the guest's: the four preparation steps
+# declare RuntimeDefault, and the guest is the only container in this manifest
+# that declares Unconfined. Checked by shape rather than by counting the word,
+# because the guest declares an access-control profile that is Unconfined as
+# well.
+#
+# The number is spelled out rather than derived, so that a step added without a
+# declared filter fails here instead of being absorbed into the count.
+[[ "$(grep --count '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" || true)" -eq 4 ]] \
   || fail "removing the guest's filter removed the wrong number of filters"
 if grep --after-context=1 '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" | grep --quiet 'Unconfined'; then
   fail "the guest's declared filter was not removed, so the defect case is not the defect"
@@ -385,14 +389,19 @@ guest_filter="$(kc get pod oci-web-0 --output \
 pass "the guest declared Unconfined"
 init_filters="$(kc get pod oci-web-0 --output \
   "jsonpath={.spec.initContainers[*].securityContext.seccompProfile.type}")"
-[[ "$init_filters" == "RuntimeDefault RuntimeDefault RuntimeDefault" ]] \
+# One RuntimeDefault per preparation step, spelled out rather than derived: a
+# step added without a declared filter would otherwise be counted as one of the
+# steps that has one, on the very cluster whose kubelet supplies a default to
+# anything that declares none.
+[[ "$init_filters" == "RuntimeDefault RuntimeDefault RuntimeDefault RuntimeDefault" ]] \
   || fail "the preparation steps declared '${init_filters:-nothing}'"
 pass "every preparation step declared the runtime's default filter"
 # They ran to completion under it, which is the assertion that the default
-# profile withholds nothing an unpack, a write or an HTTPS fetch needs.
+# profile withholds nothing an unpack, a write, an HTTPS fetch or the
+# provisioning of a guest needs.
 init_exits="$(kc get pod oci-web-0 --output \
   "jsonpath={.status.initContainerStatuses[*].state.terminated.exitCode}")"
-[[ "$init_exits" == "0 0 0" ]] \
+[[ "$init_exits" == "0 0 0 0" ]] \
   || fail "a preparation step under the default filter exited with '${init_exits:-nothing}'"
 pass "every preparation step succeeded under the runtime's default filter"
 

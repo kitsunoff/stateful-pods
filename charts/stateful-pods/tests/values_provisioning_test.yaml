@@ -1,0 +1,293 @@
+suite: values validation - the provisioning backend and its inputs
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  # ------------------------------------------------------------- the backend ---
+  - it: accepts the two backends the chart implements
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: native
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: refuses a backend that does not exist, and lists the ones that do
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: ansible
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "ansible" is not a provisioning backend.*cloud-init, native'
+
+  # The design names three backends. Telling someone who read it that their
+  # spelling is wrong would send them looking for the right one.
+  - it: says systemd-credentials is not implemented rather than that it does not exist
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: systemd-credentials
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "systemd-credentials" is not implemented yet.*cloud-init, native'
+
+  - it: refuses a backend that is not a string
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: true
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: must name a provisioning backend, but is of type bool'
+
+  # ------------------------------------------------------- the value source ---
+  - it: refuses an input given both inline and by reference
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: user
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.user: carries both `value` and `valueFrom`.*exactly one'
+
+  - it: refuses a reference that names two sources
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: user-data
+              configMapKeyRef:
+                name: machine-config
+                key: user-data
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.userData\.valueFrom: names more than one source.*secretKeyRef, configMapKeyRef'
+
+  - it: refuses an input that names neither a value nor a reference
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user: {}
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.user: names neither `value` nor `valueFrom`'
+
+  - it: refuses a reference with no object name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              secretKeyRef:
+                key: user-data
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.userData\.valueFrom\.secretKeyRef\.name: not set'
+
+  - it: refuses a reference with no key
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              configMapKeyRef:
+                name: machine-config
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.userData\.valueFrom\.configMapKeyRef\.key: not set'
+
+  - it: refuses a reference source the chart does not accept
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.userData\.valueFrom: names no source the chart accepts.*secretKeyRef, configMapKeyRef'
+
+  # A Secret key is bytes. Accepting a list here would make the inline form and
+  # the reference form two different shapes, which is the one property of the
+  # contract worth more than the convenience.
+  - it: refuses a value that is not a string, and says how to give a list
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          packages:
+            value:
+              - htop
+              - tmux
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.packages\.value: must be a string, but is of type slice.*one item per line'
+
+  - it: refuses an input that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user: maxim
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.user: must be a map naming `value` or `valueFrom`, but is of type string.*given under `value`'
+
+  # ----------------------------------------------- inputs and their backend ---
+  - it: refuses a cloud-init input on a machine provisioned natively
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: native
+        cloudInit:
+          userData:
+            value: "#cloud-config\n"
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit: belongs to the "cloud-init" backend, but this machine selected "native"'
+
+  - it: refuses an input the cloud-init backend does not have
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          sshKeys:
+            value: ssh-ed25519 AAAA
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.sshKeys: is not an input of the "cloud-init" backend.*sshAuthorizedKeys'
+
+  - it: refuses cloudInit that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit: "#cloud-config"
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit: must be a map of provisioning inputs, but is of type string'
+
+  # ------------------------------------------------------------- the revision ---
+  - it: refuses a provisioning revision that is not a scalar
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioningRevision:
+            - 1
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioningRevision: must be a string or a number, but is of type slice'
+
+  # ---------------------------------------------------- reported all at once ---
+  # The semantic stage accumulates, so a machine with two wrong inputs is told
+  # about both rather than about the first.
+  - it: reports every rejected provisioning input together
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+            valueFrom:
+              secretKeyRef:
+                name: s
+                key: k
+          sshKeys:
+            value: ssh-ed25519 AAAA
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit\.user: carries both.*machines\.web\.cloudInit\.sshKeys: is not an input'

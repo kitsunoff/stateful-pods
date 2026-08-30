@@ -79,11 +79,15 @@ tests:
           path: spec.template.spec.initContainers[2].securityContext.seccompProfile
           value:
             type: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[3].securityContext.seccompProfile
+          value:
+            type: RuntimeDefault
       - notExists:
           path: spec.template.spec.securityContext
       - lengthEqual:
           path: spec.template.spec.initContainers
-          count: 3
+          count: 4
       - lengthEqual:
           path: spec.template.spec.containers
           count: 1

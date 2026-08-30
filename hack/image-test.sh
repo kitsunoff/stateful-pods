@@ -188,4 +188,40 @@ else
   fail "crane export lost the capability, kept a deleted file, or left a whiteout entry behind"
 fi
 
+echo "==> 7. every entry point the chart names is executable"
+# A container whose command is not executable fails the moment it starts, naming
+# a path and nothing else - and it fails for every machine at once, because the
+# chart runs every one of its containers from this image. The rule is derived
+# from the scripts rather than listed here: a script carrying a shebang is one
+# something executes, and a lib-*.sh is only ever sourced. An entry point added
+# without its line in the Containerfile is caught by this and by nothing else.
+if in_image '
+set -eu
+status=0
+for script in /usr/local/lib/stateful-pods/*.sh; do
+  case "$(basename "$script")" in
+    lib-*)
+      if [ -x "$script" ]; then
+        echo "$script is executable, but a lib-*.sh is only ever sourced" >&2
+        status=1
+      fi
+      ;;
+    *)
+      if ! head -n 1 "$script" | grep -q "^#!"; then
+        echo "$script carries no shebang but is not a lib-*.sh" >&2
+        status=1
+      elif [ ! -x "$script" ]; then
+        echo "$script is an entry point and is not executable" >&2
+        status=1
+      fi
+      ;;
+  esac
+done
+exit "$status"
+' >/dev/null 2>&1; then
+  pass "every entry point is executable and every sourced library is not"
+else
+  fail "a script the chart runs as a container command is not executable"
+fi
+
 echo "all image assertions held"

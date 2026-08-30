@@ -1,0 +1,48 @@
+# A machine provisioned by cloud-init, from raw user-data.
+#
+# The headline of the guest-provisioning capability: a user, an SSH key, and a
+# machine somebody can actually log into. The key pair below is a throwaway
+# generated for this fixture and is in the repository on purpose - it protects
+# nothing, and the private half has to be reachable from inside the machine for
+# the login to be a login rather than a claim that one would work.
+#
+# Raw user-data rather than the structured shortcuts, because that is the shape a
+# person who already knows cloud-init reaches for, and because it is the form
+# that shadows the structured inputs - which the suite asserts separately.
+#
+# privileged mode, because a kind node is itself a container and user namespaces
+# nested inside one are unreliable - see docs/research/05-open-questions.md §12.
+machines:
+  web:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi
+    cloudInit:
+      userData:
+        value: |
+          #cloud-config
+          users:
+            - name: maxim
+              groups: [sudo]
+              shell: /bin/bash
+              sudo: "ALL=(ALL) NOPASSWD:ALL"
+              ssh_authorized_keys:
+                - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPz7Ez/ISVhAIZcJzOZmsB06LbVhi+OGmt+InUlz/XPj stateful-pods-integration-fixture
+          write_files:
+            - path: /root/fixture-key
+              permissions: "0600"
+              content: |
+                -----BEGIN OPENSSH PRIVATE KEY-----
+                b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+                QyNTUxOQAAACD8+xM/yElYQCGXCczmZrAdOi21YYvjhprfiJ1Jc/1z4wAAAKhGFVH+RhVR
+                /gAAAAtzc2gtZWQyNTUxOQAAACD8+xM/yElYQCGXCczmZrAdOi21YYvjhprfiJ1Jc/1z4w
+                AAAECybsDfSGsY6qiTHD4O3YOqQDvbZFtJ+cKubl80gOmtyPz7Ez/ISVhAIZcJzOZmsB06
+                LbVhi+OGmt+InUlz/XPjAAAAIXN0YXRlZnVsLXBvZHMtaW50ZWdyYXRpb24tZml4dHVyZQ
+                ECAwQ=
+                -----END OPENSSH PRIVATE KEY-----
+          runcmd:
+            - [ touch, /etc/provisioned-by-cloud-init ]

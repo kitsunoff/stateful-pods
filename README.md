@@ -46,7 +46,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 
 ## How a machine starts
 
-A machine takes minutes to become usable, and for most of that a pod-level view says `Init:1/3`.
+A machine takes minutes to become usable, and for most of that a pod-level view says `Init:1/4`.
 That is not a stall; it is the volume being filled with an operating system.
 
 ```text
@@ -63,6 +63,10 @@ That is not a stall; it is the volume being filled with an operating system.
         ▼
   ┌───────────┐
   │ customize │   hostname, hosts, resolv.conf — the files the chart maintains
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │ provision │   users, keys, packages — a cloud-init seed, or nothing at all
   └─────┬─────┘
         ▼
   ┌───────────┐
@@ -102,6 +106,47 @@ so that a mistyped field name produces a message about the field and not about t
 | `preset` | `name` | A name this project pins and verified the provenance of. |
 | `oci` | `reference` | Any image; flattened out of the registry, not run as a container. |
 | `lxc` | `url`, `sha256` | A conventional template tarball. Verification cannot be skipped, and the checksum must be quoted — sixty-four digits with no letters is a YAML *number*. |
+
+## Getting into a machine
+
+A machine is provisioned by **cloud-init** unless it says otherwise. The chart writes a NoCloud seed
+into the machine's own root filesystem, hands the host name, host table, resolver and network
+configuration back to the layers that already own them, and removes the
+`/etc/cloud/cloud-init.disabled` marker the distributions ship in their LXC images — without which a
+seed is read by nothing at all.
+
+```yaml
+machines:
+  web:
+    cloudInit:
+      user:
+        value: maxim
+      sshAuthorizedKeys:
+        value: |
+          ssh-ed25519 AAAAC3Nz... maxim@workstation
+      password:
+        valueFrom:                  # sensitive material is named, never spelled out
+          secretKeyRef:
+            name: machine-secrets
+            key: root-password-hash
+```
+
+Every input takes either form, per input, and the two mix freely in one machine. Referenced material
+appears neither in the values file nor in the Helm release. `userData` is the escape hatch: supply it
+and the structured inputs for user-data are replaced rather than merged, which is Proxmox's
+`cicustom` rule for the same choice.
+
+**An image that cannot run cloud-init fails the pod**, with a message naming
+`guest.provisioning: native` as the fix. That is the whole point of the default: the alternative is a
+machine that installs cleanly, boots with no users and no keys, and gives nobody a way in — a failure
+indistinguishable from success.
+
+| Preset | Backends it can serve | Why |
+| --- | --- | --- |
+| `debian-trixie` | `cloud-init`, `native` | built from the upstream `cloud` variant |
+| `alpine-3.24` | `cloud-init`, `native` | built from the upstream `cloud` variant |
+| `ubuntu-noble` | **`native` only** | its upstream's cloud architectures are not yet on one build |
+| `void-current` | **`native` only** | its upstream publishes no cloud variant at all |
 
 [`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) is the full input contract,
 with a comment on every input, and [`charts/stateful-pods/README.md`](charts/stateful-pods/README.md)
@@ -227,12 +272,11 @@ that a registry whose name ends in `.local` is spoken to over plain HTTP — and
 lets a machine seed from an in-cluster `<service>.<namespace>.svc.cluster.local` registry with no
 insecure-registry input in the chart.
 
-**Guest provisioning is not here.** SSH host keys and accounts arrive in a later change, so a
-machine starts with the identity and accounts its source shipped. cloud-init is *present* in two of
-the four presets and does nothing: the upstream ships its LXC images with cloud-init installed
-and disabled by an `/etc/cloud/cloud-init.disabled` marker, a preset carries that marker unmodified,
-and nothing yet removes it or writes a seed for it to read. A machine installed today therefore
-boots exactly as it did before the presets moved to the cloud variant.
+**The `native` backend provisions nothing of its own.** It is layer 0 — the host name, host table
+and resolver the chart maintains — and that is all. Its own inputs, and the `systemd-credentials`
+backend that would keep material off the volume entirely, arrive in a later change. A machine on an
+image without cloud-init therefore starts with the accounts its source shipped, which today is two
+of the four presets.
 
 ## License
 

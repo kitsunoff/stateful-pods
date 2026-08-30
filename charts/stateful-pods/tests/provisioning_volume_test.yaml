@@ -1,0 +1,435 @@
+suite: rendering - how provisioning material reaches the machine
+templates:
+  - statefulset.yaml
+  - provisioning-secret.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  # ---------------------------------------------------------------- the step ---
+  - it: runs the provisioning step last, from the chart's own image
+    template: statefulset.yaml
+    set:
+      shim.image: ghcr.io/kitsunoff/stateful-pods-shim:test
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 4
+      - equal:
+          path: spec.template.spec.initContainers[3].name
+          value: provision
+      - equal:
+          path: spec.template.spec.initContainers[3].image
+          value: ghcr.io/kitsunoff/stateful-pods-shim:test
+      - equal:
+          path: spec.template.spec.initContainers[3].command
+          value:
+            - /usr/local/lib/stateful-pods/provision.sh
+
+  # The pod's shape must not change when the backend does. A backend switch that
+  # added or removed a container would be a different kind of pod, and the step
+  # is what says in the logs that the chart deliberately did nothing.
+  - it: runs the same step under the native backend
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: native
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 4
+      - equal:
+          path: spec.template.spec.initContainers[3].name
+          value: provision
+      - contains:
+          path: spec.template.spec.initContainers[3].env
+          content:
+            name: SP_PROVISIONING
+            value: native
+
+  - it: tells the step which backend the machine chose, defaulting to cloud-init
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[3].env
+          content:
+            name: SP_PROVISIONING
+            value: cloud-init
+      - contains:
+          path: spec.template.spec.initContainers[3].env
+          content:
+            name: SP_PROVISIONING_DIR
+            value: /provisioning
+
+  - it: prepares the volume under the runtime's default filter, like every other step
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[3].securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.initContainers[3].securityContext.allowPrivilegeEscalation
+          value: false
+
+  # ------------------------------------------------------------ no material ---
+  - it: renders no Secret for a machine that supplies nothing
+    template: provisioning-secret.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no provisioning volume for a machine that supplies nothing
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - notContains:
+          path: spec.template.spec.initContainers[3].volumeMounts
+          content:
+            name: provisioning
+            mountPath: /provisioning
+            readOnly: true
+
+  # ------------------------------------------------------- inline material ---
+  - it: puts inline material in a Secret of the machine's own
+    template: provisioning-secret.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+          sshAuthorizedKeys:
+            value: |
+              ssh-ed25519 AAAAC3Nz maxim@workstation
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Secret
+      - equal:
+          path: metadata.name
+          value: lab-web-provisioning
+      - equal:
+          path: data.user
+          value: bWF4aW0=
+      - equal:
+          path: data["ssh-authorized-keys"]
+          value: c3NoLWVkMjU1MTkgQUFBQUMzTnogbWF4aW1Ad29ya3N0YXRpb24K
+
+  - it: mounts the material into the provisioning step and nowhere else
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            value: "#cloud-config\n"
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[3].volumeMounts
+          content:
+            name: provisioning
+            mountPath: /provisioning
+            readOnly: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: provisioning
+            mountPath: /provisioning
+            readOnly: true
+      - lengthEqual:
+          path: spec.template.spec.initContainers[0].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[1].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+
+  - it: assembles inline material through the chart's own Secret
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            value: "#cloud-config\n"
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: provisioning
+      - equal:
+          path: spec.template.spec.volumes[0].projected.defaultMode
+          value: 256
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].secret.name
+          value: lab-web-provisioning
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].secret.items[0]
+          value:
+            key: user-data
+            path: user-data
+
+  # -------------------------------------------------- referenced material ---
+  - it: assembles a referenced Secret key as its own source
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: user-data
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes[0].projected.sources
+          count: 1
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].secret.name
+          value: machine-secrets
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].secret.items[0]
+          value:
+            key: user-data
+            path: user-data
+
+  - it: assembles a referenced ConfigMap key as its own source
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          packages:
+            valueFrom:
+              configMapKeyRef:
+                name: machine-config
+                key: packages
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].configMap.name
+          value: machine-config
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].configMap.items[0]
+          value:
+            key: packages
+            path: packages
+
+  # The two forms are per input, not per machine. This is the case that would
+  # break if the chart resolved the inputs anywhere other than the pod spec.
+  - it: assembles inline and referenced material into one directory
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: root-password-hash
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes[0].projected.sources
+          count: 2
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[0].secret.name
+          value: lab-web-provisioning
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[1].secret.name
+          value: machine-secrets
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources[1].secret.items[0]
+          value:
+            key: root-password-hash
+            path: password
+
+  - it: keeps referenced material out of the Secret the chart renders
+    template: provisioning-secret.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: root-password-hash
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # --------------------------------------------------- restart on a change ---
+  # The four digests below are pinned rather than merely required to exist. A
+  # test that only asserted the annotation is present would pass against an
+  # annotation that never changes, which is exactly the bug: a machine left
+  # running on material that no longer matches its values.
+  - it: restarts the machine when inline material changes
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/provisioning"]
+          value: 5cc7d707a42013fc7497ba10c2370e7886c80eeff0debc8715708ab70cd5c51d
+
+  - it: gives a different annotation for different inline material
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: someone-else
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/provisioning"]
+          value: 506b7afd5bc733be3b12b47d3f3724f9216f4ec1fdead2d1c251e80f3422de95
+
+  # Referenced material cannot be hashed, so the revision is the pure-Helm way
+  # to ask for the restart a rotated Secret does not produce on its own. These
+  # two machines differ in nothing but the revision, and the digest moves.
+  - it: folds an explicit revision into the same annotation
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioningRevision: "2"
+        cloudInit:
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: root-password-hash
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/provisioning"]
+          value: abee759b179d6081f93afbe1bf348e9870d4e4b6caa5722768926d36b1a424dd
+
+  - it: moves the annotation when only the revision changes
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioningRevision: "3"
+        cloudInit:
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: root-password-hash
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/provisioning"]
+          value: 9a07cf69734039a544ad0094c93a31af22769ad00d748a46b287fbe04468b819
+
+  - it: renders no annotation for a machine that supplies nothing
+    template: statefulset.yaml
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations["checksum/provisioning"]

@@ -150,6 +150,190 @@ shim:
 #     # applies to /etc/hosts and /etc/resolv.conf.
 #     hostname: null
 #
+#     guest:
+#       # How this machine is provisioned: cloud-init | native. Defaults to
+#       # cloud-init.
+#       #
+#       #   cloud-init - the chart writes a NoCloud seed into the machine at
+#       #                /var/lib/cloud/seed/nocloud, plus a drop-in of its own at
+#       #                /etc/cloud/cloud.cfg.d/99-stateful-pods.cfg, and removes
+#       #                the /etc/cloud/cloud-init.disabled marker that the
+#       #                distributions ship in their LXC images. The machine then
+#       #                gets users, keys, packages and commands from the
+#       #                cloudInit inputs below.
+#       #
+#       #                It REQUIRES cloud-init in the machine's root filesystem.
+#       #                A machine whose image cannot run it does not start: the
+#       #                pod fails with a message naming this value, because a
+#       #                machine that booted with no users, no keys and no way in
+#       #                would look exactly like a successful install. The
+#       #                distributions publish a "cloud" variant for this, and
+#       #                two of the four presets are built from one.
+#       #
+#       #                TWO PRESETS CANNOT RUN IT, and a machine on either must
+#       #                name `native` below or it will not start:
+#       #
+#       #                  debian-trixie  cloud-init, native
+#       #                  alpine-3.24    cloud-init, native
+#       #                  ubuntu-noble   NATIVE ONLY - its upstream's cloud
+#       #                                 architectures are not yet on one build
+#       #                  void-current   NATIVE ONLY - its upstream publishes no
+#       #                                 cloud variant at all
+#       #
+#       #                Nothing is installed into a preset to close either gap: a
+#       #                preset is the distribution's own root filesystem or it is
+#       #                not a preset. The column moves when an upstream does, so
+#       #                check the preset table in the chart README rather than
+#       #                assuming a distribution that carries cloud-init elsewhere
+#       #                carries it here.
+#       #
+#       #                A `kind: lxc` source almost always needs `native` too.
+#       #                The templates linuxcontainers.org and Proxmox publish are
+#       #                `default` variant root filesystems and carry no
+#       #                cloud-init; the cloud variants are not distributed in
+#       #                that form.
+#       #
+#       #   native     - the chart writes nothing into the machine beyond the
+#       #                host name, host table and resolver it maintains on every
+#       #                boot. Asks nothing of the image, so it works with any of
+#       #                them, and provisions no users and no keys - the machine
+#       #                starts with whatever its source shipped.
+#       #
+#       #                Switching an already-provisioned machine to this does
+#       #                not undo what was done. The volume is the machine, and a
+#       #                value change that silently edited a running machine's
+#       #                /etc would be a chart that destroys state on a typo.
+#       #
+#       # `systemd-credentials` is described in the design and is not implemented;
+#       # naming it fails rendering and says so, rather than pretending the name
+#       # is a typo.
+#       provisioning: cloud-init
+#
+#       # Optional: bump this to restart the machine and re-apply its
+#       # provisioning.
+#       #
+#       # It exists for material the chart cannot see the content of. Inline
+#       # material is rendered by Helm, so changing it restarts the machine by
+#       # itself; a referenced Secret that has rotated is invisible from here and
+#       # produces no restart at all. The three honest answers are a controller
+#       # that watches referenced Secrets and restarts the workload, a
+#       # `kubectl rollout restart`, or this.
+#       # provisioningRevision: "1"
+#
+#     # Inputs to the cloud-init backend. Rejected if the machine selected
+#     # another backend, rather than ignored: silently dropping them would leave
+#     # you believing the machine is configured to do something it is not.
+#     #
+#     # EVERY input below takes one of exactly two forms, and they may be mixed
+#     # freely within one machine:
+#     #
+#     #   <input>:
+#     #     value: |
+#     #       the content, inline
+#     #
+#     #   <input>:
+#     #     valueFrom:
+#     #       secretKeyRef:            # or configMapKeyRef
+#     #         name: machine-secrets
+#     #         key: user-data
+#     #
+#     # INLINE MATERIAL IS STORED IN THE HELM RELEASE. Helm keeps the values you
+#     # install with in a Secret in the release's namespace, where `helm get
+#     # values` prints it back, and it is usually committed to a repository as
+#     # well. That is a property of Helm and not of this chart, and it is the
+#     # reason the reference form exists: a value named through `valueFrom`
+#     # appears neither in the values file nor in the release.
+#     #
+#     # Whichever form is used, the material is written into the machine's own
+#     # volume and appears in its snapshots - and so does cloud-init's own copy
+#     # of it, under /var/lib/cloud/instances. That is how every cloud VM already
+#     # behaves and it is not fought here. Treat a machine's volume as holding
+#     # credentials, because it does: /etc/shadow is on it under any backend.
+#     cloudInit:
+#       # Raw user-data, in any format cloud-init accepts. The escape hatch.
+#       #
+#       # Supplying this REPLACES the structured inputs below for user-data
+#       # entirely - they are not merged into it, and the release notes say which
+#       # ones were ignored. That is the reference implementation's own rule for
+#       # the same choice: a YAML merge of two cloud-configs is a misfeature
+#       # waiting to happen, and per-file replacement is the only rule anyone can
+#       # predict.
+#       userData:
+#         value: |
+#           #cloud-config
+#           users:
+#             - name: maxim
+#               sudo: "ALL=(ALL) NOPASSWD:ALL"
+#               ssh_authorized_keys:
+#                 - ssh-ed25519 AAAAC3Nz... maxim@workstation
+#
+#       # Raw network-config. Almost certainly a mistake: the cluster's CNI has
+#       # already configured the machine's interface before any container starts,
+#       # and a configuration applied on top of that takes away the address the
+#       # pod was given. The chart disables cloud-init's network management for
+#       # exactly this reason; supplying this turns part of that back on.
+#       # networkConfig:
+#       #   value: |
+#       #     version: 2
+#
+#       # Raw vendor-data.
+#       # vendorData:
+#       #   value: |
+#       #     #cloud-config
+#
+#       # An account to create, with passwordless sudo. Proxmox spells this
+#       # `ciuser`. The keys and the password below land on it.
+#       #
+#       # It is an account of its own rather than the distribution's default one
+#       # renamed. cloud-init deprecated the key that renames it in 22.2 and will
+#       # remove it in 27.2, and on Alpine the rename also carried the
+#       # distribution's own privilege rule onto the new name, where it was
+#       # rejected - leaving an account with no way to administer the machine.
+#       #
+#       # Leave it unset to keep the distribution's own default user; the keys
+#       # and password below then land on that instead.
+#       # user:
+#       #   value: maxim
+#
+#       # The password of the account above, or of the distribution's default
+#       # user when none is named. Give a crypt(3) HASH, not a plaintext
+#       # one: a hash on the volume is the same exposure as /etc/shadow, which is
+#       # unavoidable, while a plaintext one is a second copy of a secret in a
+#       # form nothing needed. Proxmox spells this `cipassword`.
+#       #
+#       # This is the input that most wants the reference form.
+#       # password:
+#       #   valueFrom:
+#       #     secretKeyRef:
+#       #       name: machine-secrets
+#       #       key: root-password-hash
+#
+#       # Public keys, one per line, for the account named above - or for the
+#       # distribution's default user when none is. Proxmox spells this `sshkeys`.
+#       # sshAuthorizedKeys:
+#       #   value: |
+#       #     ssh-ed25519 AAAAC3Nz... maxim@workstation
+#
+#       # Packages to install on the first boot, one per line. One per line
+#       # rather than a YAML list, so that the inline form and a Secret's bytes
+#       # are the same shape.
+#       # packages:
+#       #   value: |
+#       #     htop
+#       #     tmux
+#
+#       # Commands to run on the first boot, one per line.
+#       # runcmd:
+#       #   value: |
+#       #     systemctl enable --now ssh
+#
+#       # Whether to upgrade every package on the first boot: "true" or "false".
+#       # Defaults to false, unlike Proxmox's `ciupgrade`, which defaults to
+#       # true: on a machine that is a container, a first boot spent upgrading
+#       # everything is a machine that looks hung.
+#       # packageUpgrade:
+#       #   value: "false"
+#
 #     security:
 #       # Privilege level of this machine: userns | privileged. Mandatory, per
 #       # machine, with no default and no autodetection - the chart will not weaken

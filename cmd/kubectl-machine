@@ -40,7 +40,7 @@ SP_RELEASE_LABEL="app.kubernetes.io/instance"
 # The container a machine's own operating system runs in, and the init containers
 # it passes through on the way there, in the order it passes through them.
 SP_GUEST="guest"
-SP_INIT_STEPS="seed prepare customize"
+SP_INIT_STEPS="seed prepare customize provision"
 
 SP_PROGRAM="kubectl machine"
 
@@ -427,6 +427,7 @@ step_stage() {
         seed) printf 'seeding' ;;
         prepare) printf 'preparing' ;;
         customize) printf 'customizing' ;;
+        provision) printf 'provisioning' ;;
         *) printf '%s' "$1" ;;
     esac
 }
@@ -436,6 +437,7 @@ step_text() {
         seed) printf 'seeding the root filesystem from its source' ;;
         prepare) printf "preparing the machine's identity" ;;
         customize) printf 'writing the files the chart maintains' ;;
+        provision) printf 'provisioning the guest' ;;
         *) printf 'running %s' "$1" ;;
     esac
 }
