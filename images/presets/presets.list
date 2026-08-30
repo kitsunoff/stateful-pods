@@ -1,14 +1,25 @@
 # The distributions this project publishes a preset for.
 #
-# One line per preset, in the same field order and with the same separator the
-# upstream's own index uses, because every line here is looked up in that index:
+# One line per preset:
 #
-#   preset;distro;release;variant
+#   preset;distro;release;variant;package
 #
-# The preset name is what a user writes in values.yaml, and the three fields
-# after it are what identify the build on images.linuxcontainers.org. The name is
-# not derived from them - `voidlinux;current` reads as `void-current` to a person
-# and nothing should have to know that rule twice.
+# The middle three fields are in the same field order and with the same
+# separator the upstream's own index uses, because every line here is looked up
+# in that index.
+#
+# The preset name is what a user writes in values.yaml, the three fields after it
+# are what identify the build on images.linuxcontainers.org, and the last is the
+# image repository the preset publishes into, under this project's registry
+# prefix. None of the four is derived from another: `voidlinux;current` reads as
+# `void-current` to a person and publishes into `stateful-pods-void`, and nothing
+# should have to know either of those rules twice.
+#
+# The package is per distribution and the tag is per release, which is how a
+# distribution names its own images. Two releases of one distribution therefore
+# share a package and are told apart by their tags - so the retention job's unit
+# of work is a release, not a package, and it is written that way even though
+# every package holds exactly one release today.
 #
 # This file is the single source of truth for what exists. The build matrix, the
 # daily bump, the retention job and `hack/check-presets.sh` all read it, so a
@@ -23,8 +34,9 @@
 #
 # Adding a release is a line. Removing one is a line and a catalog entry, and
 # stops the daily bump proposing it - it does not withdraw what is already
-# published, because a machine's source has to stay resolvable.
-debian-trixie;debian;trixie;default
-ubuntu-noble;ubuntu;noble;default
-alpine-3.24;alpine;3.24;default
-void-current;voidlinux;current;default
+# published, because a machine's source has to stay resolvable, and it leaves
+# that release's rolling tag behind in a package other releases may still use.
+debian-trixie;debian;trixie;default;debian
+ubuntu-noble;ubuntu;noble;default;ubuntu
+alpine-3.24;alpine;3.24;default;alpine
+void-current;voidlinux;current;default;void

@@ -16,11 +16,22 @@
 # produces an image that looks entirely correct and whose contents nobody
 # established - and this image becomes a privileged machine's root filesystem.
 #
+# A preset publishes into a repository named for its distribution, with the
+# release in the tag - stateful-pods-ubuntu:noble - because that is how the
+# distributions name their own images and it is what somebody reaching for one
+# expects. The package a preset belongs to is a field in images/presets/presets.list
+# rather than something worked out from the preset's name.
+#
 # Both architectures are published as one index, so that a machine resolves its
 # own architecture from the reference and the user never picks one. They must be
 # the same upstream build: a tag that named two different days depending on which
 # architecture you pulled would not be the immutable identity a machine's source
 # has to have.
+#
+# Each build gets two tags on the same index: the dated one, which is immutable
+# and is what every automated decision about a build is made from, and the release
+# itself, which follows the newest build. See set_rolling_tag for why publishing
+# something that moves does not cost a machine its reproducible disk.
 #
 # The per-architecture manifests are tagged too, with the same build identity and
 # the architecture appended. That is deliberate. An index's children are
@@ -113,8 +124,8 @@ usage() {
 Usage: hack/preset-build.sh [options] [preset...]
 
 Options:
-  --repository PREFIX  Repository prefix to publish under; the preset name is
-                       appended. Defaults to ghcr.io/<owner>/stateful-pods-,
+  --repository PREFIX  Repository prefix to publish under; the preset's package
+                       is appended. Defaults to ghcr.io/<owner>/stateful-pods-,
                        with the owner taken from the git remote.
   --mirror URL         Where to read the upstream index and archives from.
                        Defaults to https://images.linuxcontainers.org.
@@ -197,13 +208,14 @@ catalog_name_list() {
   printf '%s\n' "$list"
 }
 
-# Echoes "distro release variant" for a preset, or fails listing what exists.
+# Echoes "distro release variant package" for a preset, or fails listing what
+# exists.
 catalog_lookup() {
-  local want="$1" name distro release variant
-  while IFS=';' read -r name distro release variant || [[ -n "$name" ]]; do
-    [[ "$name" == \#* || -z "$variant" ]] && continue
+  local want="$1" name distro release variant package
+  while IFS=';' read -r name distro release variant package || [[ -n "$name" ]]; do
+    [[ "$name" == \#* || -z "$package" ]] && continue
     if [[ "$name" == "$want" ]]; then
-      printf '%s %s %s\n' "$distro" "$release" "$variant"
+      printf '%s %s %s %s\n' "$distro" "$release" "$variant" "$package"
       return 0
     fi
   done < "$CATALOG_FILE"
@@ -399,14 +411,43 @@ package_arch() {
   rm -f "$tarball"
 }
 
+# --- the rolling tag ----------------------------------------------------------
+
+# Points the release's tag - `noble`, `trixie`, `3.24`, `current` - at the build
+# that was just published. This is the one reference in the project that is meant
+# to move, and the reason it is safe to have at all is that nothing resolves it:
+# the chart's catalog pins a digest, `hack/check-presets.sh` fails the build if
+# an entry is a tag, and a machine is seeded from that digest. The rolling tag is
+# a name for a person at a terminal.
+#
+# Always after the dated tag, never before. A run interrupted between the two
+# leaves a complete immutable build and a rolling tag one build behind, which the
+# next run repairs; the other order would leave the rolling tag on content that
+# nothing else names, and retention would then be protecting a build it cannot
+# order.
+#
+# It can only ever move forward. The build packages whatever the upstream index
+# currently offers, which is that release's newest build, so there is no path
+# here that publishes an older one - and therefore none that walks the tag back.
+#
+# `crane tag` writes a manifest reference and uploads nothing, so the rolling tag
+# and the dated tag are two names for one package version rather than two copies.
+# That is what makes retention's protection of it sufficient: there is no version
+# carrying the rolling tag alone that could be deleted by mistake.
+set_rolling_tag() {
+  local repository="$1" tag="$2" release="$3" preset="$4"
+  note "$preset: pointing $repository:$release at $tag"
+  crane tag "$repository:$tag" "$release" >/dev/null
+}
+
 # --- one preset ---------------------------------------------------------------
 
 build_preset() {
   local preset="$1" index="$2" keyring="$3"
 
-  local fields distro release variant
+  local fields distro release variant package
   fields="$(catalog_lookup "$preset")"
-  read -r distro release variant <<< "$fields"
+  read -r distro release variant package <<< "$fields"
 
   local -a platform_list=()
   IFS=',' read -r -a platform_list <<< "$PLATFORMS"
@@ -444,7 +485,7 @@ build_preset() {
     fi
   done
 
-  local repository="$REPOSITORY$preset"
+  local repository="$REPOSITORY$package"
   local tag
   tag="$release-$(tag_date "$build")"
 
@@ -453,11 +494,14 @@ build_preset() {
     return 0
   fi
 
-  # A published tag is immutable. Re-running a build for one that already exists
-  # is a no-op rather than a push, so that a workflow re-run cannot change what a
-  # reference already means.
+  # A published dated tag is immutable. Re-running a build for one that already
+  # exists is a no-op rather than a push, so that a workflow re-run cannot change
+  # what a reference already means. The rolling tag is set anyway: it is the one
+  # thing here that is meant to move, and this is what repairs a run that died
+  # between the two pushes.
   if crane manifest "$repository:$tag" >/dev/null 2>&1; then
     note "$preset: $repository:$tag is already published, leaving it alone"
+    set_rolling_tag "$repository" "$tag" "$release" "$preset"
     printf '%s\t%s\t%s@%s\n' "$preset" "$build" "$repository" "$(crane digest "$repository:$tag")"
     return 0
   fi
@@ -482,6 +526,8 @@ build_preset() {
 
   note "$preset: combining into $repository:$tag"
   crane index append "${children[@]}" --tag "$repository:$tag" >/dev/null
+
+  set_rolling_tag "$repository" "$tag" "$release" "$preset"
 
   printf '%s\t%s\t%s@%s\n' "$preset" "$build" "$repository" "$(crane digest "$repository:$tag")"
 }

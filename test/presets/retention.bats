@@ -48,8 +48,18 @@ fixture() {
   done
   version_json+="{\"id\": 999, \"digest\": \"$shared\", \"tags\": [${tags%,}]}"
 
-  printf '{"keep": %s, "versions": [%s], "children": {%s}}' \
+  printf '{"keep": %s, "release": "trixie", "releases": ["trixie"], "versions": [%s], "children": {%s}}' \
     "$keep" "$version_json" "${children_json%,}"
+}
+
+# The same registry with the release's rolling tag on one of its builds. `day` is
+# the build it points at, which is the newest one on an ordinary day and an older
+# one after a run that died between the two pushes.
+fixture_with_rolling() {
+  local day="$3"
+  jq --arg tag "trixie" --arg digest "sha256:idx$day" \
+    '.versions |= map(if .digest == $digest then .tags += [$tag] else . end)' \
+    <<< "$(fixture "$1" "$2")"
 }
 
 # The same registry, with a limit on how much one run may remove.
@@ -124,6 +134,8 @@ deleted_digests() {
 @test "an untagged manifest no removed index points at is left alone" {
   plan <<< '{
     "keep": 1,
+    "release": "trixie",
+    "releases": ["trixie"],
     "versions": [
       {"id": 1, "digest": "sha256:new", "tags": ["trixie-20260102_0500"]},
       {"id": 2, "digest": "sha256:old", "tags": ["trixie-20260101_0500"]},
@@ -138,6 +150,8 @@ deleted_digests() {
 @test "an untagged child of a removed index is removed with it" {
   plan <<< '{
     "keep": 1,
+    "release": "trixie",
+    "releases": ["trixie"],
     "versions": [
       {"id": 1, "digest": "sha256:new", "tags": ["trixie-20260102_0500"]},
       {"id": 2, "digest": "sha256:old", "tags": ["trixie-20260101_0500"]},
@@ -155,6 +169,8 @@ deleted_digests() {
 @test "a tag that does not name a build stops the run, deleting nothing" {
   plan <<< '{
     "keep": 1,
+    "release": "trixie",
+    "releases": ["trixie"],
     "versions": [
       {"id": 1, "digest": "sha256:a", "tags": ["trixie-20260102_0500"]},
       {"id": 2, "digest": "sha256:b", "tags": ["latest"]}
@@ -170,6 +186,8 @@ deleted_digests() {
 @test "the newest build is decided by the upstream date, not by the order listed" {
   plan <<< '{
     "keep": 1,
+    "release": "trixie",
+    "releases": ["trixie"],
     "versions": [
       {"id": 1, "digest": "sha256:old", "tags": ["trixie-20260101_0500"]},
       {"id": 2, "digest": "sha256:new", "tags": ["trixie-20260131_0500"]},
@@ -233,6 +251,8 @@ deleted_digests() {
 @test "a per-architecture tag with no index is not a build" {
   plan <<< '{
     "keep": 2,
+    "release": "trixie",
+    "releases": ["trixie"],
     "versions": [
       {"id": 1, "digest": "sha256:idx3", "tags": ["trixie-20260103_0500"]},
       {"id": 2, "digest": "sha256:amd3", "tags": ["trixie-20260103_0500-amd64"]},
@@ -259,4 +279,119 @@ deleted_digests() {
   [[ "$(deleted_digests)" != *"sha256:orphan"* ]]
   # And the build that would have lost its place is still here.
   [[ "$(deleted_digests)" != *"sha256:idx2"* ]]
+}
+
+# --- the rolling tag ----------------------------------------------------------
+#
+# The release's own tag - `trixie`, `noble` - follows the newest build, and is
+# the name a person types. It is not a build: it carries no date, so it can play
+# no part in the ordering, and it must survive every run whatever it points at.
+#
+# It shares a digest with that build's dated tag, so it is the same package
+# version carrying two tags. Deleting the version deletes both names, which is
+# why this is a rule in the planner rather than a note in the workflow.
+
+@test "the rolling tag is not counted as a build" {
+  plan <<< "$(fixture_with_rolling 7 5 7)"
+  [ "$status" -eq 0 ]
+  # Five builds, all of them dated. A run that took the rolling tag for a build
+  # would have six here, and the sixth would have no date to order by.
+  [ "$(jq '.retained_builds | length' <<< "$output")" -eq 5 ]
+  [ "$(jq --raw-output '.retained_builds | map(test("^trixie-[0-9]{8}_[0-9]{4}$")) | all' <<< "$output")" = "true" ]
+  [ "$(jq --raw-output '.rolling_tags | join(" ")' <<< "$output")" = "trixie" ]
+}
+
+@test "the version the rolling tag names is never deleted, nor are its children" {
+  # The rolling tag left on the oldest build: what a run interrupted between the
+  # dated push and the rolling one leaves behind, and what the next six days
+  # then age out from under.
+  plan <<< "$(fixture_with_rolling 7 5 1)"
+  [ "$status" -eq 0 ]
+  [[ "$(deleted_digests)" != *"sha256:idx1"* ]]
+  [[ "$(deleted_digests)" != *"sha256:amd1"* ]]
+  [[ "$(jq --raw-output '.protected | join(" ")' <<< "$output")" == *"sha256:idx1"* ]]
+  [[ "$(jq --raw-output '.protected | join(" ")' <<< "$output")" == *"sha256:amd1"* ]]
+  # And the other build past the limit still goes, so this protects one thing
+  # rather than stopping the run.
+  [[ "$(deleted_digests)" == *"sha256:idx2"* ]]
+}
+
+@test "the rolling tag on the newest build costs that build nothing" {
+  plan <<< "$(fixture_with_rolling 7 5 7)"
+  [ "$status" -eq 0 ]
+  [ "$(deleted_digests)" = "sha256:amd1 sha256:amd2 sha256:idx1 sha256:idx2 " ]
+}
+
+# --- a package holding more than one release ----------------------------------
+#
+# The package is the distribution and the tag is the release, so two releases of
+# one distribution share a package. Retention runs once per preset, which means
+# once per release, and each run sees the other release's versions. Five is five
+# builds of Noble, not five builds of Ubuntu.
+
+two_releases() {
+  cat <<'JSON'
+{
+  "keep": 1,
+  "release": "RELEASE",
+  "releases": ["noble", "jammy"],
+  "versions": [
+    {"id": 1, "digest": "sha256:n2", "tags": ["noble-20260102_0500", "noble"]},
+    {"id": 2, "digest": "sha256:n1", "tags": ["noble-20260101_0500"]},
+    {"id": 3, "digest": "sha256:j1", "tags": ["jammy-20260101_0500", "jammy"]},
+    {"id": 4, "digest": "sha256:na2", "tags": []},
+    {"id": 5, "digest": "sha256:na1", "tags": []},
+    {"id": 6, "digest": "sha256:ja1", "tags": []}
+  ],
+  "children": {
+    "sha256:n2": ["sha256:na2"],
+    "sha256:n1": ["sha256:na1"],
+    "sha256:j1": ["sha256:ja1"]
+  }
+}
+JSON
+}
+
+@test "a run retains its own release and counts only its own builds" {
+  plan <<< "$(two_releases | sed 's/RELEASE/noble/')"
+  [ "$status" -eq 0 ]
+  [ "$(jq --raw-output '.retained_builds | join(" ")' <<< "$output")" = "noble-20260102_0500" ]
+  [ "$(jq --raw-output '.removed_builds | join(" ")' <<< "$output")" = "noble-20260101_0500" ]
+  [ "$(deleted_digests)" = "sha256:n1 sha256:na1 " ]
+}
+
+# Without this, the first day six builds of Noble existed would take every build
+# of Jammy with them - silently, and invisibly until somebody installed a machine.
+@test "a run leaves the other release in the package entirely alone" {
+  plan <<< "$(two_releases | sed 's/RELEASE/noble/')"
+  [ "$status" -eq 0 ]
+  local protected
+  protected="$(jq --raw-output '.protected | join(" ")' <<< "$output")"
+  [[ "$protected" == *"sha256:j1"* ]]
+  [[ "$protected" == *"sha256:ja1"* ]]
+  [[ "$(deleted_digests)" != *"sha256:j"* ]]
+}
+
+@test "the other release's run keeps its own build and does not finish the first one off" {
+  plan <<< "$(two_releases | sed 's/RELEASE/jammy/')"
+  [ "$status" -eq 0 ]
+  [ "$(jq --raw-output '.retained_builds | join(" ")' <<< "$output")" = "jammy-20260101_0500" ]
+  [ "$(jq '.delete | length' <<< "$output")" -eq 0 ]
+}
+
+# A run that did not say which release it was retaining would find no builds to
+# retain, and every build in the package would fall past the limit. That is the
+# one input whose absence is unsafe in the deleting direction, so it is refused.
+@test "a run with no release to retain refuses rather than removing everything" {
+  plan <<< '{
+    "keep": 1,
+    "versions": [
+      {"id": 1, "digest": "sha256:a", "tags": ["trixie-20260102_0500"]},
+      {"id": 2, "digest": "sha256:b", "tags": ["trixie-20260101_0500"]}
+    ],
+    "children": {}
+  }'
+  [ "$status" -eq 0 ]
+  [ "$(jq --raw-output '.error' <<< "$output")" = "no release to retain" ]
+  [ "$(jq 'has("delete")' <<< "$output")" = "false" ]
 }

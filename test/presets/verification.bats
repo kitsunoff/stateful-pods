@@ -183,6 +183,20 @@ build() {
   [[ "$output" == *"$FIXTURE_DATE"* ]]
 }
 
+# The repository is named for the distribution and the tag for the release, and
+# the package a preset publishes into is a field in the catalog rather than a
+# rule about its name. `void-current` is the case that makes the point: the
+# upstream calls the distribution `voidlinux`, a person calls the preset
+# `void-current`, and the package is `stateful-pods-void`.
+@test "a preset resolves into the package named in the catalog, tagged with its release" {
+  mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
+
+  build --resolve-only debian-trixie
+  [ "$status" -eq 0 ]
+  IFS=$'\t' read -r _ _ reference <<< "$output"
+  [ "$reference" = "${NOWHERE}debian:trixie-20260829_0524" ]
+}
+
 @test "a key file that is not the pinned key stops the build before anything is fetched" {
   # The build resolves its key relative to itself, so a tree with a different key
   # in it is the only way to ask this question - and the only way it can be asked

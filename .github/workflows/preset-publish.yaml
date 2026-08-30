@@ -6,8 +6,14 @@
 # tag that already exists and do nothing else.
 #
 # Publishing without review is safe in a way that changing the catalog is not. A
-# dated tag is immutable and new, so nothing that already exists changes, and
+# dated tag is immutable and new, so nothing already published is rewritten, and
 # nothing uses it until the catalog says so - which is a reviewed pull request.
+#
+# The release's rolling tag does move, and moving it is the point of it. It is a
+# name for a person who wants the newest build without looking one up; nothing
+# resolves it, because the catalog pins digests and the check on that catalog
+# fails the build if an entry is ever a tag. So what a machine is seeded from is
+# still decided in a reviewed pull request, and this run cannot change it.
 name: preset-publish
 
 on:
@@ -114,6 +120,36 @@ jobs:
             done
           done < published.tsv
 
+      # The rolling tag is the name people are told to pull, and it is the one
+      # reference here that moved rather than appeared. A tag that did not follow
+      # would leave somebody pulling last week's root filesystem while every log
+      # line above said the build succeeded, so it is compared against the digest
+      # that was just published rather than assumed.
+      - name: Confirm each rolling tag followed
+        run: |
+          set -o errexit -o nounset -o pipefail
+          while IFS=$'\t' read -r preset _ reference; do
+            [ -n "$reference" ] || continue
+            release=""
+            while IFS=';' read -r name _ candidate _ _; do
+              [ "$name" = "$preset" ] && release="$candidate"
+            done < images/presets/presets.list
+            if [ -z "$release" ]; then
+              echo "$preset has no line in images/presets/presets.list" >&2
+              exit 1
+            fi
+            repository="${reference%@*}"
+            rolling="$(crane digest "$repository:$release")"
+            if [ "$rolling" != "${reference##*@}" ]; then
+              echo "$repository:$release is $rolling, not the ${reference##*@} just published" >&2
+              exit 1
+            fi
+            for platform in linux/amd64 linux/arm64; do
+              crane manifest --platform "$platform" "$repository:$release" > /dev/null
+              echo "ok - $repository:$release resolves for $platform"
+            done
+          done < published.tsv
+
       # GHCR makes a new package private, and the failure that produces looks
       # exactly like a typo in the reference. There is no API for changing it, so
       # this reports rather than fixes - loudly enough that the first publication
@@ -124,9 +160,18 @@ jobs:
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
-          while IFS=$'\t' read -r preset _ _; do
-            [ -n "$preset" ] || continue
-            package="stateful-pods-$preset"
+          # The package is read off the reference that was published rather than
+          # composed from the preset's name. A preset publishes into a package
+          # named for its distribution, so the two are different strings, and two
+          # presets of one distribution would name the same package - which is
+          # why this reports each one once.
+          while IFS=$'\t' read -r _ _ reference; do
+            [ -n "$reference" ] || continue
+            repository="${reference%@*}"
+            printf '%s\n' "${repository##*/}"
+          done < published.tsv | sort --unique > packages.txt
+          while IFS= read -r package; do
+            [ -n "$package" ] || continue
             visibility="$(gh api "/users/$REPOSITORY_OWNER/packages/container/$package" \
               --jq '.visibility' 2>/dev/null || echo unknown)"
             echo "$package: $visibility"
@@ -140,4 +185,4 @@ jobs:
                 echo "private and give machines a \`pullSecretName\`."
               } >> "$GITHUB_STEP_SUMMARY"
             fi
-          done < published.tsv
+          done < packages.txt

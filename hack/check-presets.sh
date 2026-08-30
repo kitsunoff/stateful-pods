@@ -31,19 +31,30 @@ for file in "$CATALOG" "$PRESET_LIST"; do
   [[ -f "$file" ]] || { echo "FAIL: $file does not exist" >&2; exit 1; }
 done
 
-# What the project builds.
-# The remaining fields identify the upstream build and are the build's business,
-# not this check's: read into one variable so that a line with the wrong number
-# of fields is still recognisably malformed.
+# What the project builds, and the package each preset publishes into. Every
+# field is read and every field is required: a line that lost one would leave the
+# package empty, and an entry checked against `stateful-pods-` with nothing after
+# it is a check that passes by accident.
 built=""
-while IFS=';' read -r name upstream || [[ -n "$name" ]]; do
+packages=""
+while IFS=';' read -r name distro release variant package rest || [[ -n "$name" ]]; do
   [[ "$name" == \#* || -z "$name" ]] && continue
-  if [[ "$upstream" != *';'*';'* ]]; then
-    fail "$PRESET_LIST: not a preset line: $name;$upstream"
+  if [[ -z "$distro" || -z "$release" || -z "$variant" || -z "$package" || -n "$rest" ]]; then
+    fail "$PRESET_LIST: not a preset line, which is preset;distro;release;variant;package: $name;$distro;$release;$variant;$package${rest:+;$rest}"
     continue
   fi
   built+="$name"$'\n'
+  packages+="$name $package"$'\n'
 done < "$PRESET_LIST"
+
+# The package a preset publishes into, or nothing if it is not one this project
+# builds - which the caller reports separately and more usefully than this could.
+package_of() {
+  local want="$1" name package
+  while read -r name package; do
+    [[ "$name" == "$want" ]] && { printf '%s\n' "$package"; return 0; }
+  done <<< "$packages"
+}
 
 # What the chart offers.
 catalogued=""
@@ -67,11 +78,18 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
-  # The repository names the preset, so that a reference read on its own says
-  # what it is and a mismatched entry cannot hide behind a valid digest.
+  # The repository names the distribution the preset comes from, so that a
+  # reference read on its own says what it is and a mismatched entry cannot hide
+  # behind a valid digest. The package is the one the preset list gives, not one
+  # worked out from the preset's name: `void-current` publishes into
+  # `stateful-pods-void`, and no rule relates those two names.
+  #
+  # A preset with no package here is one this project does not build, which the
+  # check below reports for what it is rather than as a name that failed to match.
+  package="$(package_of "$name")"
   repository="${reference%@*}"
-  if [[ "${repository##*/}" != "stateful-pods-$name" ]]; then
-    fail "$CATALOG:$line_number: $name resolves to $repository, which is not named stateful-pods-$name"
+  if [[ -n "$package" && "${repository##*/}" != "stateful-pods-$package" ]]; then
+    fail "$CATALOG:$line_number: $name resolves to $repository, which is not named stateful-pods-$package"
   fi
 
   if ! grep --quiet --line-regexp --fixed-strings "$name" <<< "$built"; then
