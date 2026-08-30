@@ -1,19 +1,19 @@
 ## 1. Licence
 
-- [ ] 1.1 Add an MIT `LICENSE` at the repository root, copyright Maxim Belyy, and verify
+- [x] 1.1 Add an MIT `LICENSE` at the repository root, copyright Maxim Belyy, and verify
   `./hack/release-archives.sh --version 0.1.0` no longer prints either "no LICENSE" warning
-- [ ] 1.2 Verify the licence reaches the plugin archive: run the release script and confirm
+- [x] 1.2 Verify the licence reaches the plugin archive: run the release script and confirm
   `tar --list` on the archive it writes shows `LICENSE`, which is what the krew index requires
-- [ ] 1.3 Record the licence on the chart as an `annotations` block in
+- [x] 1.3 Record the licence on the chart as an `annotations` block in
   `charts/stateful-pods/Chart.yaml`, and verify `make lint` still passes
-- [ ] 1.4 Confirm `krew/machine.yaml` needs no edit — its `files: [{from: "*"}]` glob already picks
+- [x] 1.4 Confirm `krew/machine.yaml` needs no edit — its `files: [{from: "*"}]` glob already picks
   up whatever the archive holds — and verify by rendering the manifest with the release script
 
 ## 2. Packaging
 
-- [ ] 2.1 Add `charts/stateful-pods/.helmignore` excluding `tests/`, and verify
+- [x] 2.1 Add `charts/stateful-pods/.helmignore` excluding `tests/`, and verify
   `helm package` writes an archive whose `tar --list` contains no `tests/` entry
-- [ ] 2.2 Verify `make test` still passes, since `helm unittest` reads `tests/` from the chart
+- [x] 2.2 Verify `make test` still passes, since `helm unittest` reads `tests/` from the chart
   directory rather than from the package
 
 ## 3. Release-quality defects
