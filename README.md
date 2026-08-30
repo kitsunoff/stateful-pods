@@ -151,9 +151,14 @@ version says nothing about the node's kernel or the storage class's filesystem.
 
 **`privileged` does not mean `privileged: true`.** The chart has never rendered the blanket runtime
 flag; the mode is a named capability list with `ALL` dropped first, so the list is the whole of it
-rather than an addition to whatever a runtime currently calls a default. Both modes run under a
-named seccomp filter — the runtime's default filter is refused for the guest, with the reason, because
-it denies the mount the machine exists to perform.
+rather than an addition to whatever a runtime currently calls a default.
+
+**The syscall filter is always stated, never inherited.** The guest's `seccompProfile` is written
+explicitly in every mode rather than left to the node — `Unconfined` by default, or a profile of
+your own named through `security.seccompProfile`, with one shipped at
+[`charts/stateful-pods/profiles/`](charts/stateful-pods/profiles). What the chart refuses is
+`RuntimeDefault`, with the reason: it denies the mount the machine exists to perform, so a machine
+under it fails to boot rather than running slightly confined.
 
 ## Distributions it ships a name for
 
