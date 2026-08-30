@@ -24,11 +24,16 @@ The constraints that shape it:
 Read out of the published presets rather than assumed, because the whole fail-loud requirement turns
 on it:
 
-| | `debian-trixie` / `ubuntu-noble` | `alpine-3.24` | `void-current` |
+| | `debian-trixie` | `alpine-3.24` | `ubuntu-noble`, `void-current` |
 | --- | --- | --- | --- |
 | Program | `/usr/bin/cloud-init` | `/usr/bin/cloud-init` | absent |
 | Init integration | `/usr/lib/systemd/system/cloud-init-*.service`, plus a generator at `/usr/lib/systemd/system-generators/cloud-init-generator` and `ds-identify` at `/usr/lib/cloud-init/ds-identify` | `/etc/init.d/cloud-init{,-local,-config,-final}`, already linked into the `boot` and `default` runlevels | absent |
 | Disabled marker | `/etc/cloud/cloud-init.disabled`, empty | same | n/a |
+
+Two of the four presets are `native`-only, for two different reasons: Void's upstream publishes no
+cloud variant at all, and Ubuntu's exists but its architectures are not yet on one build. The second
+resolves later, which is why the documentation states this per preset rather than naming the
+exceptions.
 
 The marker is the single gate on both init systems, and it is checked in two different ways. On
 systemd every unit carries `ConditionPathExists=!/etc/cloud/cloud-init.disabled`, and the generator
@@ -143,6 +148,20 @@ through a Secret written by something else.
 
 The escape hatch is unaffected: anyone who wants a cloud-config the chart did not compose supplies
 `userData` and gets it verbatim.
+
+### 4a. The seed directory is `nocloud`, and the datasource list is pinned
+
+`DataSourceNoCloud.seed_dirs` is `[<seed_dir>/nocloud, <seed_dir>/nocloud-net]` and `ds-identify`
+checks both, so either would be read. This writes `nocloud`, which is the first entry and the one
+doc 06 §3 specifies — and a machine booted from a real cloud preset confirms it, reporting
+`DataSourceNoCloud [seed=/var/lib/cloud/seed/nocloud]` with `status: done`.
+
+The drop-in pins `datasource_list: [NoCloud, None]` for a reason worth stating separately from the
+network row it sits beside. Unpinned, `ds-identify` probes some thirty datasources and takes what
+answers; on a pod that can include an OpenStack metadata service reachable from the node's network,
+which comes back `maybe`. A machine whose datasource depends on what happened to be probeable at
+boot provisions differently after a reschedule. Pinned, `ds-identify` says
+`single entry in datasource_list (NoCloud None) use that` and stops.
 
 ### 5. `instance-id` is computed from the seed, after it is written
 
