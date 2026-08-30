@@ -91,6 +91,70 @@ check() {
 
 kc() { kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"; }
 
+# on_a_terminal <shell command>
+# Runs a command with its standard streams on a real pseudo-terminal.
+#
+# Needed because `kubectl exec --tty` from a non-interactive shell is not a test
+# of anything: kubectl notices that its own stdin is not a terminal, warns, and
+# carries on without one - so the assertion would pass against a machine that
+# cannot hand out a terminal at all. That is exactly how a machine nobody could
+# open a shell in reached a release.
+#
+# `script` is the portable way to get one, and its two implementations disagree
+# about everything: util-linux, which the CI runner has, takes the command
+# through --command and needs --return to pass its exit status on - without
+# --return the status is script's own and a failed exec looks like a pass. The
+# BSD one macOS ships takes the command as trailing arguments, returns the
+# child's status already, and understands no long option at all, not even
+# --version. Hence the short flag here, which is the one place in this repository
+# that has to use one. A developer reproducing a failure locally runs the second.
+#
+# Standard input comes from /dev/null. The terminal being asked for is the one
+# script makes for the child; script's own input is not it, and the BSD one
+# refuses to start at all when what it inherits is a socket rather than a
+# terminal or a file - which is what it inherits from a CI runner or from an
+# editor's terminal. The child reads end-of-file immediately, which is right for
+# a command that is not meant to be typed at.
+on_a_terminal() {
+  if script --version 2>/dev/null | grep --quiet util-linux; then
+    script --quiet --return --command "$1" /dev/null < /dev/null
+  else
+    script -q /dev/null /bin/sh -c "$1" < /dev/null
+  fi
+}
+
+# assert_terminal <pod> <description>
+# That a shell can be opened in the machine with a terminal, which is what
+# `kubectl machine shell` does and what every interactive use of a machine needs.
+#
+# The output is matched rather than the exit status, because the runtime refuses
+# this exec before the command runs: the message comes back over the terminal and
+# the status the pipeline sees is script's. A machine whose pseudo-terminal
+# multiplexer is unreachable fails here with "open /dev/ptmx: no such file or
+# directory" while every other exec in this file keeps passing.
+assert_terminal() {
+  local pod="$1" desc="$2" output
+  command -v script >/dev/null 2>&1 \
+    || fail "this suite needs script(1) to ask for a terminal; without it $desc would pass unproven"
+  # Carriage returns are stripped because a terminal ends its lines with them.
+  # What is not stripped is the terminal's own echo of the end-of-file the child
+  # reads straight away, which arrives as the two characters a terminal renders a
+  # control character as and can therefore precede the machine's answer on the
+  # same line. Hence the unanchored match below.
+  output="$(on_a_terminal \
+    "kubectl --context $CONTEXT --namespace $NAMESPACE exec --stdin --tty $pod --container guest -- tty" \
+    2>&1 | tr -d '\r' || true)"
+  # The name of a terminal in the machine's own instance. Matched rather than
+  # merely requiring success, because the message a machine without a reachable
+  # multiplexer comes back with names /dev/ptmx, which this pattern does not
+  # accept - so the two outcomes cannot be confused.
+  if grep --quiet --extended-regexp '/dev/pts/[0-9]+' <<< "$output"; then
+    pass "$desc"
+  else
+    fail "$desc - the shell reported ${output:-nothing}"
+  fi
+}
+
 # The release a preset publishes under, which is also its rolling tag. Read out
 # of the catalog rather than derived: the package, the preset name and the
 # upstream's own name for the distribution are three different strings, and this
@@ -309,6 +373,8 @@ check "the kernel filesystem the guest must not write to is read-only" \
   guest sh -c 'awk "\$2 == \"/sys\" && \$4 ~ /^ro,/ {found=1} END {exit !found}" /proc/mounts'
 check "the device nodes are usable" guest sh -c 'echo probe > /dev/null'
 check "the machine knows it is in a container" guest sh -c 'tr "\0" "\n" < /proc/1/environ | grep -qx "container=lxc"'
+assert_terminal oci-web-0 \
+  "a shell opened in the machine with a terminal gets one, from the machine's own instance"
 
 step "asserting the machine holds the capability set its mode names, and nothing beyond it"
 # The bounding set of the machine's own init. Nothing inside the machine can
@@ -503,6 +569,12 @@ check "the machine's own init is process 1" \
   tiny sh -c '[ "$(cat /proc/1/comm)" != "boot.sh" ] && [ "$(cat /proc/1/comm)" != "bash" ]'
 check "the machine has the pod's host name" \
   tiny sh -c '[ "$(cat /etc/hostname)" = "alpine-tiny-0" ]'
+# Asserted on this machine as well as on the systemd one, because systemd fills
+# in parts of /dev itself and would mask a gap the chart is supposed to close.
+# Busybox init fills in nothing, so what is there is what the boot script put
+# there.
+assert_terminal alpine-tiny-0 \
+  "a shell opened with a terminal gets one in a machine whose init does nothing to /dev"
 
 # ------------------------------------------------------------- preset source ---
 # The first machines here that name a distribution rather than a reference.
