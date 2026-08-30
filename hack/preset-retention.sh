@@ -236,7 +236,7 @@ retain_preset() {
   local removed keeping
   keeping="$(jq --raw-output '.retained_builds | length' <<< "$plan")"
   removed="$(jq --raw-output '.delete | length' <<< "$plan")"
-  note "$preset: keeping $keeping build(s) of $release and the $release tag, removing $removed version(s)"
+  note "$preset: keeping $keeping build(s) of $release, protecting the $release tag, removing $removed version(s)"
 
   if [[ "$removed" == "0" ]]; then
     return 0

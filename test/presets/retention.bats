@@ -415,8 +415,10 @@ stub_registry() {
   # worth being able to run it on the machine the change is being written on.
   mkdir -p "$stub_dir"
   export GH_CALLS="$BATS_TEST_TMPDIR/gh-calls"
+  export CRANE_CALLS="$BATS_TEST_TMPDIR/crane-calls"
   export STUB_VERSIONS="$BATS_TEST_TMPDIR/versions.json"
   : > "$GH_CALLS"
+  : > "$CRANE_CALLS"
 
   cat > "$STUB_VERSIONS" <<'JSON'
 [
@@ -437,6 +439,15 @@ STUB
 
   cat > "$stub_dir/crane" <<'STUB'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CRANE_CALLS"
+# A reference this registry has lost. Only the resolving path can see it: the
+# question is what happens when a reference a run kept stops resolving, and that
+# is asked after the deletions rather than before them.
+if [ -n "${CRANE_FAIL:-}" ] && [ "${*#*--platform}" != "$*" ]; then
+  case "${*: -1}" in
+    *"$CRANE_FAIL") exit 1 ;;
+  esac
+fi
 # Only `crane manifest` is reached: what an index points at, and whether a
 # reference still resolves once the deletions are done.
 case "${*: -1}" in
@@ -481,4 +492,37 @@ STUB
   grep --quiet --fixed-strings \
     "/users/tester/packages/container/stateful-pods-ubuntu/versions" "$GH_CALLS"
   ! grep --quiet --fixed-strings "DELETE" "$GH_CALLS"
+}
+
+# The check after a run that deletes is the one that would notice the damage a
+# naive retention step does, and the rolling tag is in it because the rolling tag
+# is a reference people use directly. Without these, the line that puts it there
+# can be deleted and this whole file stays green - which is the failure this file
+# exists to make impossible.
+@test "a run that deletes resolves the rolling tag for every platform afterwards" {
+  stub_registry
+  run "$RETENTION" --owner tester --keep 1 ubuntu-noble
+  [ "$status" -eq 0 ]
+  local repository="ghcr.io/tester/stateful-pods-ubuntu"
+  # Whole lines. `:noble` is a prefix of `:noble-20260102_0500`, so a substring
+  # match here is satisfied by the retained build alone and asserts nothing about
+  # the rolling tag - which is the only thing this test is for.
+  grep --quiet --line-regexp --fixed-strings \
+    "manifest --platform linux/amd64 $repository:noble" "$CRANE_CALLS"
+  grep --quiet --line-regexp --fixed-strings \
+    "manifest --platform linux/arm64 $repository:noble" "$CRANE_CALLS"
+  # And the build it kept, which is the older half of the same guarantee.
+  grep --quiet --line-regexp --fixed-strings \
+    "manifest --platform linux/amd64 $repository:noble-20260102_0500" "$CRANE_CALLS"
+}
+
+@test "a rolling tag that stopped resolving fails the run it belongs to" {
+  stub_registry
+  export CRANE_FAIL=":noble"
+  run "$RETENTION" --owner tester --keep 1 ubuntu-noble
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stateful-pods-ubuntu:noble no longer resolves"* ]]
+  # After the deletions, necessarily - there is nothing to check before them.
+  # This is a report rather than a rescue, and it has to be loud.
+  grep --quiet --fixed-strings "DELETE" "$GH_CALLS"
 }
