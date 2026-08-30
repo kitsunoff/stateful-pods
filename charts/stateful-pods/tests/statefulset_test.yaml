@@ -33,17 +33,25 @@ tests:
             app.kubernetes.io/instance: lab
             stateful-pods.io/machine: web
 
+  # The chart's version is pinned here rather than read from Chart.yaml, the
+  # same way the selector suite pins it. What is asserted is that the two labels
+  # are rendered from the chart's own version and appVersion at all - so reading
+  # the live ones would make the assertion compare a value with itself, and would
+  # additionally turn every release into a test edit.
   - it: carries the object labels on its own metadata
+    chart:
+      version: 9.9.9
+      appVersion: "8.8.8"
     asserts:
       - equal:
           path: metadata.labels["app.kubernetes.io/managed-by"]
           value: Helm
       - equal:
           path: metadata.labels["helm.sh/chart"]
-          value: stateful-pods-0.1.0
+          value: stateful-pods-9.9.9
       - equal:
           path: metadata.labels["app.kubernetes.io/version"]
-          value: "0.1.0"
+          value: "8.8.8"
 
   - it: runs the configured shim image on the guest container
     set:
