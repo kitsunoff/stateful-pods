@@ -395,3 +395,86 @@ JSON
   [ "$(jq --raw-output '.error' <<< "$output")" = "no release to retain" ]
   [ "$(jq 'has("delete")' <<< "$output")" = "false" ]
 }
+
+# --- the plumbing around the plan ---------------------------------------------
+#
+# Everything above puts a fixture in front of the decision. None of it runs the
+# part that acts on the decision, and that is where the package stops being an
+# abstraction: the versions endpoint, the deletion endpoint and the registry path
+# are three strings built from one catalog field, and a deletion aimed at the
+# wrong one of them dies half way through the loop with the check that runs
+# afterwards never reached.
+
+# A `gh` and a `crane` on PATH that answer from a fixture and record what they
+# were asked. Neither reaches a network, so this runs the deleting path in full
+# with nothing to delete from.
+stub_registry() {
+  local stub_dir="$BATS_TEST_TMPDIR/bin"
+  # A short flag for the reason hack/preset-build.sh gives at length: BSD mkdir
+  # rejects the long form, and nothing in this file needs a container, so it is
+  # worth being able to run it on the machine the change is being written on.
+  mkdir -p "$stub_dir"
+  export GH_CALLS="$BATS_TEST_TMPDIR/gh-calls"
+  export STUB_VERSIONS="$BATS_TEST_TMPDIR/versions.json"
+  : > "$GH_CALLS"
+
+  cat > "$STUB_VERSIONS" <<'JSON'
+[
+  {"id": 11, "digest": "sha256:idx2", "tags": ["noble-20260102_0500", "noble"]},
+  {"id": 12, "digest": "sha256:amd2", "tags": ["noble-20260102_0500-amd64"]},
+  {"id": 13, "digest": "sha256:idx1", "tags": ["noble-20260101_0500"]},
+  {"id": 14, "digest": "sha256:amd1", "tags": ["noble-20260101_0500-amd64"]}
+]
+JSON
+
+  cat > "$stub_dir/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GH_CALLS"
+case "$*" in
+  *"/versions?per_page=100"*) cat "$STUB_VERSIONS" ;;
+esac
+STUB
+
+  cat > "$stub_dir/crane" <<'STUB'
+#!/usr/bin/env bash
+# Only `crane manifest` is reached: what an index points at, and whether a
+# reference still resolves once the deletions are done.
+case "${*: -1}" in
+  *@sha256:idx1) printf '%s\n' '{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"digest":"sha256:amd1"}]}' ;;
+  *@sha256:idx2) printf '%s\n' '{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"digest":"sha256:amd2"}]}' ;;
+  *@*) printf '%s\n' '{"mediaType":"application/vnd.oci.image.manifest.v1+json"}' ;;
+  *) printf '%s\n' '{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}' ;;
+esac
+STUB
+
+  chmod +x "$stub_dir/gh" "$stub_dir/crane"
+  PATH="$stub_dir:$PATH"
+}
+
+# `ubuntu-noble` publishes into `stateful-pods-ubuntu`, so every endpoint this
+# touches has to name that and not `ubuntu`, and not `stateful-pods-ubuntu-noble`
+# either. A DELETE at the wrong path is a 404, which under errexit ends the run
+# in the middle of the deletions - after some of them.
+@test "every call names the package the preset publishes into" {
+  stub_registry
+  run "$RETENTION" --owner tester --keep 1 ubuntu-noble
+  [ "$status" -eq 0 ]
+
+  grep --quiet --fixed-strings \
+    "/users/tester/packages/container/stateful-pods-ubuntu/versions?per_page=100" "$GH_CALLS"
+  grep --quiet --fixed-strings \
+    "DELETE /user/packages/container/stateful-pods-ubuntu/versions/13" "$GH_CALLS"
+  grep --quiet --fixed-strings \
+    "DELETE /user/packages/container/stateful-pods-ubuntu/versions/14" "$GH_CALLS"
+  # The catalog's field on its own, and the old package-per-preset name, are both
+  # repositories that do not exist.
+  ! grep --quiet --extended-regexp "container/(ubuntu|stateful-pods-ubuntu-noble)/" "$GH_CALLS"
+}
+
+@test "a dry run reaches the same package and deletes nothing" {
+  stub_registry
+  run "$RETENTION" --owner tester --keep 1 --dry-run ubuntu-noble
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stateful-pods-ubuntu"* ]] || [[ "$output" == *"removing 2 version(s)"* ]]
+  ! grep --quiet --fixed-strings "DELETE" "$GH_CALLS"
+}

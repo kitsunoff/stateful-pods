@@ -538,8 +538,12 @@ else
     pass "$preset: built from the $build upstream build"
     # The same image, named as the cluster reaches it. A registry stores by
     # repository path rather than by the host it was reached on, so the digest
-    # is the digest either way.
-    in_cluster="$REGISTRY_IN_CLUSTER/stateful-pods-$preset@${reference##*@}"
+    # is the digest either way - but only if the path is the same one. It is
+    # taken off the reference the build reported rather than composed from the
+    # preset's name: a preset publishes into a package named for its
+    # distribution, so `alpine-3.24` lands in `stateful-pods-alpine` and a path
+    # rebuilt from the name would name a repository that does not exist.
+    in_cluster="$REGISTRY_IN_CLUSTER/${reference#*/}"
     ./hack/preset-bump.sh --catalog "$preset_catalog" "$preset" "$in_cluster" >/dev/null \
       || fail "$preset: could not point the test catalog at $in_cluster"
   done <<< "$built"

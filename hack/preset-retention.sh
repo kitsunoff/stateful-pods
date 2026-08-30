@@ -134,6 +134,10 @@ delete_version() {
 # A retained tag that no longer resolves for every architecture is the exact
 # damage a naive retention step does, and it is invisible until someone installs
 # a machine. So it is asserted after every run rather than reasoned about.
+#
+# After, necessarily: there is nothing to check until the deletions have
+# happened. That makes a failure here a report rather than a rescue, which is
+# why the planner is where the care is and this is where the proof is.
 verify_retained() {
   local repository="$1" plan="$2"
   local reference platform failures=0
@@ -163,20 +167,26 @@ verify_retained() {
 
 retain_preset() {
   local preset="$1"
-  local fields release package
+  local fields release family
   fields="$(catalog_lookup "$preset")"
-  read -r release package <<< "$fields"
-  local repository="$REGISTRY/$OWNER/stateful-pods-$package"
+  read -r release family <<< "$fields"
+  # The catalog's field is the distribution - `ubuntu` - and the package is that
+  # with the project's prefix. Composed once, here, because everything below
+  # names a package: the versions endpoint, the deletion endpoint and the
+  # repository. Carrying the bare field around and prefixing it at each use is
+  # how one of those came to be missed.
+  local package="stateful-pods-$family"
+  local repository="$REGISTRY/$OWNER/$package"
 
   # Every release published into this repository, not only this one. A package is
   # named for a distribution and a tag for a release, so a second release of the
   # same distribution lands here too - and its rolling tag would otherwise be a
   # tag the planner cannot classify, which stops the run.
   local releases
-  releases="$(package_releases "$package")"
+  releases="$(package_releases "$family")"
 
   local versions children plan
-  versions="$(package_versions "stateful-pods-$package")"
+  versions="$(package_versions "$package")"
   if [[ "$(jq 'length' <<< "$versions")" == "0" ]]; then
     note "$preset: no versions published, nothing to do"
     return 0
@@ -206,7 +216,7 @@ retain_preset() {
       "no release to retain")
         die "$(printf '%s\n' \
           "$preset: no release was given to retain, so there is no scope for the plan." \
-          "Every build in stateful-pods-$package would fall outside the retained set." \
+          "Every build in $package would fall outside the retained set." \
           "Nothing was deleted. The release comes from images/presets/presets.list.")"
         ;;
       *)
