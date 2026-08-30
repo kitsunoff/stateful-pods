@@ -17,6 +17,15 @@
 # which build a version belongs to, and protects every digest a retained build
 # still points at.
 #
+# Two things follow from a preset's package being named for its distribution and
+# its tags for its release. A package can hold more than one release, so the unit
+# of retention is a release rather than a package - five builds of Noble, not
+# five builds of Ubuntu - and this runs once per preset over a package it shares.
+# And each release publishes a rolling tag that follows its newest build, which
+# is a name people use directly and which shares a digest with a dated tag; it is
+# never counted as a build and is never deleted. Both are decided in the planner,
+# where the fixtures are.
+#
 # The deleting path takes no injectable input. The plan is computed from the
 # registry and from the packages API, both read live, and `--plan` is a separate
 # mode that reads a document on standard input and deletes nothing. A test can
@@ -125,33 +134,56 @@ delete_version() {
 # A retained tag that no longer resolves for every architecture is the exact
 # damage a naive retention step does, and it is invisible until someone installs
 # a machine. So it is asserted after every run rather than reasoned about.
+#
+# After, necessarily: there is nothing to check until the deletions have
+# happened. That makes a failure here a report rather than a rescue, which is
+# why the planner is where the care is and this is where the proof is.
 verify_retained() {
   local repository="$1" plan="$2"
-  local build platform failures=0
+  local reference platform failures=0
   local -a platform_list=()
   IFS=',' read -r -a platform_list <<< "$PLATFORMS"
-  while IFS= read -r build; do
-    [[ -n "$build" ]] || continue
+  # The release's rolling tag alongside the builds. It is a reference people use
+  # directly, it shares a digest with a dated tag so a deletion takes both names,
+  # and it is the one thing here that a run is allowed to have moved - so it is
+  # checked by the same code rather than reasoned about.
+  while IFS= read -r reference; do
+    [[ -n "$reference" ]] || continue
     for platform in "${platform_list[@]}"; do
-      if ! crane manifest --platform "$platform" "$repository:$build" >/dev/null 2>&1; then
-        echo "FAIL: $repository:$build no longer resolves for $platform" >&2
+      if ! crane manifest --platform "$platform" "$repository:$reference" >/dev/null 2>&1; then
+        echo "FAIL: $repository:$reference no longer resolves for $platform" >&2
         failures=$((failures + 1))
       fi
     done
-  done < <(jq --raw-output '.retained_builds[]' <<< "$plan")
+  done < <(jq --raw-output '.retained_builds[], .release' <<< "$plan")
 
   if [[ "$failures" -gt 0 ]]; then
     die "$failures retained reference(s) are incomplete after this run"
   fi
-  note "every retained build still resolves for every platform"
+  note "every retained build and the rolling tag still resolve for every platform"
 }
 
 # --- one preset ---------------------------------------------------------------
 
 retain_preset() {
   local preset="$1"
-  local package="stateful-pods-$preset"
+  local fields release family
+  fields="$(catalog_lookup "$preset")"
+  read -r release family <<< "$fields"
+  # The catalog's field is the distribution - `ubuntu` - and the package is that
+  # with the project's prefix. Composed once, here, because everything below
+  # names a package: the versions endpoint, the deletion endpoint and the
+  # repository. Carrying the bare field around and prefixing it at each use is
+  # how one of those came to be missed.
+  local package="stateful-pods-$family"
   local repository="$REGISTRY/$OWNER/$package"
+
+  # Every release published into this repository, not only this one. A package is
+  # named for a distribution and a tag for a release, so a second release of the
+  # same distribution lands here too - and its rolling tag would otherwise be a
+  # tag the planner cannot classify, which stops the run.
+  local releases
+  releases="$(package_releases "$family")"
 
   local versions children plan
   versions="$(package_versions "$package")"
@@ -167,7 +199,9 @@ retain_preset() {
   [[ "$DRY_RUN" == "1" ]] && limit=null
   plan="$(jq --null-input --argjson keep "$KEEP" --argjson versions "$versions" \
     --argjson children "$children" --argjson maxDeletions "$limit" \
-    '{keep: $keep, max_deletions: $maxDeletions, versions: $versions, children: $children}' |
+    --arg release "$release" --argjson releases "$releases" \
+    '{keep: $keep, max_deletions: $maxDeletions, release: $release,
+      releases: $releases, versions: $versions, children: $children}' |
     plan_from_stdin)"
 
   if [[ "$(jq --raw-output 'has("error")' <<< "$plan")" == "true" ]]; then
@@ -177,7 +211,16 @@ retain_preset() {
           "$preset: there are tags here that do not name a build:" \
           "$(jq --raw-output '.unparsable[] | "  " + .' <<< "$plan")" \
           "Ordering by build date is the whole basis of this decision, so a tag whose" \
-          "date cannot be read makes it a guess. Nothing was deleted.")"
+          "date cannot be read makes it a guess. Nothing was deleted." \
+          "If one of them is a bare release name, it is the rolling tag of a release that" \
+          "has been removed from images/presets/presets.list while this package went on" \
+          "holding others. Restore the line, or remove the tag.")"
+        ;;
+      "no release to retain")
+        die "$(printf '%s\n' \
+          "$preset: no release was given to retain, so there is no scope for the plan." \
+          "Every build in $package would fall outside the retained set." \
+          "Nothing was deleted. The release comes from images/presets/presets.list.")"
         ;;
       *)
         die "$(printf '%s\n' \
@@ -193,7 +236,7 @@ retain_preset() {
   local removed keeping
   keeping="$(jq --raw-output '.retained_builds | length' <<< "$plan")"
   removed="$(jq --raw-output '.delete | length' <<< "$plan")"
-  note "$preset: keeping $keeping build(s), removing $removed version(s)"
+  note "$preset: keeping $keeping build(s) of $release, protecting the $release tag, removing $removed version(s)"
 
   if [[ "$removed" == "0" ]]; then
     return 0
@@ -223,6 +266,42 @@ catalog_names() {
     [[ "$name" == \#* || -z "$name" || -z "$rest" ]] && continue
     printf '%s\n' "$name"
   done < "$CATALOG_FILE"
+}
+
+# Echoes "release package" for a preset, or fails.
+catalog_lookup() {
+  local want="$1" name release package
+  # The distribution and the variant identify the upstream build and are the
+  # build's business, not this one's, so they are read into the throwaway.
+  while IFS=';' read -r name _ release _ package || [[ -n "$name" ]]; do
+    [[ "$name" == \#* || -z "$package" ]] && continue
+    if [[ "$name" == "$want" ]]; then
+      printf '%s %s\n' "$release" "$package"
+      return 0
+    fi
+  done < "$CATALOG_FILE"
+
+  die "\"$want\" is not a preset this project publishes; presets are listed in $CATALOG_FILE"
+}
+
+# Every release published into one package, as a JSON array. The planner needs
+# them to tell a rolling tag from a tag it cannot read, and it refuses to plan
+# rather than guess - so a release missing from here would stop the run, not
+# silently widen it.
+package_releases() {
+  local want="$1" name release package
+  {
+    while IFS=';' read -r name _ release _ package || [[ -n "$name" ]]; do
+      [[ "$name" == \#* || -z "$package" ]] && continue
+      # An `if` rather than an `&&`, because a while loop's status is its last
+      # body command's and the last line here is ordinarily the one that did not
+      # match. Under errexit that made the assignment this feeds fail, and the
+      # run ended without a word.
+      if [[ "$package" == "$want" ]]; then
+        printf '%s\n' "$release"
+      fi
+    done < "$CATALOG_FILE"
+  } | jq --raw-input --slurp 'split("\n") | map(select(length > 0))'
 }
 
 remote_owner() {

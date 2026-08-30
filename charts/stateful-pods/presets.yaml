@@ -16,6 +16,13 @@
 # values changing, and do it invisibly. `hack/check-presets.sh` enforces that,
 # and enforces that these names are the ones images/presets/presets.list builds.
 #
+# There is such a reference, and this file deliberately does not name it. Each
+# release also publishes a rolling tag - ghcr.io/kitsunoff/stateful-pods-ubuntu
+# under `noble`, and so on - that follows the newest build, for somebody who
+# wants to pull one without first looking up which build exists. It is a name for
+# a person. What a machine is seeded from is a digest, which is what makes
+# publishing a moving tag cost nothing here.
+#
 # This file is maintained by the daily bump workflow, which publishes a newer
 # upstream build and then proposes the corresponding line here for review. What
 # the chart points at is a decision, even when the newer content is almost
@@ -30,7 +37,7 @@
 # filesystem named in its own OCI labels, after the upstream's detached signature
 # over its published checksums verified against the key pinned at
 # images/presets/signing-key.asc.
-debian-trixie: ghcr.io/kitsunoff/stateful-pods-debian-trixie@sha256:1eef004a4aea2e838a185c57c1390667f0a4b79b31bb8e329e6ffb4b98fee33c
-ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu-noble@sha256:5ed0d37ec4f2239c11d0a4213f115d6d3798a8a267ac8ea8c2f70ea2ce2dc480
-alpine-3.24: ghcr.io/kitsunoff/stateful-pods-alpine-3.24@sha256:ac0140ca89e26ee05a7311960ad3f61e6f0f3f02dd88edc92ee4aa0a6e3302a5
-void-current: ghcr.io/kitsunoff/stateful-pods-void-current@sha256:d6cb90a3430b1a7fd926dc8d6f03c5dfcdde4d3c4821b627a558a3ee95b67aaf
+debian-trixie: ghcr.io/kitsunoff/stateful-pods-debian@sha256:adf247cc86a80803dba13e372e5f59ea1b1a6fc79cc428191e89ee5fd4cc82b6
+ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu@sha256:6f9449d586881fb028cd9d9a3c1db43091af772252cb4e1ad6812fef77fa9b44
+alpine-3.24: ghcr.io/kitsunoff/stateful-pods-alpine@sha256:95066dc7cd350c91d69eaf87ace2231fcf8146dacf39df61555074b05e3be1eb
+void-current: ghcr.io/kitsunoff/stateful-pods-void@sha256:55854c7562ab8daa2e1815d7adacf33aa0fd7a55a3d8b89ac51d4294677945d9
