@@ -107,6 +107,14 @@ input — adding it later is additive and renames nothing.
 
 ## 3. Privilege model
 
+> **Superseded.** The ladder below is what was believed when the decision was taken, and it is left
+> as written because that is the only thing this directory is for. It no longer describes the chart.
+> `privileged` is not `privileged: true` and never has been in a released chart — the mode renders
+> `drop: ALL` plus fifteen named capabilities, and both modes run under a named seccomp filter. The
+> `userns` floor the chart enforces is 1.33, not the 1.36 named below, and the chart's own floor is
+> 1.30, set by `securityContext.appArmorProfile` rather than by anything in this ladder. What
+> governs now is [`openspec/specs/pod-security-posture/spec.md`](../../openspec/specs/pod-security-posture/spec.md).
+
 **Decided.** Explicit choice, no default. An unset `security.mode` fails template rendering with a
 message explaining the ladder. The chart never silently escalates privileges, and it never guesses
 from `.Capabilities.KubeVersion` — the API server version says nothing about the node's kernel or

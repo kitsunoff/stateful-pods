@@ -37,15 +37,15 @@
 
 ## 4. Documentation
 
-- [ ] 4.1 Add a repository `README.md` in the style of the author's other repositories, and verify
+- [x] 4.1 Add a repository `README.md` in the style of the author's other repositories, and verify
   every claim in it is true of the tree it ships with — in particular what it says about
   `shim.image` and about which release is installable
-- [ ] 4.2 Add a superseded-by line to `docs/research/05-open-questions.md` §3 and
+- [x] 4.2 Add a superseded-by line to `docs/research/05-open-questions.md` §3 and
   `docs/research/03-mapping-and-architecture.md` §3.6 pointing at the spec that now governs, leaving
   the text below each untouched
-- [ ] 4.3 Add `RELEASE.md` giving the two-tag order as named commands, and verify the version
+- [x] 4.3 Add `RELEASE.md` giving the two-tag order as named commands, and verify the version
   strings it names agree with `Chart.yaml`, the plugin's `SP_VERSION` and the tag check in CI
-- [ ] 4.4 Verify every Markdown file added or changed satisfies `.markdownlint.yaml`
+- [x] 4.4 Verify every Markdown file added or changed satisfies `.markdownlint.yaml`
 
 ## 5. Housekeeping
 

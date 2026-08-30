@@ -262,6 +262,12 @@ Run every mode inside `hostUsers: false` where the cluster supports it, with `CA
 inside the user namespace rather than `privileged: true`. Fall back to `privileged: true` only
 when user namespaces are unavailable, and say so loudly in the values file.
 
+> **Superseded.** The fallback in the paragraph above is not what was built, and it is left as
+> written because this file records what was believed at the time. The chart renders no blanket
+> privileged flag in either mode: the `privileged` mode is `drop: ALL` plus fifteen named
+> capabilities, which is bounded and enumerated rather than "almost all isolation given up". What
+> governs now is [`openspec/specs/pod-security-posture/spec.md`](../../openspec/specs/pod-security-posture/spec.md).
+
 ## 4. Consequences that must be designed for
 
 ### 4.1 The image stops being the source of truth
