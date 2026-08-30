@@ -84,16 +84,16 @@
 
 ## 6. Documentation, at the point of use
 
-- [ ] 6.1 Document every new input in `values.yaml` beside where it is used, including that inline
+- [x] 6.1 Document every new input in `values.yaml` beside where it is used, including that inline
   material is stored in the Helm release, that a crypt(3) hash belongs in `password`, and that raw
   files shadow structured values per file; verify `make docs` is green
-- [ ] 6.2 Add the backend to the preset table in `README.md` and `charts/stateful-pods/README.md`,
+- [x] 6.2 Add the backend to the preset table in `README.md` and `charts/stateful-pods/README.md`,
   stating for each preset which backends it can serve and that `void-current` must name `native`;
   verify by reading the table against `images/presets/presets.list`
-- [ ] 6.3 Add the upgrade note naming the changed default as the break, with the one-line fix
-- [ ] 6.4 Extend `NOTES.txt` to report the backend a machine selected and to warn when a raw file
+- [x] 6.3 Add the upgrade note naming the changed default as the break, with the one-line fix
+- [x] 6.4 Extend `NOTES.txt` to report the backend a machine selected and to warn when a raw file
   shadowed structured values; verify with the notes suite
-- [ ] 6.5 Add an example under `charts/stateful-pods/examples/` showing both input forms in one
+- [x] 6.5 Add an example under `charts/stateful-pods/examples/` showing both input forms in one
   machine; verify `make lint` and `make conform` cover it
 
 ## 7. Green at the final commit

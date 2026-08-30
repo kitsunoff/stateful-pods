@@ -288,11 +288,15 @@ sed -e '/^      hostUsers: false$/d' "$RAW_MANIFEST" > "$MACHINE_MANIFEST"
 # an assertion that passes for no reason.
 sed -e '/^ *seccompProfile:$/{N;/type: "Unconfined"/d;}' \
   "$MACHINE_MANIFEST" > "$DEFECTIVE_MANIFEST"
-# Three filters left, and none of them the guest's: the preparation steps declare
-# RuntimeDefault, and the guest is the only container in this manifest that
-# declares Unconfined. Checked by shape rather than by counting the word, because
-# the guest declares an access-control profile that is Unconfined as well.
-[[ "$(grep --count '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" || true)" -eq 3 ]] \
+# Four filters left, and none of them the guest's: the four preparation steps
+# declare RuntimeDefault, and the guest is the only container in this manifest
+# that declares Unconfined. Checked by shape rather than by counting the word,
+# because the guest declares an access-control profile that is Unconfined as
+# well.
+#
+# The number is spelled out rather than derived, so that a step added without a
+# declared filter fails here instead of being absorbed into the count.
+[[ "$(grep --count '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" || true)" -eq 4 ]] \
   || fail "removing the guest's filter removed the wrong number of filters"
 if grep --after-context=1 '^ *seccompProfile:$' "$DEFECTIVE_MANIFEST" | grep --quiet 'Unconfined'; then
   fail "the guest's declared filter was not removed, so the defect case is not the defect"
