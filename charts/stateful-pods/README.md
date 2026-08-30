@@ -242,8 +242,8 @@ Today they are `debian-trixie`, `ubuntu-noble`, `alpine-3.24` and `void-current`
 fails rendering and lists the ones that exist.
 
 The images themselves are a package per distribution and variant, and a tag per release —
-`ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud:noble`, `…-debian-cloud:trixie`,
-`…-alpine-cloud:3.24`, `…-void:current` — beside an immutable tag naming the upstream build,
+`ghcr.io/kitsunoff/stateful-pods-debian-cloud:trixie`, `…-alpine-cloud:3.24`,
+`…-ubuntu:noble`, `…-void:current` — beside an immutable tag naming the upstream build,
 `noble-20260829_0742`. The release tag follows the newest build and is there for a person who
 wants to pull one; `presets.yaml` names neither, because what a machine is seeded from is a digest.
 
@@ -815,10 +815,11 @@ image. Debian grows about a third; Alpine grows sixfold, because cloud-init brin
 into a distribution whose appeal is not having one. Check `rootfs.size` before upgrading a values
 file that was sized against an Alpine machine.
 
-**Nothing is provisioned yet.** cloud-init is present and inert — the upstream ships these images
-with an `/etc/cloud/cloud-init.disabled` marker, a preset carries it unmodified, and nothing in this
-chart yet removes it or writes a seed. A machine from a cloud preset boots as one from a default
-preset did.
+**What the variant is for** is above, under *Machines are provisioned by cloud-init unless they say
+otherwise*. The upstream ships these images with an `/etc/cloud/cloud-init.disabled` marker and a
+preset carries it unmodified, so cloud-init is inert until something removes the marker and writes a
+seed — which is exactly what the provisioning step does. A machine from one of these two presets is
+the only kind that can run the default backend.
 
 The two packages under the old names are not deleted. Chart `0.2.0` resolves to digests inside
 them, and they hold nothing else. `stateful-pods-ubuntu` is not orphaned at all — `ubuntu-noble`

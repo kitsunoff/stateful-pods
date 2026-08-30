@@ -227,7 +227,7 @@ Alpine's cloud variant is six times the size of its default one, because cloud-i
 runtime with it. That is the cost of an Alpine that can be provisioned the same way the others are.
 
 The images are published a package per distribution and variant, and a tag per release, so
-`ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud:noble` is a thing you can pull. That tag follows the
+`ghcr.io/kitsunoff/stateful-pods-debian-cloud:trixie` is a thing you can pull. That tag follows the
 newest build, and beside it is an immutable one naming the upstream build it came from. The chart
 resolves neither: it pins a digest, which is what keeps a machine's disk reproducible while the name
 in front of it stays short.
