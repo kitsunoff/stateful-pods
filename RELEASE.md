@@ -155,6 +155,13 @@ API. Both are per package, in the GitHub UI, under
 - **The krew index.** `dist/machine.yaml` from the release is the manifest to submit to
   [`kubernetes-sigs/krew-index`](https://github.com/kubernetes-sigs/krew-index). It needs the plugin
   archive to carry a licence, which it now does.
+- **Retiring a preset package is bounded by the oldest chart that names it.** A published chart
+  resolves every preset to a digest, and those digests live in whatever package that chart's
+  catalog pointed at. Every chart version stays pullable from the registry once published, so a
+  package cannot be deleted while any published chart still resolves into it without breaking a
+  `--preset` install of that chart. Deleting one is a decision about which older chart versions
+  are allowed to stop working, not a tidying step, and it needs a token with `delete:packages`
+  that a `GITHUB_TOKEN` cannot be.
 
 ## Later releases
 

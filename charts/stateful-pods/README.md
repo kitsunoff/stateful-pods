@@ -95,7 +95,7 @@ machines:
 ```
 
 ```bash
-helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.1.1 \
+helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.2.0 \
   --values my-machine.yaml
 ```
 
@@ -138,17 +138,17 @@ it. There is no flag that does both.
 With krew, from a published release:
 
 ```bash
-kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/machine.yaml
+kubectl krew install --manifest-url https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/machine.yaml
 ```
 
 Or without krew, since it is one file:
 
 ```bash
 curl --silent --show-error --location --fail --remote-name \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/kubectl-machine_v0.1.1.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/kubectl-machine_v0.2.0.tar.gz
 sha256sum --check <(curl --silent --location --fail \
-  https://github.com/kitsunoff/stateful-pods/releases/download/v0.1.1/SHA256SUMS)
-tar --extract --gzip --file kubectl-machine_v0.1.1.tar.gz
+  https://github.com/kitsunoff/stateful-pods/releases/download/v0.2.0/SHA256SUMS)
+tar --extract --gzip --file kubectl-machine_v0.2.0.tar.gz
 install -m 0755 kubectl-machine /usr/local/bin/kubectl-machine
 ```
 
@@ -532,6 +532,35 @@ rendered, and it is verified against the cluster version at render time, but it 
 this repository's CI.
 
 ## Upgrading
+
+### A preset resolves into a package named for its distribution
+
+**Breaking**, for where a preset is pulled from and not for what a machine declares.
+`source: {kind: preset, name: debian-trixie}` is unchanged, and so are the other three names. What
+changed is the package each one resolves to:
+
+| Was | Is now |
+| --- | --- |
+| `ghcr.io/kitsunoff/stateful-pods-debian-trixie` | `ghcr.io/kitsunoff/stateful-pods-debian` |
+| `ghcr.io/kitsunoff/stateful-pods-ubuntu-noble` | `ghcr.io/kitsunoff/stateful-pods-ubuntu` |
+| `ghcr.io/kitsunoff/stateful-pods-alpine-3.24` | `ghcr.io/kitsunoff/stateful-pods-alpine` |
+| `ghcr.io/kitsunoff/stateful-pods-void-current` | `ghcr.io/kitsunoff/stateful-pods-void` |
+
+**A machine that already exists is untouched.** Seeding happens once in the life of a volume, so an
+upgrade re-resolves nothing and pulls nothing: a running machine keeps the operating system it was
+seeded with.
+
+**A machine created after the upgrade is pulled from the new repository.** That is the break. If
+this cluster reaches the registry through a mirror, an allowlist, or a `pullSecretName` scoped to a
+repository rather than to a registry, the four new names have to be added there before a `preset`
+machine will seed. A machine seeding from an `oci` or `lxc` source is unaffected.
+
+**Each package also publishes a rolling tag** — `stateful-pods-debian:trixie`, and so on — that
+follows the newest build. It is a name for a person who wants to pull one by hand. The chart still
+resolves every preset to a digest, so what a machine is seeded from does not move.
+
+The packages under the old names are being retired. Chart `0.1.1` and earlier resolve to digests
+inside them, so a `--preset` install of one of those chart versions stops working once they go.
 
 ### `privileged` stops rendering the runtime's privileged flag
 

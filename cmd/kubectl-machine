@@ -20,7 +20,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-SP_VERSION="0.1.1"
+SP_VERSION="0.2.0"
 
 # The labels the chart puts on every object it renders for a machine. They are
 # also its selector labels, which are immutable for the life of a machine - the
