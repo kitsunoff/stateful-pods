@@ -86,6 +86,92 @@ tests:
       - failedTemplate:
           errorPattern: '(?s)machines\.web\.source\.sha256: not set.*no way to skip verification'
 
+  # A checksum of sixty-four digits and no letters is a perfectly ordinary YAML
+  # number, so it reaches the chart as a float and leaves it as 1.23...e+61.
+  # Unquoted, this is what one template in every few hundred genuinely looks
+  # like. Caught here it costs a render; uncaught it costs the whole download
+  # first, and then fails in a pod log inside a crash loop.
+  - it: rejects an all-digit checksum that YAML turned into a number, and says to quote it
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: 12345678901234567890123456789012345678901234567890123456789012
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.sha256:.*sixty-four lowercase hexadecimal.*Quote the value'
+
+  - it: rejects a checksum that is not sixty-four characters long
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.sha256:.*sixty-four lowercase hexadecimal'
+
+  # sha256sum prints lowercase, and the guest compares the two as strings, so an
+  # uppercase checksum could never equal the one it computes.
+  - it: rejects a checksum carrying a character outside 0-9a-f
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000ABC"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.sha256:.*sixty-four lowercase hexadecimal'
+
+  # The whole `sha256sum` output line, pasted with the filename still on it.
+  - it: rejects a checksum with the filename sha256sum prints beside it
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000  debian-13.tar.zst"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source\.sha256:.*sixty-four lowercase hexadecimal'
+
+  - it: accepts a well-formed checksum and carries it to the guest unchanged
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.invalid/debian-13-standard_13.0-1_amd64.tar.zst
+          sha256: "9f2c4b1e7a3d8065f1ce4b27a90d5e3612bf8047ca9e1d3b5602f7a8c4d190eb"
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: SP_SOURCE_SHA256
+            value: "9f2c4b1e7a3d8065f1ce4b27a90d5e3612bf8047ca9e1d3b5602f7a8c4d190eb"
+
   - it: rejects an lxc field on an oci source, naming the field and the kind it belongs to
     set:
       machines.web:
