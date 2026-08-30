@@ -170,10 +170,11 @@ instead of resolving to nothing or to somebody's default.
 
 ## Working on it
 
-Everything below runs without a cluster except the last three.
+Everything below runs without a cluster except the last two. `make image-test` needs only a
+container engine.
 
 ```bash
-make all            # what CI runs: lint, docs, unit tests, shell tests, schemas
+make all            # lint, shell lint, docs, presets, unit tests, shell tests, preset tests, schemas
 make lint           # helm lint --strict, against every example
 make test           # helm unittest
 make shell-test     # bats, inside a Linux container

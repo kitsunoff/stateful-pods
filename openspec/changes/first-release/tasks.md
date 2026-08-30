@@ -49,7 +49,7 @@
 
 ## 5. Housekeeping
 
-- [ ] 5.1 Review the six open Dependabot pull requests on their merits, merging those whose inputs
+- [x] 5.1 Review the six open Dependabot pull requests on their merits, merging those whose inputs
   the workflows do not use and which change only the runtime; verify each diff touches nothing else
 - [x] 5.2 Reproduce the Alpine 3.24 regression against both bases before deciding that pull request,
   and close it with the reproduction rather than merging it
@@ -60,12 +60,12 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Confirm `helm`, `shellcheck`, `bats`, `kubeconform` and `crane` resolve on `PATH` at the
+- [x] 6.1 Confirm `helm`, `shellcheck`, `bats`, `kubeconform` and `crane` resolve on `PATH` at the
   versions CI pins, and record where each came from — a suite that passes because a tool is missing
   proves nothing
-- [ ] 6.2 Run `make all` at the final commit and verify it exits zero
-- [ ] 6.3 Run `make image-test` at the final commit and verify it exits zero
-- [ ] 6.4 Run the kind-based suites this change can affect and report exactly which ran, which were
+- [x] 6.2 Run `make all` at the final commit and verify it exits zero
+- [x] 6.3 Run `make image-test` at the final commit and verify it exits zero
+- [x] 6.4 Run the kind-based suites this change can affect and report exactly which ran, which were
   skipped and why
-- [ ] 6.5 Re-check whether GitHub Actions starts jobs immediately before the release step; if it
+- [x] 6.5 Re-check whether GitHub Actions starts jobs immediately before the release step; if it
   does not, stop at the tag and report what is prepared

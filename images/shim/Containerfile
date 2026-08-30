@@ -61,7 +61,7 @@ RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
 LABEL org.opencontainers.image.title="stateful-pods-shim" \
       org.opencontainers.image.description="Toolbox image for the stateful-pods chart: seeds and prepares a machine's root filesystem" \
       org.opencontainers.image.source="https://github.com/kitsunoff/stateful-pods" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="kitsunoff"
 
 # The chart always supplies an explicit command. This entrypoint exists so that a

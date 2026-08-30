@@ -1,7 +1,7 @@
 # What `helm package` leaves out of the published chart.
 #
 # Without this file every path under the chart directory ships, which meant the
-# thirty-six helm-unittest suites travelled inside every install - roughly half
+# thirty-four helm-unittest suites travelled inside every install - roughly half
 # the chart directory by size, to a machine that cannot run them and has no
 # helm-unittest to run them with.
 #

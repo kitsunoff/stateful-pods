@@ -126,8 +126,11 @@ archive() { printf '%s/kubectl-machine_v%s.tar.gz' "$OUT" "$VERSION"; }
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"LICENSE"* ]]
     [[ "$stderr" == *"krew"* ]]
-    tar --list --file "$tree/dist/kubectl-machine_v$VERSION.tar.gz" \
-        | grep --quiet --invert-match 'LICENSE'
+    # Negated as a whole rather than with --invert-match: grep -v exits 0 when
+    # *any* line does not match, and the archive always holds ./ and
+    # ./kubectl-machine, so the inverted form passes whatever is in there.
+    ! tar --list --file "$tree/dist/kubectl-machine_v$VERSION.tar.gz" \
+        | grep --quiet 'LICENSE'
 }
 
 @test "a licence that is there is put in the archive" {

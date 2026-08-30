@@ -3,7 +3,7 @@
 The chart, the shim image and the `kubectl machine` plugin are all written, tested and merged, and
 none of them has ever been published. What stands between the repository and its first tag is not a
 missing feature: it is a licence the krew index requires and the release script warns about on every
-run, a repository with no README at its root, a package that carries thirty-six unit-test fixtures
+run, a repository with no README at its root, a package that carries thirty-four unit-test fixtures
 into every install, a handful of defects the last five changes found and deliberately left, and one
 ordering problem — the chart pins the shim image by digest, and that digest can only exist after a
 build that a tag triggers.
@@ -20,7 +20,7 @@ rather than discovered at the tag.
 - Add a repository `README.md`. There is none today; `charts/stateful-pods/README.md` is the only
   one, and it is a chart reference rather than an introduction to the project.
 - Add `charts/stateful-pods/.helmignore` so the packaged chart stops shipping `tests/`. Those
-  thirty-six helm-unittest suites are roughly half the chart directory by size and no installing
+  thirty-four helm-unittest suites are roughly half the chart directory by size and no installing
   user can run them.
 - Gate the `image` job in CI behind the jobs that hold the suites. On a tag it publishes the shim
   with no `needs`, so a red chart or plugin job does not stop the push — and the image is the half
