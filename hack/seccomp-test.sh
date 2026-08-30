@@ -389,7 +389,11 @@ guest_filter="$(kc get pod oci-web-0 --output \
 pass "the guest declared Unconfined"
 init_filters="$(kc get pod oci-web-0 --output \
   "jsonpath={.spec.initContainers[*].securityContext.seccompProfile.type}")"
-[[ "$init_filters" == "RuntimeDefault RuntimeDefault RuntimeDefault" ]] \
+# One RuntimeDefault per preparation step, spelled out rather than derived: a
+# step added without a declared filter would otherwise be counted as one of the
+# steps that has one, on the very cluster whose kubelet supplies a default to
+# anything that declares none.
+[[ "$init_filters" == "RuntimeDefault RuntimeDefault RuntimeDefault RuntimeDefault" ]] \
   || fail "the preparation steps declared '${init_filters:-nothing}'"
 pass "every preparation step declared the runtime's default filter"
 # They ran to completion under it, which is the assertion that the default
