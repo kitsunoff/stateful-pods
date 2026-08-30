@@ -18,11 +18,6 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 
 ---
 
-> [!CAUTION]
-> **A machine's name is permanent.** Every object is named `<release>-<machine>`, and the root
-> filesystem lives in a PersistentVolumeClaim derived from that name. Renaming a machine or its
-> release does not move the volume — it orphans it and recreates the machine empty.
-
 ## Table of contents
 
 - [What you get](#what-you-get)
@@ -97,6 +92,12 @@ machines:
 helm install lab oci://ghcr.io/kitsunoff/charts/stateful-pods --version 0.2.0 \
   --values my-machine.yaml
 ```
+
+> [!IMPORTANT]
+> **The name is permanent.** Every object is named `<release>-<machine>` — `lab-web` above — and the
+> root filesystem lives in a PersistentVolumeClaim derived from that name. Renaming a machine or its
+> release later does not move the volume: it orphans it and recreates the machine empty. This is the
+> moment to choose a name you will keep.
 
 A source is one of three kinds, named explicitly rather than inferred from which fields are present,
 so that a mistyped field name produces a message about the field and not about the kind:
@@ -226,7 +227,7 @@ Alpine's cloud variant is six times the size of its default one, because cloud-i
 runtime with it. That is the cost of an Alpine that can be provisioned the same way the others are.
 
 The images are published a package per distribution and variant, and a tag per release, so
-`ghcr.io/kitsunoff/stateful-pods-ubuntu-cloud:noble` is a thing you can pull. That tag follows the
+`ghcr.io/kitsunoff/stateful-pods-debian-cloud:trixie` is a thing you can pull. That tag follows the
 newest build, and beside it is an immutable one naming the upstream build it came from. The chart
 resolves neither: it pins a digest, which is what keeps a machine's disk reproducible while the name
 in front of it stays short.
