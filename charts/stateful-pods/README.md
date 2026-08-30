@@ -811,7 +811,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | A preset with an incomplete upstream is not published | `test/presets/verification.bats` |
 | One repository holds a distribution | `test/presets/verification.bats`, which resolves a preset and checks the repository it names |
 | The tag names the release | `hack/preset-build.sh` composes every tag from the release |
-| A repository serves every release of its distribution | the package is a field in `images/presets/presets.list`, not a rule about the preset's name |
+| A repository serves every release of its distribution | `test/presets/retention.bats`, which plans a package holding two releases; the package is a field in `images/presets/presets.list` rather than a rule about the preset's name, asserted in `test/presets/verification.bats` |
 | A published dated tag keeps its content | the preset stage of `hack/integration-test.sh`, which builds twice and compares |
 | A build is counted by its dated tag | `test/presets/retention.bats`: a rolling tag is not a build, and an unreadable tag stops the run |
 | The rolling tag follows the newest build | `preset-publish.yaml` compares it against the digest just published |

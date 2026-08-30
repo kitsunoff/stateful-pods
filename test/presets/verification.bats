@@ -183,11 +183,7 @@ build() {
   [[ "$output" == *"$FIXTURE_DATE"* ]]
 }
 
-# The repository is named for the distribution and the tag for the release, and
-# the package a preset publishes into is a field in the catalog rather than a
-# rule about its name. `void-current` is the case that makes the point: the
-# upstream calls the distribution `voidlinux`, a person calls the preset
-# `void-current`, and the package is `stateful-pods-void`.
+# The repository is named for the distribution and the tag for the release.
 @test "a preset resolves into the package named in the catalog, tagged with its release" {
   mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
 
@@ -195,6 +191,27 @@ build() {
   [ "$status" -eq 0 ]
   IFS=$'\t' read -r _ _ reference <<< "$output"
   [ "$reference" = "${NOWHERE}debian:trixie-20260829_0524" ]
+}
+
+# The package is a field in the catalog rather than a rule about anything, and
+# `void-current` is the preset that makes the point: the upstream calls the
+# distribution `voidlinux`, a person calls the preset `void-current`, and the
+# package is `stateful-pods-void`. Neither of the other two names would give
+# that, so this is the assertion that the field is being read.
+@test "the package comes from the catalog, not from the upstream's name for the distribution" {
+  mirror_build "$FIXTURE_DATE" "not the archive" arm64 amd64
+  local arch
+  for arch in amd64 arm64; do
+    printf 'voidlinux;current;%s;default;%s;/images/voidlinux/current/%s/default/%s/\n' \
+      "$arch" "$FIXTURE_DATE" "$arch" "$FIXTURE_DATE" >> "$MIRROR/meta/1.0/index-system"
+  done
+
+  # Resolving reads the index and stops, so this needs no archive for a
+  # distribution the fixture does not carry one for.
+  build --resolve-only void-current
+  [ "$status" -eq 0 ]
+  IFS=$'\t' read -r _ _ reference <<< "$output"
+  [ "$reference" = "${NOWHERE}void:current-20260829_0524" ]
 }
 
 @test "a key file that is not the pinned key stops the build before anything is fetched" {

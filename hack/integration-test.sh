@@ -590,10 +590,14 @@ else
   # that can be deleted without any other assertion here noticing.
   step "moving a release tag off its build, the way an interrupted run would"
   alpine_release="$(preset_release alpine-3.24)"
-  # `|| true` on both, because the guard below is the diagnostic. Under errexit
-  # and pipefail a grep that matches nothing takes the script out before the
-  # message written for exactly that case can be printed.
-  alpine_reference="$(grep --max-count 1 '^alpine-3.24	' <<< "$built" | cut --fields 3 || true)"
+  # Read with the shell rather than cut, for the reason hack/preset-build.sh
+  # gives at length: BSD cut has no long options at all, so `cut --fields 3` is a
+  # line that works on the runner and not on the machine somebody is writing the
+  # change on. `|| true` because the guard below is the diagnostic - under
+  # errexit a grep that matches nothing takes the script out before the message
+  # written for exactly that case can be printed.
+  IFS=$'\t' read -r _ _ alpine_reference \
+    <<< "$(grep --max-count 1 -- '^alpine-3.24	' <<< "$built" || true)"
   [[ -n "$alpine_reference" ]] || fail "the build reported no reference for alpine-3.24"
   alpine_repository="${alpine_reference%@*}"
   stray_tag="$(crane ls "$alpine_repository" | grep --max-count 1 -- "-$node_arch\$" || true)"
