@@ -5,7 +5,9 @@
 {{- $objectName := include "stateful-pods.machine.name" $ctx }}
 {{- $rootfs := $machine.rootfs | default dict }}
 {{- $mode := $machine.security.mode }}
-{{- $source := $machine.source }}
+{{- /* A preset resolves here, once, and everything below sees the reference it
+       names rather than the name. The seeding path is the oci path unchanged. */ -}}
+{{- $source := include "stateful-pods.machine.resolvedSource" $ctx | fromYaml }}
 {{- $snapshot := dig "dataSource" "volumeSnapshotName" "" $rootfs | default "" }}
 {{- $pullSecret := "" }}
 {{- if eq $source.kind "oci" }}

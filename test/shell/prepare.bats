@@ -57,6 +57,29 @@ prepare() { run bash "$SCRIPTS/prepare.sh"; }
     [ "$(field .source.reference)" = "docker.io/library/debian:13" ]
 }
 
+# Without this the volume records a digest and nothing else. A digest answers
+# "what was this made from" only for as long as the reference is still in the
+# catalog, and the question is usually asked long after it has aged out.
+@test "the marker records which preset the machine was made from" {
+    export SP_SOURCE_PRESET=debian-trixie
+    just_seeded
+    prepare
+    [ "$status" -eq 0 ]
+    [ "$(field .source.kind)" = "oci" ]
+    [ "$(field .source.preset)" = "debian-trixie" ]
+    [ "$(field .source.reference)" = "docker.io/library/debian:13" ]
+}
+
+# An additive field, so the record's schema version does not move and a reader
+# written before presets existed is unaffected by them.
+@test "the marker leaves the preset field out when the source is not a preset" {
+    just_seeded
+    prepare
+    [ "$status" -eq 0 ]
+    [ "$(field '.source | has("preset")')" = "false" ]
+    [ "$(field .schemaVersion)" = "1" ]
+}
+
 @test "the marker records an lxc source with its url and checksum" {
     just_seeded
     export SP_SOURCE_KIND=lxc

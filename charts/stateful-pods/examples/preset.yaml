@@ -1,0 +1,17 @@
+# A machine seeded from a named preset, running in its own user namespace.
+#
+# The whole source is a name. What it resolves to is in presets.yaml beside the
+# chart: a reference pinned by digest, covering both architectures, built from
+# the upstream's own root filesystem after its signature was verified against
+# the key this repository pins.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/preset.yaml
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+    security:
+      mode: userns
+    rootfs:
+      size: 8Gi

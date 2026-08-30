@@ -26,8 +26,16 @@ SP_MARKER_SCHEMA_VERSION=1
 sp_source_json() {
     case "${SP_SOURCE_KIND:-}" in
         oci)
+            # The preset name is additive: a machine seeded from a chosen image
+            # has no preset, and the record's schema version does not move for a
+            # field that is sometimes absent. It is recorded at all because a
+            # digest stops answering "what was this made from" as soon as the
+            # reference ages out of the catalog, which is well before anyone
+            # thinks to ask.
             jq --null-input --arg ref "${SP_SOURCE_REFERENCE:-}" \
-                '{kind: "oci", reference: $ref}'
+                --arg preset "${SP_SOURCE_PRESET:-}" \
+                '{kind: "oci", reference: $ref}
+                 + (if $preset == "" then {} else {preset: $preset} end)'
             ;;
         lxc)
             jq --null-input --arg url "${SP_SOURCE_URL:-}" --arg sha "${SP_SOURCE_SHA256:-}" \

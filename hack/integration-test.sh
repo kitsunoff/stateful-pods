@@ -58,6 +58,9 @@ REGISTRY_IN_CLUSTER="registry.${NAMESPACE}.svc.cluster.local:5000"
 REGISTRY_LOCAL="localhost:${REGISTRY_PORT:-5000}"
 PORT_FORWARD_PID=""
 PREVIOUS_CHART_WORKTREE=""
+# A copy of the chart whose catalog points at this cluster's registry, so that a
+# preset resolves to something the cluster can actually pull.
+PRESET_CHART_DIR=""
 
 # An lxc template has to be fetched over HTTPS, which the chart enforces. Point
 # these at a reachable template to exercise that path; without them the lxc
@@ -137,6 +140,9 @@ on_exit() {
   fi
   if [[ -n "$PREVIOUS_CHART_WORKTREE" ]]; then
     git worktree remove --force "$PREVIOUS_CHART_WORKTREE" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$PRESET_CHART_DIR" ]]; then
+    rm -rf "$PRESET_CHART_DIR" 2>/dev/null || true
   fi
   if [[ "$KEEP_CLUSTER" == "1" ]]; then
     echo "cluster $CLUSTER kept; this run's namespace is $NAMESPACE"
@@ -482,6 +488,146 @@ check "the machine's own init is process 1" \
   tiny sh -c '[ "$(cat /proc/1/comm)" != "boot.sh" ] && [ "$(cat /proc/1/comm)" != "bash" ]'
 check "the machine has the pod's host name" \
   tiny sh -c '[ "$(cat /etc/hostname)" = "alpine-tiny-0" ]'
+
+# ------------------------------------------------------------- preset source ---
+# The first machines here that name a distribution rather than a reference.
+#
+# Two presets rather than four, and these two on purpose. Debian and Ubuntu take
+# the same path through the chart and the same path through the seeding step as
+# the oci machine above already does - a GNU-tar systemd root filesystem from a
+# registry - and each is another 100 MB of download and another 700 MB on the
+# node for no path that is not already covered.
+#
+# Alpine and Void are the ones that are new, though not for the same reason the
+# proposal expected. Alpine provides only busybox tar, which is the case the
+# seeding step refused outright until it stopped using the source's own
+# archiver. Void turns out to ship GNU tar 1.35 - so its interest is its init,
+# which is runit: the only machine anywhere in this suite that boots something
+# other than systemd or busybox init.
+#
+# The catalog is rewritten to point at the in-cluster registry. What is being
+# asserted is that a name resolves and that what it resolves to boots; that this
+# project's published references resolve is asserted where they are published.
+#
+# This runs before the section that takes the registry away, and has to: that
+# section deletes the registry pod, and the port forward opened once at the top
+# of this file dies with it and is never reopened.
+if ! command -v crane >/dev/null 2>&1; then
+  skip "the preset assertions: crane is needed to build a preset and was not found"
+else
+  node_arch="$(kubectl --context "$CONTEXT" get nodes \
+    --output "jsonpath={.items[0].status.nodeInfo.architecture}")"
+  PRESET_CHART_DIR="$(mktemp -d)"
+  cp -R "$CHART" "$PRESET_CHART_DIR/stateful-pods"
+  preset_chart="$PRESET_CHART_DIR/stateful-pods"
+  preset_catalog="$preset_chart/presets.yaml"
+
+  step "building the presets this cluster will use, for $node_arch"
+  # One architecture, because the cluster has one. The published presets cover
+  # every architecture the project builds for; that is asserted when they are
+  # published, and building both here would double a large download to prove
+  # something no node in this cluster can execute.
+  built="$(./hack/preset-build.sh \
+    --repository "$REGISTRY_LOCAL/stateful-pods-" \
+    --platforms "linux/$node_arch" \
+    alpine-3.24 void-current)" \
+    || fail "the preset build did not complete"
+
+  while IFS=$'\t' read -r preset build reference; do
+    [[ -n "$preset" ]] || continue
+    pass "$preset: built from the $build upstream build"
+    # The same image, named as the cluster reaches it. A registry stores by
+    # repository path rather than by the host it was reached on, so the digest
+    # is the digest either way.
+    in_cluster="$REGISTRY_IN_CLUSTER/stateful-pods-$preset@${reference##*@}"
+    ./hack/preset-bump.sh --catalog "$preset_catalog" "$preset" "$in_cluster" >/dev/null \
+      || fail "$preset: could not point the test catalog at $in_cluster"
+  done <<< "$built"
+
+  # A published tag is never republished, which is the promise that makes a
+  # machine's origin reproducible. The build says so; this is where a registry
+  # exists to check it against.
+  step "asserting a published build is not republished"
+  rebuilt="$(./hack/preset-build.sh \
+    --repository "$REGISTRY_LOCAL/stateful-pods-" \
+    --platforms "linux/$node_arch" \
+    alpine-3.24 void-current 2>"$PRESET_CHART_DIR/rebuild.log")" \
+    || fail "the second preset build did not complete"
+  if [[ "$rebuilt" == "$built" ]]; then
+    pass "a second build resolves both presets to the digests already published"
+  else
+    fail "a second build changed what a published tag resolves to"
+  fi
+  check "the second build said it was leaving the published tags alone" \
+    grep --quiet "is already published, leaving it alone" "$PRESET_CHART_DIR/rebuild.log"
+
+  for preset in alpine-3.24 void-current; do
+    release="preset-${preset%%-*}"
+    pod="$release-os-0"
+
+    step "installing a machine that names the $preset preset"
+    helm --kube-context "$CONTEXT" upgrade --install "$release" "$preset_chart" \
+      --namespace "$NAMESPACE" \
+      --values test/integration/preset.yaml \
+      --set "shim.image=$SHIM_IMAGE" \
+      --set "machines.os.source.name=$preset" \
+      --wait --timeout 10m >/dev/null
+    wait_ready "$pod"
+
+    assert_default_filter "$pod"
+
+    step "asserting the $preset machine"
+    osguest() { kc exec "$pod" --container guest -- "$@"; }
+
+    check "the volume carries a seeding record" osguest test -f /.stateful-pods/provisioned
+    # Without this the record holds a digest and nothing else, and which preset
+    # the machine was made from stops being answerable once that reference ages
+    # out of the catalog.
+    check "the record names the preset the machine was made from" \
+      osguest sh -c "grep -q '\"preset\": \"$preset\"' /.stateful-pods/provisioned"
+    check "the record still names the oci kind the scripts were given" \
+      osguest sh -c "grep -q '\"kind\": \"oci\"' /.stateful-pods/provisioned"
+
+    # The architecture assertion, and the reason it is this one: a root
+    # filesystem built for another architecture seeds without a single error and
+    # then cannot execute anything in itself. A machine whose own init is
+    # process 1 has already executed the rootfs, so reaching here is the proof.
+    # The ELF header is read as well, so that a failure says which architecture
+    # arrived rather than only that nothing ran.
+    check "the machine's own init is process 1, not the chart's" \
+      osguest sh -c '[ "$(cat /proc/1/comm)" != "boot.sh" ] && [ "$(cat /proc/1/comm)" != "bash" ]'
+    case "$node_arch" in
+      amd64) want_machine="3e00" ;;
+      arm64) want_machine="b700" ;;
+      *) want_machine="" ;;
+    esac
+    if [[ -z "$want_machine" ]]; then
+      skip "$preset: no ELF machine type known for $node_arch"
+    else
+      got_machine="$(osguest sh -c \
+        'dd if=/bin/sh bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d " \n"' || true)"
+      if [[ "$got_machine" == "$want_machine" ]]; then
+        pass "the rootfs was built for the node's own architecture ($node_arch)"
+      else
+        fail "the rootfs reports ELF machine '${got_machine:-nothing}', not $want_machine for $node_arch"
+      fi
+    fi
+
+    # What each of these two is here to prove, which is not the same thing.
+    case "$preset" in
+      alpine-3.24)
+        check "the source really provides only busybox tar" \
+          osguest sh -c 'tar --version 2>&1 | grep -q busybox'
+        ;;
+      void-current)
+        check "the machine booted an init that is neither systemd nor busybox" \
+          osguest sh -c '[ "$(cat /proc/1/comm)" = "runit" ]'
+        ;;
+    esac
+    check "the machine has the pod's host name" \
+      osguest sh -c "[ \"\$(cat /etc/hostname)\" = \"$pod\" ]"
+  done
+fi
 
 # ------------------------------------------------- the source after seeding ---
 # A machine's source is a seed, not a runtime dependency. Taking the registry

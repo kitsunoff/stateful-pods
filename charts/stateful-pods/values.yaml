@@ -60,8 +60,32 @@ shim:
 #     # are present, so that a mistyped field name produces a message about the
 #     # missing field instead of silently switching the machine to the other kind.
 #     source:
-#       # Source kind: oci | lxc. Mandatory.
+#       # Source kind: oci | lxc | preset. Mandatory.
 #       kind: oci
+#
+#       # kind: preset - the name of a root filesystem this project publishes.
+#       # This is the short way to say "a Debian machine" without researching a
+#       # reference, and the only kind whose contents this project established
+#       # rather than trusted: each preset is an upstream distribution's own
+#       # root filesystem, packaged unmodified, after the upstream's detached
+#       # signature over its published checksums was verified against a key
+#       # fingerprint pinned in this repository. An `lxc` source can only offer
+#       # a checksum the user found themselves, which establishes that the bytes
+#       # did not change in transit from whoever served them and nothing more.
+#       #
+#       # The name resolves while the chart renders, to a reference pinned by
+#       # digest and covering every architecture the project builds for, so the
+#       # machine gets the build its node can execute without anyone choosing
+#       # one. An unknown name fails rendering and lists the names that exist.
+#       #
+#       # The presets and what they resolve to are in presets.yaml beside this
+#       # file. They move only through a reviewed change, so a machine's source
+#       # never changes under it.
+#       #
+#       # A preset takes no reference, url or sha256 of its own: it already is
+#       # one. It does take pullSecretName, because the registry serving it may
+#       # still want credentials.
+#       # name: debian-trixie
 #
 #       # kind: oci - an image reference. Its integrity is established by the
 #       # registry over TLS, which is why no checksum input exists for this

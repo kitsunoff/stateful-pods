@@ -58,6 +58,20 @@ jobs:
       - name: Run the shell script tests
         run: make shell-test
 
+      # The catalog is written by a bot, which is why it is checked - and the
+      # check is what enforces that an entry is a digest rather than a tag. The
+      # bump workflow runs it on its own commit, but that is the bot checking its
+      # own work; a human-authored catalog edit reaches here and nowhere else.
+      - name: Check the catalog against what the project builds
+        run: make presets
+
+      # Every refusal that makes a preset worth more than an `lxc` source with a
+      # checksum somebody found: a signature that does not verify, one stripped
+      # out, one never served, an archive that does not match, a signing key that
+      # is not the pinned one. Tests nobody runs are not tests.
+      - name: Run the preset tests
+        run: make preset-test
+
       - name: Validate every example against the Kubernetes API schemas
         run: make conform
 
@@ -144,6 +158,13 @@ jobs:
         uses: helm/kind-action@v1
         with:
           install_only: true
+
+      # The preset assertions build a preset into the cluster's own registry
+      # rather than pulling a published one, so that what they prove is that a
+      # name resolves and that what it resolves to boots. Without crane they
+      # skip rather than fail, which would make them silent here.
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
 
       # A rendering test cannot tell whether the copy preserved a file
       # capability, or whether the second start really does nothing. Only a real

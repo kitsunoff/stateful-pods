@@ -57,6 +57,70 @@ helm.sh/chart: {{ include "stateful-pods.chart" .root }}
 {{- end -}}
 
 {{/*
+--------------------------------------------------------------------------------
+The preset catalog
+--------------------------------------------------------------------------------
+*/}}
+
+{{/*
+The table of presets this chart ships, as a map from name to a digest-pinned
+image reference. Takes the root context.
+
+It lives in presets.yaml at the chart root rather than in values.yaml for two
+reasons. It is data a bot maintains rather than configuration a user sets, and
+every key in values.yaml has to carry a comment explaining itself, which is noise
+on a generated table. `.Files` reaches chart-root files inside a packaged chart,
+so the table travels with the chart however it is installed - which a values file
+usable only from a checkout would not.
+*/}}
+{{- define "stateful-pods.presets" -}}
+{{- .Files.Get "presets.yaml" -}}
+{{- end -}}
+
+{{/*
+The preset names, sorted, as a comma-separated list for an error message.
+Takes the root context.
+
+Generated from the table rather than written out beside it: a list maintained by
+hand would be wrong the first time a preset was added, and it would be wrong in
+the one place a user reads when they already have something wrong.
+*/}}
+{{- define "stateful-pods.presets.names" -}}
+{{- keys (include "stateful-pods.presets" . | fromYaml) | sortAlpha | join ", " -}}
+{{- end -}}
+
+{{/*
+The machine's source with a preset resolved to what it names.
+
+A preset is a name for an image, so it resolves to the `oci` kind and the rest of
+the chart never learns that presets exist: the seeding path is the one that was
+already there, and no script gains a branch. The name is carried alongside as
+`preset`, because a volume that recorded only a digest could not answer which
+preset the machine was made from a year later, when the answer matters most.
+
+Resolution happens here, at render time, and nowhere later. A name resolved after
+rendering would mean a machine's source could differ between the manifest the
+user reviewed and the pod that ran.
+
+Takes (dict "root" $ "name" $name "machine" $machine). Emits YAML.
+*/}}
+{{- define "stateful-pods.machine.resolvedSource" -}}
+{{- $source := .machine.source -}}
+{{- if eq ($source.kind | default "") "preset" -}}
+{{- $catalog := include "stateful-pods.presets" .root | fromYaml -}}
+kind: oci
+reference: {{ index $catalog ($source.name | toString) | quote }}
+preset: {{ $source.name | quote }}
+{{- $pullSecret := index $source "pullSecretName" }}
+{{- if not (kindIs "invalid" $pullSecret) }}
+pullSecretName: {{ $pullSecret | quote }}
+{{- end }}
+{{- else -}}
+{{ toYaml $source }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 The environment the seeding and preparation steps read.
 
 Everything a script needs arrives this way. No value is ever interpolated into
@@ -68,6 +132,7 @@ different namespace than it was rendered for still records where it actually ran
 Takes (dict "root" $ "name" $name "machine" $machine).
 */}}
 {{- define "stateful-pods.machine.seedEnv" -}}
+{{- $source := include "stateful-pods.machine.resolvedSource" . | fromYaml -}}
 - name: SP_ROOTFS
   value: /mnt/rootfs
 - name: SP_MACHINE
@@ -81,15 +146,19 @@ Takes (dict "root" $ "name" $name "machine" $machine).
 - name: SP_CHART_VERSION
   value: {{ .root.Chart.Version | quote }}
 - name: SP_SOURCE_KIND
-  value: {{ .machine.source.kind | quote }}
-{{- if eq .machine.source.kind "oci" }}
+  value: {{ $source.kind | quote }}
+{{- if eq $source.kind "oci" }}
 - name: SP_SOURCE_REFERENCE
-  value: {{ .machine.source.reference | quote }}
+  value: {{ $source.reference | quote }}
+{{- if $source.preset }}
+- name: SP_SOURCE_PRESET
+  value: {{ $source.preset | quote }}
+{{- end }}
 {{- else }}
 - name: SP_SOURCE_URL
-  value: {{ .machine.source.url | quote }}
+  value: {{ $source.url | quote }}
 - name: SP_SOURCE_SHA256
-  value: {{ .machine.source.sha256 | toString | quote }}
+  value: {{ $source.sha256 | toString | quote }}
 {{- end }}
 {{- end -}}
 
@@ -219,6 +288,37 @@ Takes the root context.
 {{- end -}}
 
 {{/*
+The checks on a source's registry credentials, shared by every kind that fetches
+from a registry.
+
+The credentials are named, never spelled out: a value is stored in the release,
+printed by `helm get values` and usually committed, so a credential that can be
+put there will be.
+
+A preset needs these as much as an `oci` source does. A preset is a name for a
+reference this project pins; it is not a promise that the registry serving it
+will hand it to anyone who asks.
+
+Takes (dict "name" $name "source" $source). Emits a YAML list of errors, possibly
+empty.
+*/}}
+{{- define "stateful-pods.validate.pullSecretName" -}}
+{{- $name := .name -}}
+{{- $errors := list -}}
+{{- $pullSecret := index .source "pullSecretName" -}}
+{{- if not (kindIs "invalid" $pullSecret) -}}
+{{- if not (kindIs "string" $pullSecret) -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: must be the name of a Secret, but is of type %s. Name a single Secret in this release's namespace - and quote it if the name is one YAML reads as something else, such as an unquoted no, off or a number." $name (kindOf $pullSecret)) -}}
+{{- else if eq ($pullSecret | toString) "" -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: is empty. Name the Secret in this release's namespace that holds the registry credentials, or remove the field entirely to fetch the source anonymously." $name) -}}
+{{- else if or (gt (len ($pullSecret | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($pullSecret | toString))) -}}
+{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: %q is not a valid Secret name. It must be a DNS-1123 subdomain: at most 253 lowercase alphanumeric characters, '-' or '.', with each dot-separated part starting and ending with an alphanumeric character." $name ($pullSecret | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+
+{{/*
 Stage two: every remaining check, accumulated and reported together.
 Takes the root context.
 */}}
@@ -314,35 +414,60 @@ Takes the root context.
 {{- /* The rootfs source: kind named explicitly, never inferred from the fields present. */ -}}
 {{- $source := $machine.source -}}
 {{- if kindIs "invalid" $source -}}
-{{- $errors = append $errors (printf "machines.%s.source: not declared. Declare where this machine's root filesystem is seeded from at machines.%s.source, naming its kind explicitly. Accepted kinds: oci, lxc." $name $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source: not declared. Declare where this machine's root filesystem is seeded from at machines.%s.source, naming its kind explicitly. Accepted kinds: oci, lxc, preset." $name $name) -}}
 {{- else if not (kindIs "map" $source) -}}
-{{- $errors = append $errors (printf "machines.%s.source: must be a map naming the source kind and its fields, but is of type %s. Accepted kinds: oci, lxc." $name (kindOf $source)) -}}
+{{- $errors = append $errors (printf "machines.%s.source: must be a map naming the source kind and its fields, but is of type %s. Accepted kinds: oci, lxc, preset." $name (kindOf $source)) -}}
 {{- else -}}
 {{- $kind := $source.kind | default "" -}}
+{{- /* Not an input of any kind. `stateful-pods.machine.resolvedSource` sets this
+       on the resolved source to carry the preset's name into the seeding
+       environment, and `prepare.sh` records it. A value supplied here would be
+       carried through as though the chart had resolved it, and the volume would
+       assert a preset the machine was not made from - which is the one question
+       the record exists to answer. */ -}}
+{{- if not (kindIs "invalid" (index $source "preset")) -}}
+{{- $errors = append $errors (printf "machines.%s.source.preset: is not an input. It is set by the chart when a \"preset\" source resolves, and it is what the machine's provisioning record names, so a value supplied here would make that record claim a preset the machine was not made from. Remove the field; to choose a preset, set machines.%s.source.kind to \"preset\" and name it in machines.%s.source.name." $name $name $name) -}}
+{{- end -}}
 {{- if eq $kind "" -}}
-{{- $errors = append $errors (printf "machines.%s.source.kind: not set. Name the source kind explicitly, so that a mistyped field cannot silently change where the machine's root filesystem comes from. Accepted kinds: oci, lxc." $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source.kind: not set. Name the source kind explicitly, so that a mistyped field cannot silently change where the machine's root filesystem comes from. Accepted kinds: oci, lxc, preset." $name) -}}
 {{- else if eq $kind "oci" -}}
 {{- if eq ($source.reference | default "") "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.reference: not set. An \"oci\" source requires an image reference, for example docker.io/library/debian:13." $name) -}}
 {{- end -}}
-{{- range $field := list "url" "sha256" -}}
+{{- range $pair := list (list "url" "lxc") (list "sha256" "lxc") (list "name" "preset") -}}
+{{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
-{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind \"lxc\". Remove the field, or set machines.%s.source.kind to \"lxc\"." $name $field $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"oci\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
 {{- end -}}
 {{- end -}}
-{{- /* The credentials for a private source are named, never spelled out: a value
-       is stored in the release, printed by `helm get values` and usually
-       committed, so a credential that can be put there will be. */ -}}
-{{- $pullSecret := index $source "pullSecretName" -}}
-{{- if not (kindIs "invalid" $pullSecret) -}}
-{{- if not (kindIs "string" $pullSecret) -}}
-{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: must be the name of a Secret, but is of type %s. Name a single Secret in this release's namespace - and quote it if the name is one YAML reads as something else, such as an unquoted no, off or a number." $name (kindOf $pullSecret)) -}}
-{{- else if eq ($pullSecret | toString) "" -}}
-{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: is empty. Name the Secret in this release's namespace that holds the registry credentials, or remove the field entirely to fetch the source anonymously." $name) -}}
-{{- else if or (gt (len ($pullSecret | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($pullSecret | toString))) -}}
-{{- $errors = append $errors (printf "machines.%s.source.pullSecretName: %q is not a valid Secret name. It must be a DNS-1123 subdomain: at most 253 lowercase alphanumeric characters, '-' or '.', with each dot-separated part starting and ending with an alphanumeric character." $name ($pullSecret | toString)) -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.pullSecretName" (dict "name" $name "source" $source) | fromYamlArray) -}}
+{{- else if eq $kind "preset" -}}
+{{- /* A name for a reference this project pins and verified the provenance of.
+       The point of it is that the user does not have to research a reference, so
+       a typo that rendered anyway - resolving to nothing, or to a default - would
+       hand back exactly the debugging session the preset exists to avoid. */ -}}
+{{- $presetNames := include "stateful-pods.presets.names" $root -}}
+{{- $presetName := index $source "name" -}}
+{{- if kindIs "invalid" $presetName -}}
+{{- $errors = append $errors (printf "machines.%s.source.name: not set. A \"preset\" source names one of the root filesystems this chart ships a pinned, provenance-verified reference for. Available presets: %s." $name $presetNames) -}}
+{{- else if not (or (kindIs "string" $presetName) (kindIs "float64" $presetName) (kindIs "int" $presetName) (kindIs "int64" $presetName)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.name: must be the name of a preset, but is of type %s. Available presets: %s." $name (kindOf $presetName) $presetNames) -}}
+{{- else if eq ($presetName | toString) "" -}}
+{{- $errors = append $errors (printf "machines.%s.source.name: is empty. Name one of the root filesystems this chart ships. Available presets: %s." $name $presetNames) -}}
+{{- else if kindIs "invalid" (index (include "stateful-pods.presets" $root | fromYaml) ($presetName | toString)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.name: %q is not a preset this chart ships. Available presets: %s. A preset resolves to a reference this project publishes; to use an image of your own, set machines.%s.source.kind to \"oci\" and give the reference directly." $name ($presetName | toString) $presetNames $name) -}}
+{{- end -}}
+{{- /* A preset already is a reference, a verified checksum and an upstream. A
+       user who also supplies one of those has expressed two intentions, and the
+       one that would be silently discarded may be the one they believed was in
+       effect. */ -}}
+{{- range $pair := list (list "reference" "oci") (list "url" "lxc") (list "sha256" "lxc") -}}
+{{- $field := index $pair 0 -}}
+{{- if not (kindIs "invalid" (index $source $field)) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"preset\"; it belongs to kind %q. A preset is a name for a reference this project pins and verified the provenance of, so it takes neither a reference nor a checksum of its own. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
 {{- end -}}
 {{- end -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.pullSecretName" (dict "name" $name "source" $source) | fromYamlArray) -}}
 {{- else if eq $kind "lxc" -}}
 {{- if eq ($source.url | default "") "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.url: not set. An \"lxc\" source requires the HTTPS URL of the template tarball, for example https://download.proxmox.com/images/system/debian-13-standard_13.0-1_amd64.tar.zst." $name) -}}
@@ -350,13 +475,14 @@ Takes the root context.
 {{- if eq ($source.sha256 | default "" | toString) "" -}}
 {{- $errors = append $errors (printf "machines.%s.source.sha256: not set. An \"lxc\" source requires the SHA-256 checksum of the template tarball, and there is no way to skip verification. The tarball is fetched over the network and unpacked into what becomes a privileged machine's root filesystem, and nothing about the transport establishes that the bytes are the intended ones." $name) -}}
 {{- end -}}
-{{- range $field := list "reference" "pullSecretName" -}}
+{{- range $pair := list (list "reference" "oci") (list "pullSecretName" "oci") (list "name" "preset") -}}
+{{- $field := index $pair 0 -}}
 {{- if not (kindIs "invalid" (index $source $field)) -}}
-{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind \"oci\". Remove the field, or set machines.%s.source.kind to \"oci\"." $name $field $name) -}}
+{{- $errors = append $errors (printf "machines.%s.source.%s: does not belong to source kind \"lxc\"; it belongs to kind %q. Remove the field, or set machines.%s.source.kind to %q." $name $field (index $pair 1) $name (index $pair 1)) -}}
 {{- end -}}
 {{- end -}}
 {{- else -}}
-{{- $errors = append $errors (printf "machines.%s.source.kind: %q is not a supported source kind. Accepted kinds: oci, lxc." $name $kind) -}}
+{{- $errors = append $errors (printf "machines.%s.source.kind: %q is not a supported source kind. Accepted kinds: oci, lxc, preset." $name $kind) -}}
 {{- end -}}
 {{- end -}}
 

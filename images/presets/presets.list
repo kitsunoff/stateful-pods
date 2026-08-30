@@ -1,0 +1,30 @@
+# The distributions this project publishes a preset for.
+#
+# One line per preset, in the same field order and with the same separator the
+# upstream's own index uses, because every line here is looked up in that index:
+#
+#   preset;distro;release;variant
+#
+# The preset name is what a user writes in values.yaml, and the three fields
+# after it are what identify the build on images.linuxcontainers.org. The name is
+# not derived from them - `voidlinux;current` reads as `void-current` to a person
+# and nothing should have to know that rule twice.
+#
+# This file is the single source of truth for what exists. The build matrix, the
+# daily bump, the retention job and `hack/check-presets.sh` all read it, so a
+# preset added here and nowhere else is built, published, kept up to date and
+# checked against the shipped catalog without any of them being edited.
+#
+# The variant is `default` for every preset and is written out anyway. The
+# upstream also publishes `cloud` and `tinycloud` variants, which carry cloud-init
+# that this chart does not drive, and Void publishes a `musl` variant. Leaving the
+# field implicit would make adding one of those look like a smaller decision than
+# it is.
+#
+# Adding a release is a line. Removing one is a line and a catalog entry, and
+# stops the daily bump proposing it - it does not withdraw what is already
+# published, because a machine's source has to stay resolvable.
+debian-trixie;debian;trixie;default
+ubuntu-noble;ubuntu;noble;default
+alpine-3.24;alpine;3.24;default
+void-current;voidlinux;current;default

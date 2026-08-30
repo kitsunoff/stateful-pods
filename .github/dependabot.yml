@@ -1,0 +1,54 @@
+# What can actually be tracked here, and a note on what cannot.
+#
+# The presets are built from a daily dated tarball on a plain HTTPS index at
+# images.linuxcontainers.org. That is not a package registry in any ecosystem
+# Dependabot implements, and there is no Containerfile for the presets to give it
+# something to look at - a preset's layer is the upstream archive itself, with no
+# base image and no build. `.github/workflows/preset-bump.yaml` is what keeps the
+# tarballs current, and the two do not overlap.
+version: 2
+updates:
+  # The actions the workflows below pin.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    # A ceiling on how many of these can be open at once. Dependabot already
+    # opens one pull request per action; this is what stops a quiet month from
+    # producing a wall of them, in a repository whose workflows publish images.
+    open-pull-requests-limit: 5
+
+  # The base image the shim is built from. The only FROM in the repository that
+  # names something that moves; the preset build has no FROM at all.
+  #
+  # Unverified, and worth checking against a Dependabot job log once: this
+  # repository names its build files `Containerfile` by convention, and the
+  # docker ecosystem is documented around `Dockerfile`. If Dependabot finds
+  # nothing here it will say so quietly, so the absence of pull requests is not
+  # evidence that there was nothing to update. The shim's Containerfile already
+  # carries a `# renovate:` annotation for its package set, which is the other
+  # half of the same job.
+  - package-ecosystem: docker
+    directory: /images/shim
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+
+  # The base image the preset build's own test environment uses. Not shipped, but
+  # it is where the verification is proved, so it should not quietly rot.
+  - package-ecosystem: docker
+    directory: /test/presets
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test
+
+  - package-ecosystem: docker
+    directory: /test/shell
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test

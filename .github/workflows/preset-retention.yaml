@@ -1,0 +1,118 @@
+# Keeps the five most recent builds of each preset and removes the older ones.
+#
+# Keeping every daily build for ever is unbounded storage for content nobody
+# references; keeping only the newest leaves no way back when a build turns out
+# to be broken. Five is a week of room to notice.
+#
+# It deletes nothing until somebody deliberately lets it, and then it deletes on
+# the schedule like anything else. Two reasons for the gate, and both of them are
+# the same reason.
+#
+# The first is mechanical. Deleting a version of a package owned by a user goes
+# through /user/packages, which a workflow's GITHUB_TOKEN cannot reach whatever
+# permissions it is given - it needs a personal access token with
+# `delete:packages`. So without the PRESET_RETENTION_TOKEN secret this reports
+# what it would remove and stops, which is the only thing it could do anyway.
+#
+# The second is that this is the one job in the repository that can destroy
+# something already published, and the damage is silent: a retained tag whose
+# per-architecture manifests were swept away still exists and still resolves as
+# an index, and fails only when somebody installs a machine from it. A dry run
+# every day, in the log, before anyone hands it a token, is cheap.
+#
+# hack/preset-retention.jq is where the actual care lives, and it has fixtures in
+# test/presets/retention.bats for every way this is known to go wrong.
+name: preset-retention
+
+on:
+  schedule:
+    # After the daily bump has published, so that the count it works from is the
+    # one the bump just changed rather than yesterday's.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: How many builds of each preset to keep.
+        required: false
+        default: '5'
+
+permissions:
+  contents: read
+
+jobs:
+  retain:
+    name: retain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      # A report, not a gate. Whether an installation token can read a user's
+      # packages at /users/{owner}/packages is not something this change
+      # established, and a nightly job that goes red on it would teach everyone
+      # to ignore a job whose whole purpose is to be read - which is the failure
+      # mode preset-bump.yaml's own comment warns about. So a run that cannot
+      # produce a plan says so and stops; it does not fail.
+      - name: Work out what would be removed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          KEEP: ${{ inputs.keep || '5' }}
+        run: |
+          set -o nounset -o pipefail
+          if ./hack/preset-retention.sh --owner "$REPOSITORY_OWNER" --keep "$KEEP" --dry-run; then
+            exit 0
+          fi
+          # Markdown, in a quoted heredoc so that its code spans are code spans
+          # and nothing in it expands.
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Retention could not work out a plan
+
+          Nothing was removed - this job removes nothing without a token in any
+          case. The most likely cause is that the workflow token cannot read
+          `/users/OWNER/packages`, which is a read this job needs and an
+          installation token may not have. The log above says which call failed.
+          SUMMARY
+          echo "could not produce a plan; see the summary" >&2
+
+      # On the schedule as well as on a dispatch, because "keep the five most
+      # recent builds and remove the older ones" is the requirement and a job
+      # that only ever removed them when somebody remembered to press a button
+      # would not meet it. What gates this is the token, not the trigger: the
+      # step above has already printed the plan either way, so what runs here is
+      # never a surprise, and without a token it is not a run at all.
+      - name: Remove the builds past the limit
+        env:
+          GH_TOKEN: ${{ secrets.PRESET_RETENTION_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          KEEP: ${{ inputs.keep || '5' }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Retention is reporting, not removing
+
+          Deleting a version of a user-owned package needs a personal access
+          token with `delete:packages`; a workflow `GITHUB_TOKEN` cannot do it
+          whatever permissions it is given. Add one as the
+          `PRESET_RETENTION_TOKEN` secret to turn this on. Until then the plan
+          above is all this job produces, and nothing is ever removed.
+          SUMMARY
+            echo "no PRESET_RETENTION_TOKEN; reported only"
+            exit 0
+          fi
+          ./hack/preset-retention.sh --owner "$REPOSITORY_OWNER" --keep "$KEEP"

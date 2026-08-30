@@ -21,9 +21,9 @@ KUBE_VERSION ?= 1.33.0
 KUBE_VERSION_FLOOR ?= $(shell sed -n 's/^kubeVersion: ">= \(.*\)-0"$$/\1/p' $(CHART)/Chart.yaml)
 FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
-.PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
+.PHONY: all lint shell-lint test shell-test render conform docs presets image-build image-test integration-test seccomp-test preset-test preset-build
 
-all: lint shell-lint docs test shell-test conform
+all: lint shell-lint docs presets test shell-test preset-test conform
 
 ## lint: run helm lint in strict mode against every example
 #  The chart's default values declare no machine on purpose, so linting has to be
@@ -42,6 +42,10 @@ shell-lint:
 docs:
 	./hack/check-values-docs.sh $(CHART)/values.yaml
 
+## presets: check the catalog the chart ships against what the project builds
+presets:
+	./hack/check-presets.sh $(CHART)/presets.yaml images/presets/presets.list
+
 ## test: run the helm unittest suites
 test:
 	$(HELM) unittest $(CHART)
@@ -49,6 +53,31 @@ test:
 ## shell-test: run the bats suites for the shim image's shell scripts
 shell-test:
 	./hack/shell-test.sh
+
+## preset-test: assert what the preset build refuses
+#  In `all`, and not in `image-test` or `integration-test`, because it needs
+#  neither a registry nor a cluster: it runs against a mirror on the local
+#  filesystem. What it covers is the reason a preset is worth more than an `lxc`
+#  source - that the upstream's signature was checked against the key this
+#  repository pins - and that guarantee is only worth as much as the failures
+#  around it, so they are checked on every run rather than on the ones that
+#  happen to have a registry.
+preset-test:
+	./hack/preset-test.sh
+
+## preset-build: verify and publish the preset images
+#  Publishing, not building: there is nothing to build. The verified upstream
+#  archive becomes the image's single layer, so this needs a registry to push to
+#  rather than a builder to run.
+#
+#  Takes arguments through PRESET_ARGS, because what it does depends entirely on
+#  them - `PRESET_ARGS=--resolve-only` reports what the upstream offers and
+#  touches nothing, and naming presets builds only those:
+#
+#    make preset-build PRESET_ARGS="--resolve-only"
+#    make preset-build PRESET_ARGS="--repository localhost:5000/preset- alpine-3.24"
+preset-build:
+	./hack/preset-build.sh $(PRESET_ARGS)
 
 ## image-build: build the toolbox image for the host architecture
 image-build:
@@ -58,11 +87,27 @@ image-build:
 image-test: image-build
 	IMAGE=$(IMAGE) ./hack/image-test.sh
 
-## integration-test: seed a machine end to end on a throwaway kind cluster, then
-#  assert the syscall filter on a second one whose kubelet filters by default
+## integration-test: assert the syscall filter on a kind cluster whose kubelet
+#  filters by default, then seed a machine end to end on a second one
+#
+#  The syscall suite runs first, and the order is not arbitrary. Its assertions
+#  are pairs: each call the profile denies is also made with no profile at all,
+#  so that "the profile denies it" cannot pass because the call was refused for
+#  some other reason. Those control halves need the host kernel in the state it
+#  booted in.
+#
+#  A machine in `privileged` mode can take it out of that state. Void's root
+#  filesystem ships kernel.kexec_load_disabled=1 in /usr/lib/sysctl.d, its init
+#  applies it, and that particular switch only goes one way - so once a Void
+#  machine has booted, kexec_load is refused for everything else on that host,
+#  including the second cluster. Every kind node shares the host's kernel.
+#
+#  This is what `privileged` means, working as documented rather than failing.
+#  The suites are ordered rather than the guest constrained, because constraining
+#  it would make the test prove something about a machine nobody runs.
 integration-test:
-	./hack/integration-test.sh
 	./hack/seccomp-test.sh
+	./hack/integration-test.sh
 
 ## seccomp-test: the syscall filter assertions alone, on their own kind cluster
 seccomp-test:

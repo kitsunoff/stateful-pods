@@ -1,0 +1,254 @@
+# Keeps the catalog up with the upstreams that produce it.
+#
+# The upstreams rebuild daily, mostly to pick up security updates. A catalog that
+# only moved when someone remembered to look would become, silently, a
+# distributor of stale root filesystems.
+#
+# It publishes first and proposes second. The other order would put a reference
+# in the catalog that does not exist yet and leave the digest to a second commit;
+# publishing first means every proposed entry is already resolvable, which is
+# also what the reviewer needs in order to review it.
+#
+# One pull request per preset, on a branch named for that preset, force-updated
+# when the upstream moves again before the previous one is merged. That is what
+# bounds this: four presets are four branches and at most four open pull
+# requests, for ever, however many days pass without anyone merging them. A
+# single combined pull request would make a problem with one distribution block
+# the other three; a branch per run would open one a day.
+name: preset-bump
+
+on:
+  schedule:
+    # Late enough that every upstream has finished its own daily rebuild. The
+    # architectures of one release have to be on the same build for a preset to
+    # be published at all, and catching an upstream mid-rebuild just means the
+    # preset is reported as not ready and tried again tomorrow.
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Report what has fallen behind and stop.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    name: survey
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      behind: ${{ steps.survey.outputs.behind }}
+      any: ${{ steps.survey.outputs.any }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      # The packages are private, so an anonymous read would report every preset
+      # as behind every night and the log would stop meaning anything.
+      - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      # Which presets have fallen behind, and which are simply not ready. A
+      # preset whose architectures are mid-rebuild exits 3 rather than failing,
+      # because that is a state that resolves itself overnight and a red run
+      # every morning teaches people to ignore red runs.
+      - name: Compare the catalog against the upstream
+        id: survey
+        run: |
+          set -o errexit -o nounset -o pipefail
+          behind=""
+          while IFS=';' read -r preset rest; do
+            case "$preset" in ''|\#*) continue ;; esac
+            [ -n "$rest" ] || continue
+
+            # 3 is "the upstream has not finished this build yet", which is a
+            # state that resolves itself overnight. Anything else is something
+            # being wrong - a rotated signing key, a signing-key.asc that no
+            # longer matches the pinned fingerprint, an index line that does not
+            # parse - and swallowing it would leave this job green every morning
+            # while the catalog quietly stopped moving.
+            status=0
+            resolved="$(./hack/preset-build.sh --resolve-only "$preset" 2>/tmp/why)" || status=$?
+            if [ "$status" -eq 3 ]; then
+              echo "$preset: not ready - $(head -1 /tmp/why)"
+              continue
+            elif [ "$status" -ne 0 ]; then
+              echo "$preset: the build could not resolve it, and this is not a wait:" >&2
+              cat /tmp/why >&2
+              exit "$status"
+            fi
+            # The build's result is name, upstream build, reference - tab
+            # separated. Read with the shell rather than cut, for the reason
+            # hack/preset-build.sh gives at length: the portable flags are the
+            # ones that behave the same wherever someone runs this by hand.
+            IFS=$'\t' read -r _ _ reference <<< "$resolved"
+            tag="${reference##*:}"
+            current="$(grep --fixed-strings -- "$preset: " charts/stateful-pods/presets.yaml || true)"
+
+            # The catalog holds a digest, so "is it behind" is answered against
+            # the registry rather than against the catalog's own text: the newest
+            # upstream build's tag either already resolves to what the catalog
+            # names, or the catalog is behind.
+            catalogued_digest="${current##*@}"
+            # Three outcomes, not two. The reference here names the newest
+            # upstream build, which is a tag this project has not pushed yet
+            # whenever a preset is behind - so "not found" is the ordinary way
+            # to learn there is work to do, and must not be confused with a
+            # registry this job cannot reach. Collapsing them either way is a
+            # bug: one direction proposes nothing for ever, the other reports
+            # everything as behind for ever.
+            status=0
+            published="$(crane digest "$reference" 2>&1)" || status=$?
+            if [ "$status" -eq 0 ] && [ "$published" = "$catalogued_digest" ]; then
+              echo "$preset: up to date ($tag)"
+            elif [ "$status" -eq 0 ]; then
+              echo "$preset: behind - $tag is published and the catalog names something else"
+              behind="${behind:+$behind }$preset"
+            elif printf '%s' "$published" | grep --quiet --extended-regexp 'MANIFEST_UNKNOWN|NAME_UNKNOWN|not found'; then
+              echo "$preset: behind - upstream has $tag and it is not published yet"
+              behind="${behind:+$behind }$preset"
+            else
+              echo "$preset: could not reach the registry for $reference: $published" >&2
+              exit 1
+            fi
+          done < images/presets/presets.list
+
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          if [ -n "$behind" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: publish
+    needs: survey
+    if: needs.survey.outputs.any == 'true' && !inputs.dry-run
+    uses: ./.github/workflows/preset-publish.yaml
+    with:
+      presets: ${{ needs.survey.outputs.behind }}
+    permissions:
+      contents: read
+      packages: write
+
+  propose:
+    name: propose
+    needs: [survey, publish]
+    if: needs.survey.outputs.any == 'true' && !inputs.dry-run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      # This job confirms that what it is about to propose resolves, and the
+      # packages are private - so it needs the same credentials the survey does.
+      - name: Log in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | crane auth login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      - name: Open or update one pull request per preset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED: ${{ needs.publish.outputs.published }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          base="${GITHUB_REF_NAME}"
+
+          printf '%s\n' "$PUBLISHED" | while IFS=$'\t' read -r preset build reference; do
+            [ -n "$preset" ] || continue
+
+            # The reference has to exist before it is proposed. That is the whole
+            # reason this publishes first, so it is worth confirming rather than
+            # assuming.
+            crane manifest "$reference" > /dev/null
+
+            branch="preset-bump/$preset"
+            # -B has no long form; it creates the branch or resets an existing
+            # one, which is what makes this branch a standing proposal.
+            git checkout --force -B "$branch" "origin/$base"
+            # `$?` after a negated command is the negation's status, which is
+            # always 0 - so reading it here would turn every real failure into a
+            # silent success and make the exit-2 branch unreachable. The status
+            # has to be captured from the call itself, with errexit held off for
+            # exactly that call.
+            status=0
+            ./hack/preset-bump.sh "$preset" "$reference" || status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "$preset: the catalog already names this reference"
+              continue
+            elif [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+            ./hack/check-presets.sh
+
+            git add charts/stateful-pods/presets.yaml
+            git commit --signoff --message "$(printf '%s\n\n%s\n\n%s\n' \
+              "chore(presets): bump $preset to the $build upstream build" \
+              "The upstream rebuilt. The image below was published from that build after its detached signature over the published checksums verified against the key pinned at images/presets/signing-key.asc, and it resolves for every architecture this project supports." \
+              "  $reference")"
+
+            # Force, because this branch is one preset's standing proposal rather
+            # than one run's. An upstream that moves again before the previous
+            # bump is merged replaces it instead of opening a second one.
+            git push --force origin "$branch"
+
+            # An OPEN pull request specifically. `gh pr view <branch>` resolves a
+            # merged one as readily as an open one, and merging is the normal end
+            # of a bump - so asking that question would make each preset stop
+            # being proposed the first time one of its bumps landed, while
+            # logging that it had updated something.
+            open_pr="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+            if [ "$open_pr" != "0" ]; then
+              echo "$preset: updated the open pull request"
+            else
+              gh pr create \
+                --base "$base" \
+                --head "$branch" \
+                --title "chore(presets): bump $preset to the $build upstream build" \
+                --body "$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+                  "The $preset upstream rebuilt, and this points the catalog at the build it produced." \
+                  "\`$reference\`" \
+                  "It was published before this was opened, so the reference above already resolves, for every architecture this project supports. It was packaged from the upstream root filesystem only after the detached signature over that build's published checksums verified against the key pinned at \`images/presets/signing-key.asc\`, and the published layer was compared back against the archive that was verified." \
+                  "What the chart points at is a decision, which is why this is a proposal rather than a commit. The branch is this preset's standing proposal: if the upstream moves again before this merges, it is replaced rather than joined by a second one.")"
+            fi
+          done
+
+      - name: Say what was proposed
+        if: always()
+        env:
+          PUBLISHED: ${{ needs.publish.outputs.published }}
+        run: |
+          {
+            echo '### Presets published'
+            echo
+            echo '```'
+            printf '%s\n' "$PUBLISHED"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

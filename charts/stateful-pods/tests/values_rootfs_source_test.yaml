@@ -208,3 +208,69 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: '(?s)machines\.web\.source\.pullSecretName: must be the name of a Secret.*is of type bool.*quote it'
+
+  # The vocabulary of the preset kind, rejected on the kinds it does not belong
+  # to. `preset` is the field the provisioning record is written from, so an oci
+  # source carrying one would make the volume assert a preset the machine was
+  # never made from - and the record exists to answer exactly that question.
+  - it: rejects an oci source carrying a preset name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+          name: debian-trixie
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.name: does not belong to source kind "oci".*"preset"'
+
+  - it: rejects an oci source claiming to be a preset
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+          preset: totally-made-up
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.preset: is not an input.*set by the chart'
+
+  - it: rejects an lxc source carrying a preset name
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.test/rootfs.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          name: debian-trixie
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.name: does not belong to source kind "lxc".*"preset"'
+
+  - it: rejects an lxc source claiming to be a preset
+    set:
+      machines.web:
+        source:
+          kind: lxc
+          url: https://example.test/rootfs.tar.zst
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          preset: totally-made-up
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.source\.preset: is not an input.*set by the chart'

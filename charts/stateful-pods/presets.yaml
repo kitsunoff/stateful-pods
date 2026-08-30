@@ -1,0 +1,36 @@
+# The presets this chart ships, and what each one resolves to.
+#
+# A machine that declares
+#
+#   source:
+#     kind: preset
+#     name: debian-trixie
+#
+# is rendered with the reference below. The resolution happens while the chart
+# renders and at no later point, so the manifest a user reviews carries the same
+# source the pod that runs will use.
+#
+# Every entry is pinned by digest and never by tag. A machine is a pet whose disk
+# has to be reproducible, and a reference that came to mean different content
+# later would make a machine's origin change under it without anything in its
+# values changing, and do it invisibly. `hack/check-presets.sh` enforces that,
+# and enforces that these names are the ones images/presets/presets.list builds.
+#
+# This file is maintained by the daily bump workflow, which publishes a newer
+# upstream build and then proposes the corresponding line here for review. What
+# the chart points at is a decision, even when the newer content is almost
+# certainly better, so the publishing is automatic and this file is not.
+#
+# It lives here rather than in values.yaml because it is data rather than
+# configuration: a user does not set it, and `.Files` reaches it inside a
+# packaged chart, so a preset resolves whether the chart was installed from a
+# checkout or from a package.
+#
+# Each reference was built by hack/preset-build.sh from the upstream root
+# filesystem named in its own OCI labels, after the upstream's detached signature
+# over its published checksums verified against the key pinned at
+# images/presets/signing-key.asc.
+debian-trixie: ghcr.io/kitsunoff/stateful-pods-debian-trixie@sha256:1eef004a4aea2e838a185c57c1390667f0a4b79b31bb8e329e6ffb4b98fee33c
+ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu-noble@sha256:5ed0d37ec4f2239c11d0a4213f115d6d3798a8a267ac8ea8c2f70ea2ce2dc480
+alpine-3.24: ghcr.io/kitsunoff/stateful-pods-alpine-3.24@sha256:ac0140ca89e26ee05a7311960ad3f61e6f0f3f02dd88edc92ee4aa0a6e3302a5
+void-current: ghcr.io/kitsunoff/stateful-pods-void-current@sha256:d6cb90a3430b1a7fd926dc8d6f03c5dfcdde4d3c4821b627a558a3ee95b67aaf
