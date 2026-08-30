@@ -1,29 +1,29 @@
 ## 1. Settle what the images actually contain, before building on it
 
-- [ ] 1.1 Read the published `debian-trixie`, `alpine-3.24` and `void-current` preset root
+- [x] 1.1 Read the published `debian-trixie`, `alpine-3.24` and `void-current` preset root
   filesystems and record, for each, the path of the cloud-init program, the init-system integration
   it ships, and whether `/etc/cloud/cloud-init.disabled` is present; verify by exporting each image
   and listing the paths rather than by reasoning from the distribution's packaging
-- [ ] 1.2 Read the unit files and the OpenRC scripts those images ship and confirm that the disabled
+- [x] 1.2 Read the unit files and the OpenRC scripts those images ship and confirm that the disabled
   marker is the single gate on both init systems; verify by finding the condition in each
-- [ ] 1.3 Record the result in `design.md` as the table the fail-loud check is built on, and state
+- [x] 1.3 Record the result in `design.md` as the table the fail-loud check is built on, and state
   which enablement questions are deliberately not checked and why
 
 ## 2. The value-source contract, in the templates
 
-- [ ] 2.1 Add `helm unittest` cases for the refusals in the `values-validation` delta — an input
+- [x] 2.1 Add `helm unittest` cases for the refusals in the `values-validation` delta — an input
   given both inline and by reference, a `valueFrom` naming two sources, a reference missing its name
   or its key, an input belonging to an unselected backend, an unknown key under `cloudInit`, an
   unrecognised backend, and `systemd-credentials` saying it is not implemented; verify every one
   fails against the unmodified chart for the right reason
-- [ ] 2.2 Implement the resolution helper in `_helpers.tpl`: for one machine, walk the declared
+- [x] 2.2 Implement the resolution helper in `_helpers.tpl`: for one machine, walk the declared
   provisioning inputs and emit what the pod spec needs — the inline entries for the chart-owned
   Secret, and one projected source per reference — with the file name each input is defined to use;
   verify with `helm template` that a mixed inline-and-referenced machine renders both
-- [ ] 2.3 Implement the validation the cases from 2.1 demand, accumulating into the existing
+- [x] 2.3 Implement the validation the cases from 2.1 demand, accumulating into the existing
   semantic stage so that fixing one input does not merely reveal the next; verify `make test` is
   green and every message names the input
-- [ ] 2.4 Run `make docs`; verify `values.yaml` still satisfies the documentation checks after the
+- [x] 2.4 Run `make docs`; verify `values.yaml` still satisfies the documentation checks after the
   new inputs are added
 
 ## 3. The pod: the Secret, the volume and the step
