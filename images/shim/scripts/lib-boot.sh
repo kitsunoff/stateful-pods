@@ -49,7 +49,7 @@ sp_apply_mounts() {
         mkdir -p "$target" \
             || sp_die "machine ${SP_MACHINE:-?}: could not create the mount point $target"
         mount -t "$type" -o "$options" "$source" "$target" \
-            || sp_die "machine ${SP_MACHINE:-?}: could not mount $type at $target. The machine has not been started. In the userns security mode this usually means the node cannot support user-namespaced pods; the privileged mode works on any cluster."
+            || sp_die "machine ${SP_MACHINE:-?}: could not mount $type at $target. The machine has not been started. In the userns security mode this usually means the node cannot support user-namespaced pods; the privileged mode asks nothing of the node."
     done < <(sp_mount_plan "$root")
 }
 

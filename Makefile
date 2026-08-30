@@ -6,17 +6,19 @@ RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
-# The chart's own floor, and the one example that renders there. It duplicates
-# Chart.yaml's kubeVersion by hand - nothing ties the two together, so a floor
-# raised there has to be raised here as well or this validates the wrong version. A field the oldest supported API does not have is a chart that
-# installs on that cluster and behaves differently - which is what the guest's
-# access-control profile would have been below 1.30, and validating only at the
-# version above would not have seen it.
+# The chart's own floor, read out of Chart.yaml rather than repeated here: a
+# floor raised there would otherwise leave this validating the version it used
+# to be, and the check would go on passing while proving the wrong thing.
+#
+# It is checked at all because a field the oldest supported API does not have is
+# a chart that installs on that cluster and behaves differently there - which is
+# what the guest's access-control profile would have been below 1.30. Validating
+# only at the version above would not have seen it.
 #
 # The privileged example, because that is the mode the floor is about: `userns`
 # needs 1.33 and the chart refuses it below that, so a userns example cannot
 # render at the floor at all.
-KUBE_VERSION_FLOOR ?= 1.30.0
+KUBE_VERSION_FLOOR ?= $(shell sed -n 's/^kubeVersion: ">= \(.*\)-0"$$/\1/p' $(CHART)/Chart.yaml)
 FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
 .PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
