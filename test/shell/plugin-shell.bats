@@ -101,7 +101,7 @@ running() {
 }
 
 @test "an ambiguous name never opens a shell into either machine" {
-    export SP_TEST_STATEFULSETS="$(printf 'web\tlab\tlab-web\nweb\tprod\tprod-web\n')"
+    export SP_TEST_STATEFULSETS="$(printf 'web|lab|lab-web\nweb|prod|prod-web\n')"
     machine shell web --namespace homelab
     [ "$status" -ne 0 ]
     [[ "$output" == *"--release"* ]]
