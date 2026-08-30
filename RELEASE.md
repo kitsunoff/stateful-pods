@@ -54,13 +54,13 @@ A job with zero steps did not run. **Do not push a tag until that number is non-
 
 ## Cutting `v0.1.0`
 
-Everything must already agree on the version — the workflow and
-[`hack/release-archives.sh`](hack/release-archives.sh) both refuse a tag that disagrees with either
-the chart or the plugin:
+Everything must already agree on the version before any tag is pushed, this one included — the
+workflow and [`hack/release-archives.sh`](hack/release-archives.sh) both refuse a tag that
+disagrees with either the chart or the plugin. Both of these must print the tag without its `v`:
 
 ```bash
-sed -n 's/^version: //p' charts/stateful-pods/Chart.yaml   # 0.1.0
-sed -n 's/^SP_VERSION="\(.*\)"$/\1/p' cmd/kubectl-machine  # 0.1.0
+sed -n 's/^version: //p' charts/stateful-pods/Chart.yaml   # the chart's version
+sed -n 's/^SP_VERSION="\(.*\)"$/\1/p' cmd/kubectl-machine  # the plugin's own
 ```
 
 ```bash
@@ -85,7 +85,9 @@ resolves its own architecture underneath it.
 
 A tag in a registry is a name and not a record of who wrote it, so confirm the version behind it is
 the one this tag build produced before pinning it. A hand-pushed image that got there first carries
-the same tag and reads out of `crane digest` exactly the same way:
+the same tag and reads out of `crane digest` exactly the same way. What distinguishes them is when
+the version was created: it should be the minute the tag run's `image` job finished, which
+`gh run view` reports. The query needs a token with `read:packages`.
 
 ```bash
 gh api /user/packages/container/stateful-pods-shim/versions \
@@ -101,12 +103,17 @@ Then, on a branch:
    [`README.md`](README.md).
 3. Move `version` and `appVersion` in `charts/stateful-pods/Chart.yaml`, and `SP_VERSION` in
    `cmd/kubectl-machine`, to `0.1.1`.
-4. Run `make all` and `make image-test`, open a pull request, and merge it.
+4. Move the version in both READMEs' install commands, and the release URLs the plugin's own
+   install instructions carry, to `0.1.1` as well. The plugin defaults the chart reference to its
+   own version, so the archive from the first tag installs the chart that still pins the old digest.
+5. Run `make all` and `make image-test`, open a pull request, and merge it.
 
 `charts/stateful-pods/tests/shim_image_test.yaml` asserts the *form* of the default reference rather
 than its content, so it will not catch a stale-but-valid digest. Check the value by eye.
 
 ## Cutting `v0.1.1`
+
+The same version check as before applies — it applies to every tag, not just the first:
 
 ```bash
 git checkout main && git pull --ff-only

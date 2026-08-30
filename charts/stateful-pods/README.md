@@ -193,8 +193,8 @@ kubectl machine create web --chart ./charts/stateful-pods \
 `--set` and `--values` reach `helm` unchanged, which is how anything the plugin has no flag
 for is supplied — a seccomp profile, a volume snapshot to restore from. A private source
 needs `--pull-secret <name>`, naming a `kubernetes.io/dockerconfigjson` secret in the
-namespace; the preset images this project publishes are private, so a `--preset` machine
-needs one until they are not.
+namespace. The preset images this project publishes are public, so a `--preset` machine
+needs none.
 
 ## Seeding
 

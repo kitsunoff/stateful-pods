@@ -188,9 +188,6 @@ the code, and the specs under [`openspec/specs/`](openspec/specs) are what the c
 
 ## Known limitations
 
-**The preset packages are private,** so a `--preset` machine needs `--pull-secret <name>` until they
-are not. GitHub exposes no API for package visibility; it is a manual step.
-
 **One machine per release.** The map form is already in place so that lifting the restriction
 renames nothing that exists.
 

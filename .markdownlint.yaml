@@ -18,10 +18,3 @@ MD033:
 # first line of the README is the opening `<div>`, and the H1 is immediately
 # inside it. The rule cannot see through the element.
 MD041: false
-
-# MD028 (blank line inside blockquote) fires on two consecutive GitHub alerts -
-# a `> [!WARNING]` block followed by a `> [!CAUTION]` one. The rule is warning
-# about an ambiguity that does not exist here: a blank line between two
-# blockquotes separates them in CommonMark, and GitHub renders the pair as two
-# distinct alerts. Front-loading two of them is deliberate.
-MD028: false
