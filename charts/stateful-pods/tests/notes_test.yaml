@@ -24,6 +24,17 @@ tests:
       - matchRegexRaw:
           pattern: 'web'
 
+  # The one place the derived names are shown to the person who chose them, and
+  # the only moment the consequence of choosing them is concrete. It cannot be
+  # acted on for this machine - it is already installed - but renaming one later
+  # is a live possibility, and this is where the volume's name becomes visible.
+  - it: says the names it just derived are permanent
+    asserts:
+      - matchRegexRaw:
+          pattern: 'permanent'
+      - matchRegexRaw:
+          pattern: 'orphans'
+
   - it: gives the machine's in-cluster DNS name
     asserts:
       - matchRegexRaw:

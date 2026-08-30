@@ -10,6 +10,10 @@ Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root
   Root volume:  {{ $objectName }}-{{ $objectName }}-0 ({{ $rootfs.size | default "8Gi" }}, retained on uninstall)
   Mode:         {{ $machine.security.mode }}
 
+Those names are permanent. The root volume above is derived from the object name, so
+renaming this machine or its release later does not move the volume - it orphans it and
+recreates the machine empty.
+
 On its first start the machine's root filesystem is filled from its {{ $machine.source.kind }} source,
 once. After that the volume is the machine's operating system and changing the source
 changes nothing.
