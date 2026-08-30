@@ -14,15 +14,26 @@ On its first start the machine's root filesystem is filled from its {{ $machine.
 once. After that the volume is the machine's operating system and changing the source
 changes nothing.
 
-The machine then boots. Watch it:
+The machine then boots. Watch it, with the kubectl plugin or without:
 
+  kubectl machine console {{ $name }} --namespace {{ $root.Release.Namespace }} --follow
   kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --follow
 
 Get a shell in it - this is the machine's own shell, not the chart's:
 
+  kubectl machine shell {{ $name }} --namespace {{ $root.Release.Namespace }}
   kubectl --namespace {{ $root.Release.Namespace }} exec --stdin --tty {{ $objectName }}-0 -- /bin/sh
 
-It reports itself ready when its operating system has finished starting, and its name
+The plugin addresses this machine as {{ $name }}, the name you declared it under, and
+reports which stage it is in while it is being made - which is the one thing the raw
+commands above cannot do while the root filesystem is still being seeded:
+
+  kubectl machine status {{ $name }} --namespace {{ $root.Release.Namespace }}
+
+The plugin is at https://github.com/kitsunoff/stateful-pods, and everything above and
+below works without it.
+
+The machine reports itself ready when its operating system has finished starting, and its name
 resolves before that, so you can reach it while it boots. Deleting the pod asks it to shut
 down and waits up to 120 seconds; it is not killed where it stands.
 
@@ -31,8 +42,9 @@ boot. To keep one of them as the machine's own, create the marker beside it:
 
   touch /etc/.stateful-pods-ignore.resolv.conf
 
-The root volume is retained when the release is uninstalled. Deleting a machine's state is
-a separate, deliberate action:
+The root volume is retained when the release is uninstalled - by `helm uninstall
+{{ $root.Release.Name }}`, or by `kubectl machine delete {{ $name }}`, which says the same thing this
+does. Deleting a machine's state is a separate, deliberate action:
 
   kubectl --namespace {{ $root.Release.Namespace }} delete pvc {{ $objectName }}-{{ $objectName }}-0
 {{- end }}

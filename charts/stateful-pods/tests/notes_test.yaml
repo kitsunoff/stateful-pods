@@ -65,3 +65,25 @@ tests:
           pattern: '/etc/resolv.conf'
       - matchRegexRaw:
           pattern: 'stateful-pods-ignore\.resolv\.conf'
+
+  - it: points at the plugin for the machine's own name, and keeps the raw form
+    asserts:
+      - matchRegexRaw:
+          pattern: 'kubectl machine shell web --namespace homelab'
+      - matchRegexRaw:
+          pattern: 'kubectl machine console web --namespace homelab --follow'
+      - matchRegexRaw:
+          pattern: 'kubectl machine status web --namespace homelab'
+      # Both forms, because the plugin is optional and the notes are read by
+      # people who do not have it.
+      - matchRegexRaw:
+          pattern: 'logs lab-web-0 --follow'
+      - matchRegexRaw:
+          pattern: 'exec --stdin --tty lab-web-0'
+
+  - it: does not offer the plugin as a way to remove the root filesystem
+    asserts:
+      - matchRegexRaw:
+          pattern: 'delete pvc lab-web-lab-web-0'
+      - notMatchRegexRaw:
+          pattern: 'machine delete web.*pvc'
