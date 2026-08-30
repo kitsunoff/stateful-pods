@@ -1,4 +1,9 @@
-# A machine seeded from a conventional LXC template tarball, running privileged.
+# A machine seeded from a conventional LXC template tarball, in the privileged mode.
+#
+# That mode grants the guest a named capability set - what a container gets by
+# default, plus CAP_SYS_ADMIN for the mount and the root change - and every one of
+# them is real on the node. It is not the runtime's privileged flag; see
+# values.yaml for what a machine in this mode does not get.
 #
 # The checksum is mandatory and cannot be skipped: the tarball is fetched over the
 # network and unpacked into what becomes this machine's root filesystem.
