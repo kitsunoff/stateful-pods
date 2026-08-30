@@ -1,0 +1,621 @@
+#!/usr/bin/env bash
+#
+# kubectl machine - reach a machine by the name it was declared under.
+#
+# The chart runs a machine as a pet with a name, and then the command line hands
+# that name back as `<release>-<machine>-0`, a container called `guest`, and a
+# shell that might be bash and might only be sh. This closes that gap: a machine
+# is addressed by its own name, and the answer to "why can I not get in" is the
+# stage it is in rather than an error about a container.
+#
+# It talks to no API server of its own. Every read is a `kubectl get` and every
+# change is a `kubectl` or `helm` invocation, printed before it runs - auth
+# plugins, exec credentials and proxies already work through kubectl and none of
+# that is reimplementable here. Nothing else is needed: no jq, which is the
+# dependency that turns "download one file" into "install two things".
+#
+# bash 3.2, because macOS ships bash 3.2. No associative arrays, no mapfile, no
+# ${var^^}. The macOS job in CI is what holds that; a comment would not.
+set -o errexit
+set -o nounset
+set -o pipefail
+
+SP_VERSION="0.1.0"
+
+# The labels the chart puts on every object it renders for a machine. They are
+# also its selector labels, which are immutable for the life of a machine - the
+# most stable thing there is to depend on.
+SP_MACHINE_LABEL="stateful-pods.io/machine"
+SP_RELEASE_LABEL="app.kubernetes.io/instance"
+
+# The container a machine's own operating system runs in, and the init containers
+# it passes through on the way there, in the order it passes through them.
+SP_GUEST="guest"
+SP_INIT_STEPS="seed prepare customize"
+
+SP_PROGRAM="kubectl machine"
+
+# Set by the global flags, and used by every command.
+SP_NAMESPACE=""
+SP_CONTEXT=""
+SP_RELEASE=""
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+$SP_PROGRAM - work with the machines a stateful-pods release runs
+
+Usage:
+  kubectl machine list                    the machines in a namespace, and the stage each is in
+  kubectl machine status <name>           where one machine is in its life
+  kubectl machine version                 the plugin's version
+
+Flags shared by every command:
+  --namespace <namespace>   the namespace to act in (default: the context's)
+  --context <context>       the cluster context to act in (default: the current one)
+  --release <release>       the release the machine belongs to, when its name is ambiguous
+  --help                    this text, or a command's own
+
+Run 'kubectl machine <command> --help' for what a command takes.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# What has to be true before anything is attempted
+# ---------------------------------------------------------------------------
+
+# A platform check that runs first, so that an unsupported platform is stated
+# rather than discovered half-way through a create. There is no bash on Windows
+# worth targeting; that trade was accepted when this was written in bash rather
+# than Go, and it is recorded here instead of being papered over.
+require_platform() {
+    local system
+    system="$(uname -s 2>/dev/null || echo unknown)"
+    case "$system" in
+        Linux | Darwin | *BSD) ;;
+        *)
+            die "$SP_PROGRAM does not support $system: it is a bash program, and it supports Linux and macOS.
+On Windows, run it from WSL."
+            ;;
+    esac
+}
+
+require_tool() {
+    command -v "$1" >/dev/null 2>&1 ||
+        die "$SP_PROGRAM needs $1, which was not found on PATH.
+$2"
+}
+
+require_kubectl() {
+    require_tool kubectl "Install it: https://kubernetes.io/docs/tasks/tools/"
+}
+
+# ---------------------------------------------------------------------------
+# Flag parsing
+#
+# Written out rather than delegated to getopt: the long flags this composes are
+# the ones it prints, and getopt on macOS is the BSD one, which has no long
+# flags at all.
+# ---------------------------------------------------------------------------
+
+SP_FLAG=""
+SP_VALUE=""
+SP_HAS_VALUE=0
+SP_SHIFT=0
+
+# Splits --flag=value into its parts, so both spellings work everywhere.
+flag_split() {
+    SP_SHIFT=1
+    case "$1" in
+        --*=*)
+            SP_FLAG="${1%%=*}"
+            SP_VALUE="${1#*=}"
+            SP_HAS_VALUE=1
+            ;;
+        *)
+            SP_FLAG="$1"
+            SP_VALUE=""
+            SP_HAS_VALUE=0
+            ;;
+    esac
+}
+
+# The value of a flag that needs one, taken from the next argument when it was
+# not given with an equals sign. Called with the arguments still to be parsed.
+flag_value() {
+    [ "$SP_HAS_VALUE" -eq 1 ] && return 0
+    [ "$#" -ge 2 ] || die "$SP_FLAG needs a value"
+    SP_VALUE="$2"
+    SP_SHIFT=2
+}
+
+# The flags every command takes. Returns 0 when it consumed the flag.
+common_flag() {
+    case "$SP_FLAG" in
+        --namespace)
+            flag_value "$@"
+            SP_NAMESPACE="$SP_VALUE"
+            ;;
+        --context)
+            flag_value "$@"
+            SP_CONTEXT="$SP_VALUE"
+            ;;
+        --release)
+            flag_value "$@"
+            SP_RELEASE="$SP_VALUE"
+            ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Talking to the cluster
+# ---------------------------------------------------------------------------
+
+# The context and namespace flags, in the form they are passed and printed.
+kube_flags() {
+    [ -n "$SP_CONTEXT" ] && printf ' --context %s' "$SP_CONTEXT"
+    [ -n "$SP_NAMESPACE" ] && printf ' --namespace %s' "$SP_NAMESPACE"
+    return 0
+}
+
+kubectl_run() {
+    local flags=()
+    [ -n "$SP_CONTEXT" ] && flags+=(--context "$SP_CONTEXT")
+    [ -n "$SP_NAMESPACE" ] && flags+=(--namespace "$SP_NAMESPACE")
+    kubectl ${flags[@]+"${flags[@]}"} "$@"
+}
+
+current_context() {
+    if [ -n "$SP_CONTEXT" ]; then
+        printf '%s\n' "$SP_CONTEXT"
+    else
+        kubectl config current-context 2>/dev/null || printf '%s\n' "(none)"
+    fi
+}
+
+# The selector for one machine, narrowed by release when one was named.
+machine_selector() {
+    if [ -n "$SP_RELEASE" ]; then
+        printf '%s=%s,%s=%s' "$SP_MACHINE_LABEL" "$1" "$SP_RELEASE_LABEL" "$SP_RELEASE"
+    else
+        printf '%s=%s' "$SP_MACHINE_LABEL" "$1"
+    fi
+}
+
+# Every machine's statefulset, projected to: name, release, object name.
+STS_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"\t"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"\t"}}{{.metadata.name}}{{"\n"}}{{end}}'
+
+# Every machine's pod, projected to: name, release, pod, phase, the init
+# containers' states, the containers' states. A container is encoded as
+# NAME=STATE,REASON,EXITCODE,READY - which is everything the stage derivation
+# below reads, and nothing that needs jq to get at.
+POD_TEMPLATE='{{range .items}}{{index .metadata.labels "stateful-pods.io/machine"}}{{"\t"}}{{index .metadata.labels "app.kubernetes.io/instance"}}{{"\t"}}{{.metadata.name}}{{"\t"}}{{.status.phase}}{{"\t"}}{{range .status.initContainerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"\t"}}{{range .status.containerStatuses}}{{.name}}={{if .state.running}}running,,,{{else if .state.terminated}}terminated,{{.state.terminated.reason}},{{.state.terminated.exitCode}},{{else if .state.waiting}}waiting,{{.state.waiting.reason}},,{{else}}unknown,,,{{end}}{{.ready}};{{end}}{{"\n"}}{{end}}'
+
+get_statefulsets() {
+    kubectl_run get statefulsets --selector "$1" --output "go-template=$STS_TEMPLATE"
+}
+
+get_pods() {
+    kubectl_run get pods --selector "$1" --output "go-template=$POD_TEMPLATE"
+}
+
+# ---------------------------------------------------------------------------
+# Resolving a name
+#
+# By label, and never by rebuilding the chart's naming rule: a user who has to
+# know that rule has been handed the chart's internals as an interface. Two
+# releases in a namespace can each declare a machine called `web`, so more than
+# one match stops rather than picking - picking the wrong pet is the one mistake
+# this must not make.
+# ---------------------------------------------------------------------------
+
+SP_MACHINE=""
+SP_MACHINE_RELEASE=""
+SP_OBJECT=""
+
+resolve_machine() {
+    local name="$1" found=0 machine release object
+    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+        [ -n "$machine" ] || continue
+        found=$((found + 1))
+        SP_MACHINE="$machine"
+        SP_MACHINE_RELEASE="$release"
+        SP_OBJECT="$object"
+    done < <(get_statefulsets "$(machine_selector "$name")")
+
+    if [ "$found" -eq 0 ]; then
+        report_unknown "$name"
+    fi
+    if [ "$found" -gt 1 ]; then
+        report_ambiguous "$name"
+    fi
+}
+
+report_unknown() {
+    local name="$1" listing
+    listing="$(list_lines || true)"
+    if [ -n "$listing" ]; then
+        die "no machine called $name in $(where_it_would_act). These are there:
+$listing"
+    fi
+    die "no machine called $name in $(where_it_would_act), and no machines at all."
+}
+
+report_ambiguous() {
+    local name="$1" machine release object matches=""
+    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+        [ -n "$machine" ] || continue
+        matches="$matches  $machine in release $release ($object)
+"
+    done < <(get_statefulsets "$(machine_selector "$name")")
+    die "more than one machine is called $name in $(where_it_would_act):
+$matches
+Name the release it belongs to with --release, so that the right one is acted on."
+}
+
+where_it_would_act() {
+    if [ -n "$SP_NAMESPACE" ]; then
+        printf 'namespace %s' "$SP_NAMESPACE"
+    else
+        printf 'the current namespace'
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# The stage a machine is in
+#
+# Read from that machine's own pod status and from nothing else. Every row of
+# this is a state the chart produces; none of it is inferred from how long
+# something has been happening, because a large template legitimately takes
+# minutes and a timer would report a healthy machine as broken.
+# ---------------------------------------------------------------------------
+
+SP_STAGE=""          # one word, for a listing
+SP_STAGE_TEXT=""     # what it means, for a person
+SP_STAGE_CONTAINER="" # the container whose output explains it
+SP_STAGE_DETAIL=""   # why, when a stage is a failure
+
+# The state of one container out of a projected `name=state,reason,exit,ready;`
+# list. Sets SP_CS_STATE, SP_CS_REASON, SP_CS_EXIT and SP_CS_READY.
+SP_CS_STATE=""
+SP_CS_REASON=""
+SP_CS_EXIT=""
+SP_CS_READY=""
+
+container_state() {
+    local wanted="$1" list="$2" entry rest
+    SP_CS_STATE=""
+    SP_CS_REASON=""
+    SP_CS_EXIT=""
+    SP_CS_READY=""
+    while [ -n "$list" ]; do
+        entry="${list%%;*}"
+        if [ "$entry" = "$list" ]; then
+            list=""
+        else
+            list="${list#*;}"
+        fi
+        [ -n "$entry" ] || continue
+        case "$entry" in
+            "$wanted"=*)
+                rest="${entry#*=}"
+                SP_CS_STATE="${rest%%,*}"
+                rest="${rest#*,}"
+                SP_CS_REASON="${rest%%,*}"
+                rest="${rest#*,}"
+                SP_CS_EXIT="${rest%%,*}"
+                SP_CS_READY="${rest#*,}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+step_stage() {
+    case "$1" in
+        seed) printf 'seeding' ;;
+        prepare) printf 'preparing' ;;
+        customize) printf 'customizing' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+step_text() {
+    case "$1" in
+        seed) printf 'seeding the root filesystem from its source' ;;
+        prepare) printf "preparing the machine's identity" ;;
+        customize) printf 'writing the files the chart maintains' ;;
+        *) printf 'running %s' "$1" ;;
+    esac
+}
+
+# A waiting reason that is a failure rather than a step that has not begun.
+waiting_is_failure() {
+    case "$1" in
+        PodInitializing | ContainerCreating | "" | Pending) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Derives the stage from a projected pod line's init and container states.
+derive_stage() {
+    local inits="$1" containers="$2" step
+
+    SP_STAGE=""
+    SP_STAGE_TEXT=""
+    SP_STAGE_CONTAINER=""
+    SP_STAGE_DETAIL=""
+
+    for step in $SP_INIT_STEPS; do
+        container_state "$step" "$inits" || continue
+        case "$SP_CS_STATE" in
+            terminated)
+                [ "$SP_CS_EXIT" = "0" ] && continue
+                SP_STAGE="failed"
+                SP_STAGE_TEXT="failed while $(step_text "$step")"
+                SP_STAGE_CONTAINER="$step"
+                SP_STAGE_DETAIL="it exited with code $SP_CS_EXIT"
+                return 0
+                ;;
+            running)
+                SP_STAGE="$(step_stage "$step")"
+                SP_STAGE_TEXT="$(step_text "$step")"
+                SP_STAGE_CONTAINER="$step"
+                return 0
+                ;;
+            waiting)
+                if waiting_is_failure "$SP_CS_REASON"; then
+                    SP_STAGE="failed"
+                    SP_STAGE_TEXT="failed while $(step_text "$step")"
+                    SP_STAGE_CONTAINER="$step"
+                    SP_STAGE_DETAIL="the container is $SP_CS_REASON"
+                else
+                    SP_STAGE="$(step_stage "$step")"
+                    SP_STAGE_TEXT="$(step_text "$step")"
+                    SP_STAGE_CONTAINER="$step"
+                fi
+                return 0
+                ;;
+        esac
+    done
+
+    if container_state "$SP_GUEST" "$containers"; then
+        case "$SP_CS_STATE" in
+            running)
+                SP_STAGE_CONTAINER="$SP_GUEST"
+                if [ "$SP_CS_READY" = "true" ]; then
+                    SP_STAGE="ready"
+                    SP_STAGE_TEXT="ready: its operating system has finished starting"
+                else
+                    SP_STAGE="booting"
+                    SP_STAGE_TEXT="booting: its operating system is still starting"
+                fi
+                ;;
+            terminated)
+                SP_STAGE_CONTAINER="$SP_GUEST"
+                if [ "$SP_CS_EXIT" = "0" ]; then
+                    SP_STAGE="stopped"
+                    SP_STAGE_TEXT="stopped: the $SP_GUEST container exited"
+                else
+                    SP_STAGE="failed"
+                    SP_STAGE_TEXT="failed: the $SP_GUEST container exited with code $SP_CS_EXIT"
+                fi
+                ;;
+            waiting)
+                SP_STAGE_CONTAINER="$SP_GUEST"
+                if waiting_is_failure "$SP_CS_REASON"; then
+                    SP_STAGE="failed"
+                    SP_STAGE_TEXT="failed: the $SP_GUEST container is $SP_CS_REASON"
+                else
+                    SP_STAGE="booting"
+                    SP_STAGE_TEXT="booting: the $SP_GUEST container is starting"
+                fi
+                ;;
+            *)
+                SP_STAGE="pending"
+                SP_STAGE_TEXT="pending: the $SP_GUEST container has no state yet"
+                ;;
+        esac
+        return 0
+    fi
+
+    # A pod that exists with nothing started in it. Not a row of the table, and
+    # deliberately not folded into one: calling it "seeding" would be a stage
+    # invented rather than read, and the answer is in the pod's events.
+    SP_STAGE="pending"
+    SP_STAGE_TEXT="pending: nothing has started in its pod yet"
+    return 0
+}
+
+# What to read to understand the stage a machine is in.
+stage_hint() {
+    local pod="$1"
+    case "$SP_STAGE" in
+        pending)
+            printf 'kubectl%s describe pod %s' "$(kube_flags)" "$pod"
+            ;;
+        stopped | failed)
+            if [ "$SP_STAGE_CONTAINER" = "$SP_GUEST" ]; then
+                printf 'kubectl%s logs %s --container %s --previous' "$(kube_flags)" "$pod" "$SP_GUEST"
+            else
+                printf 'kubectl%s logs %s --container %s' "$(kube_flags)" "$pod" "$SP_STAGE_CONTAINER"
+            fi
+            ;;
+        *)
+            printf 'kubectl%s logs %s --container %s --follow' "$(kube_flags)" "$pod" "$SP_STAGE_CONTAINER"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Reading a machine's pod
+# ---------------------------------------------------------------------------
+
+SP_POD=""
+
+# Fills SP_POD and the stage variables for the resolved machine. Reports whether
+# a pod was found at all.
+read_machine_pod() {
+    local machine release pod inits containers found=0
+    SP_POD=""
+    while IFS="$(printf '\t')" read -r machine release pod _ inits containers || [ -n "$machine" ]; do
+        [ -n "$machine" ] || continue
+        SP_POD="$pod"
+        derive_stage "$inits" "$containers"
+        found=1
+    done < <(get_pods "$(machine_selector "$SP_MACHINE")")
+    [ "$found" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+list_help() {
+    cat <<EOF
+kubectl machine list - the machines in a namespace, and the stage each is in
+
+Usage:
+  kubectl machine list [--namespace <namespace>] [--context <context>]
+EOF
+}
+
+# One line per machine: name, release, stage, object name. Machines whose pod
+# has not been created yet still appear, because a machine that a release
+# declares is a machine that exists.
+list_lines() {
+    local machine release object inits containers stage
+    local pods="" line
+    pods="$(get_pods "$SP_MACHINE_LABEL" || true)"
+    while IFS="$(printf '\t')" read -r machine release object || [ -n "$machine" ]; do
+        [ -n "$machine" ] || continue
+        stage="not running"
+        while IFS="$(printf '\t')" read -r line _ _ _ inits containers || [ -n "$line" ]; do
+            [ "$line" = "$machine" ] || continue
+            derive_stage "$inits" "$containers"
+            stage="$SP_STAGE"
+        done <<EOF
+$pods
+EOF
+        printf '  %s\t%s\t%s\t%s\n' "$machine" "$release" "$stage" "$object"
+    done < <(get_statefulsets "$SP_MACHINE_LABEL")
+}
+
+cmd_list() {
+    while [ "$#" -gt 0 ]; do
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                list_help
+                return 0
+                ;;
+            *)
+                common_flag "$@" || die "unknown flag for list: $SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+    require_kubectl
+
+    local lines
+    lines="$(list_lines)"
+    if [ -z "$lines" ]; then
+        printf 'There are no machines in %s.\n' "$(where_it_would_act)"
+        return 0
+    fi
+    printf '  %s\t%s\t%s\t%s\n' NAME RELEASE STAGE OBJECT
+    printf '%s\n' "$lines"
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+status_help() {
+    cat <<EOF
+kubectl machine status <name> - where one machine is in its life
+
+Usage:
+  kubectl machine status <name> [--release <release>] [--namespace <namespace>]
+EOF
+}
+
+cmd_status() {
+    local name=""
+    while [ "$#" -gt 0 ]; do
+        flag_split "$1"
+        case "$SP_FLAG" in
+            --help)
+                status_help
+                return 0
+                ;;
+            --*)
+                common_flag "$@" || die "unknown flag for status: $SP_FLAG"
+                ;;
+            *)
+                [ -z "$name" ] || die "status takes one machine, and was given $name and $SP_FLAG"
+                name="$SP_FLAG"
+                ;;
+        esac
+        shift "$SP_SHIFT"
+    done
+    [ -n "$name" ] || die "status needs a machine's name. Run 'kubectl machine list' to see them."
+    require_kubectl
+    resolve_machine "$name"
+
+    printf 'Machine:    %s\n' "$SP_MACHINE"
+    printf 'Release:    %s\n' "$SP_MACHINE_RELEASE"
+    printf 'Objects:    %s\n' "$SP_OBJECT"
+    printf 'Namespace:  %s\n' "${SP_NAMESPACE:-(the one the context names)}"
+    printf 'Context:    %s\n' "$(current_context)"
+
+    if ! read_machine_pod; then
+        printf 'Stage:      not running - its release %s is installed, but it has no pod\n' "$SP_MACHINE_RELEASE"
+        printf '\n  kubectl%s describe statefulset %s\n' "$(kube_flags)" "$SP_OBJECT"
+        return 0
+    fi
+
+    printf 'Pod:        %s\n' "$SP_POD"
+    printf 'Stage:      %s - %s\n' "$SP_STAGE" "$SP_STAGE_TEXT"
+    [ -n "$SP_STAGE_DETAIL" ] && printf 'Because:    %s\n' "$SP_STAGE_DETAIL"
+    printf '\n  %s\n' "$(stage_hint "$SP_POD")"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    require_platform
+
+    [ "$#" -gt 0 ] || {
+        usage
+        return 0
+    }
+
+    local subcommand="$1"
+    shift
+    case "$subcommand" in
+        list) cmd_list "$@" ;;
+        status) cmd_status "$@" ;;
+        version | --version) printf '%s %s\n' "$SP_PROGRAM" "$SP_VERSION" ;;
+        help | --help)
+            usage
+            ;;
+        *)
+            die "$SP_PROGRAM has no command called $subcommand.
+
+$(usage)"
+            ;;
+    esac
+}
+
+main "$@"
