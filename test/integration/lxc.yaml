@@ -1,8 +1,16 @@
 # A machine seeded from a template tarball. The URL and checksum are supplied by
 # the integration script; a template must be served over HTTPS, which is what the
 # chart enforces and what this case exists to exercise.
+#
+# Provisioned natively, and this is the ordinary case rather than a quirk of the
+# fixture: the templates linuxcontainers.org and Proxmox publish are `default`
+# variant root filesystems, which carry no cloud-init. A machine on one that left
+# the backend unset would select cloud-init and be refused - correctly, and this
+# suite proved it by doing exactly that before the line below was added.
 machines:
   db:
+    guest:
+      provisioning: native
     source:
       kind: lxc
       url: PLACEHOLDER_URL

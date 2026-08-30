@@ -187,6 +187,12 @@ shim:
 #       #                assuming a distribution that carries cloud-init elsewhere
 #       #                carries it here.
 #       #
+#       #                A `kind: lxc` source almost always needs `native` too.
+#       #                The templates linuxcontainers.org and Proxmox publish are
+#       #                `default` variant root filesystems and carry no
+#       #                cloud-init; the cloud variants are not distributed in
+#       #                that form.
+#       #
 #       #   native     - the chart writes nothing into the machine beyond the
 #       #                host name, host table and resolver it maintains on every
 #       #                boot. Asks nothing of the image, so it works with any of

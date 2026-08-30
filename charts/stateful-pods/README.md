@@ -523,6 +523,11 @@ root filesystem or it is not a preset. Void's upstream publishes only `default` 
 honestly name two root filesystems. **A machine on either must name `guest.provisioning: native`**
 or it will not start.
 
+**An `lxc` template source almost always needs `native` as well.** The templates
+linuxcontainers.org and Proxmox distribute are `default` variant root filesystems and carry no
+cloud-init — the cloud variants are not published in that form — so a machine on one that leaves the
+backend unset is refused.
+
 The column is what a preset can serve today, and it moves when an upstream does. `presets.yaml` and
 the table above the preset section are the two places it is recorded; check them rather than
 assuming a distribution that carries cloud-init everywhere else carries it here.
@@ -761,6 +766,7 @@ way in.
 | `debian-trixie`, `alpine-3.24` | nothing — cloud-init runs and provisions from an empty configuration |
 | `ubuntu-noble` | set `guest.provisioning: native` — its upstream's cloud architectures are not yet on one build |
 | `void-current` | set `guest.provisioning: native` — its upstream publishes no cloud variant |
+| an `lxc` template source | set `guest.provisioning: native` — the published templates are `default` variants and carry no cloud-init |
 | any other image without cloud-init | set `guest.provisioning: native` |
 
 ```yaml
