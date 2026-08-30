@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.7
 
       # The packages are private, so an anonymous read would report every preset
       # as behind every night and the log would stop meaning anything.
@@ -159,7 +159,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.7
 
       # This job confirms that what it is about to propose resolves, and the
       # packages are private - so it needs the same credentials the survey does.

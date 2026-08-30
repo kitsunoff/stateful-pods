@@ -49,7 +49,7 @@ jobs:
       # so there is nothing to build and nothing for emulation to run: packaging
       # a foreign architecture's root filesystem never executes it.
       - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.7
 
       # Through the environment rather than interpolated into the script body,
       # which is the standard hardening for anything carrying a secret.
