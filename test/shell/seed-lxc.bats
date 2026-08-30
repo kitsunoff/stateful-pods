@@ -40,7 +40,15 @@ make_template() {
     setcap cap_net_raw+ep "$src/sbin/init"
     echo 'ID=debian' > "$src/etc/os-release"
     for n in 1 2 3 4 5 6; do echo "file $n" > "$src/usr/bin/f$n"; done
-    tar -C "$src" --numeric-owner --xattrs --xattrs-include=security.capability \
+    pack_template "$compressor" "$out"
+}
+
+# Packs whatever is in $SERVE/src, which make_template has just built. Split out
+# of it so a test can add to that tree - a device node, a stale runtime
+# directory - and pack the result without restating how a template is made.
+pack_template() {
+    local compressor="$1" out="$2"
+    tar -C "$SERVE/src" --numeric-owner --xattrs --xattrs-include=security.capability \
         -cf "$SERVE/plain.tar" .
     case "$compressor" in
         zst) zstd -q -f -o "$out" "$SERVE/plain.tar" ;;
@@ -58,6 +66,49 @@ digest_of() { sha256sum "$1" | cut -d' ' -f1; }
     run sp_seed_main
     [ "$status" -eq 0 ]
     [ -e "$ROOTFS/sbin/init" ]
+    [ -e "$ROOTFS/etc/os-release" ]
+}
+
+# An LXC template is far likelier than a crane export stream to carry real
+# device nodes: Proxmox's own templates routinely ship ./dev/console and
+# ./dev/null. mknod(2) checks the capability in the *initial* user namespace, so
+# a machine in `userns` mode cannot recreate one whatever it is granted - tar
+# fails with EPERM and takes the whole seed down over content the driver wipes
+# and recreates empty a moment later.
+#
+# sp_fill_rootfs is called here rather than sp_seed_main on purpose: the driver
+# clears the runtime directories as soon as the fill returns, so a test that
+# went through it would pass whether or not anything was excluded.
+@test "device nodes in the template are not written to the volume" {
+    make_template zst "$SERVE/t.tar.zst"
+    mkdir -p "$SERVE/src/dev"
+    mknod "$SERVE/src/dev/null" c 1 3 2>/dev/null \
+        || skip "this environment cannot create a device node to seed from"
+    pack_template zst "$SERVE/t.tar.zst"
+    export SP_SOURCE_URL="file://$SERVE/t.tar.zst"
+    export SP_SOURCE_SHA256="$(digest_of "$SERVE/t.tar.zst")"
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTFS/dev/null" ]
+    [ -e "$ROOTFS/etc/os-release" ]
+}
+
+@test "the kernel and runtime directories are not taken from the template" {
+    make_template zst "$SERVE/t.tar.zst"
+    mkdir -p "$SERVE/src/proc" "$SERVE/src/sys" "$SERVE/src/run" "$SERVE/src/tmp"
+    # Anchored, so a directory that merely ends in one of the names is kept.
+    mkdir -p "$SERVE/src/usr/local/dev"
+    echo stale > "$SERVE/src/run/leftover"
+    echo stale > "$SERVE/src/proc/leftover"
+    echo kept > "$SERVE/src/usr/local/dev/keep-me"
+    pack_template zst "$SERVE/t.tar.zst"
+    export SP_SOURCE_URL="file://$SERVE/t.tar.zst"
+    export SP_SOURCE_SHA256="$(digest_of "$SERVE/t.tar.zst")"
+    run sp_fill_rootfs "$ROOTFS"
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTFS/run/leftover" ]
+    [ ! -e "$ROOTFS/proc/leftover" ]
+    [ -e "$ROOTFS/usr/local/dev/keep-me" ]
     [ -e "$ROOTFS/etc/os-release" ]
 }
 

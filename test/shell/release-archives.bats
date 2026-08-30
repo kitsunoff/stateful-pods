@@ -98,13 +98,36 @@ archive() { printf '%s/kubectl-machine_v%s.tar.gz' "$OUT" "$VERSION"; }
     [[ "$stderr" == *"--version"* ]]
 }
 
-# The repository ships no licence, and the upstream krew index requires one in
-# the archive. That is a gap in the repository rather than in this script, so it
-# is said out loud on every build instead of being silently fine.
-@test "a missing licence is reported rather than passed over" {
+# The repository has a licence now, so the archive it builds carries one without
+# being told to. This is what the upstream krew index requires, and the manifest
+# claims whatever the archive holds, so it is asserted rather than assumed.
+@test "the repository's own licence is put in the archive with no flag" {
     release
     [ "$status" -eq 0 ]
+    tar --list --file "$(archive)" | grep --quiet 'LICENSE'
+    [[ "$stderr" != *"no LICENSE"* ]]
+}
+
+# The warning still has to work, because a fork that drops the file gets no
+# other signal that its plugin cannot be submitted. Exercised against a tree
+# built for the purpose rather than against this repository, so that it keeps
+# testing the branch now that the repository itself has a licence.
+@test "a repository with no licence says so, because the krew index needs one" {
+    local tree="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$tree/cmd" "$tree/krew" "$tree/charts/stateful-pods"
+    cp cmd/kubectl-machine "$tree/cmd/"
+    cp krew/machine.yaml "$tree/krew/"
+    cp charts/stateful-pods/Chart.yaml "$tree/charts/stateful-pods/"
+    [ ! -e "$tree/LICENSE" ]
+
+    run --separate-stderr env -C "$tree" \
+        "$BATS_TEST_DIRNAME/../../hack/release-archives.sh" \
+        --version "$VERSION" --output "$tree/dist"
+    [ "$status" -eq 0 ]
     [[ "$stderr" == *"LICENSE"* ]]
+    [[ "$stderr" == *"krew"* ]]
+    tar --list --file "$tree/dist/kubectl-machine_v$VERSION.tar.gz" \
+        | grep --quiet --invert-match 'LICENSE'
 }
 
 @test "a licence that is there is put in the archive" {

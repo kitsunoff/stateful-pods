@@ -90,9 +90,31 @@ sp_fill_rootfs() {
     sp_reject_multi_volume "$_sp_tarball"
     sp_inspect_template "$_sp_tarball" "$_sp_work/listing"
 
+    # The directories the kernel and the runtime own are not taken from the
+    # template, for the reason the oci path does not take them either: mknod(2)
+    # checks the capability in the *initial* user namespace, so a machine in
+    # `userns` mode cannot create a device node whatever it is granted, and tar
+    # would fail with EPERM and take the whole seed down over content that is
+    # discarded a moment later - sp_ensure_runtime_dirs wipes and recreates all
+    # five of them empty as soon as this returns.
+    #
+    # It matters more here than there. A conventional LXC template is built from
+    # a running system and routinely ships ./dev/console and ./dev/null as real
+    # device nodes, where a `crane export` stream usually has none.
+    #
+    # A word list rather than an array, because this file is sh: it is sourced by
+    # the same seed driver as the bash oci path but carries no bashisms. Both
+    # `dev` and `./dev` are listed because a template packed with `tar -C src .`
+    # stores the second form and one packed from an absolute path stores the
+    # first, and --anchored keeps `dev` from also matching `usr/local/dev`.
+    _sp_excludes="--anchored"
+    for _sp_dir in $SP_RUNTIME_DIRS; do
+        _sp_excludes="$_sp_excludes --exclude=$_sp_dir --exclude=./$_sp_dir"
+    done
+
     sp_log "machine $SP_MACHINE: unpacking the template"
-    # shellcheck disable=SC2086 # the flags are a word list on purpose
-    if ! tar -C "$_sp_root" $SP_TAR_FLAGS -xpf "$_sp_tarball"; then
+    # shellcheck disable=SC2086 # the flags and the excludes are word lists on purpose
+    if ! tar -C "$_sp_root" $SP_TAR_FLAGS $_sp_excludes -xpf "$_sp_tarball"; then
         rm -rf "$_sp_work"
         return 1
     fi
