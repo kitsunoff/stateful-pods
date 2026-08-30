@@ -152,9 +152,11 @@ tests:
         security:
           mode: privileged
     asserts:
-      # Setting it false is rejected by the API server for a container that adds
-      # SYS_ADMIN, so the field is left unset here exactly as it is in the other
-      # mode. The preparation steps, which add nothing, do set it false.
+      # Not because the API refuses it - it does not. Setting it false sets
+      # no_new_privs, which makes the kernel ignore setuid bits and file
+      # capabilities on every exec that follows, and a machine is a whole
+      # operating system built on both. The preparation steps run one program and
+      # do set it false.
       - notExists:
           path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
       - equal:

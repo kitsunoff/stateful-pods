@@ -260,7 +260,7 @@ Takes the root context.
 {{- else if eq $mode "userns" -}}
 {{- $found := $root.Capabilities.KubeVersion.Version -}}
 {{- if not (semverCompare ">= 1.33.0-0" $found) -}}
-{{- $errors = append $errors (printf "machines.%s.security.mode: \"userns\" requires Kubernetes >= 1.33, but the target cluster reports %s. Upgrade the cluster, or set machines.%s.security.mode to \"privileged\", which works on any cluster and grants the guest a named capability set that is real on the node." $name $found $name) -}}
+{{- $errors = append $errors (printf "machines.%s.security.mode: \"userns\" requires Kubernetes >= 1.33, but the target cluster reports %s. Upgrade the cluster, or set machines.%s.security.mode to \"privileged\", which asks nothing of the cluster beyond this chart's floor of 1.30 and grants the guest a named capability set that is real on the node." $name $found $name) -}}
 {{- end -}}
 {{- end -}}
 
@@ -394,8 +394,9 @@ documentation of the two modes, which is why it states what each needs.
                    idmap-capable storage (not NFS).
       privileged - the guest container is granted a named capability set - what a container
                    gets by default, plus CAP_SYS_ADMIN for the mount and the root change -
-                   and every one of them is real on the node. Works on any cluster and on
-                   any kernel. It is not the runtime's blanket privileged flag: a machine in
+                   and every one of them is real on the node. Asks nothing of the cluster
+                   beyond this chart's own floor of Kubernetes 1.30, and nothing at all of
+                   the kernel. It is not the runtime's blanket privileged flag: a machine in
                    this mode cannot load kernel modules, perform raw I/O, set the node's
                    clock or reach a device the pod was not given, and it does run under the
                    syscall filter its values name.

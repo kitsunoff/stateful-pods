@@ -6,6 +6,17 @@ RENDER_EXAMPLE ?= $(CHART)/examples/oci.yaml
 HELM ?= helm
 KUBECONFORM ?= kubeconform
 KUBE_VERSION ?= 1.33.0
+# The chart's own floor, from Chart.yaml's kubeVersion, and the one example that
+# renders there. A field the oldest supported API does not have is a chart that
+# installs on that cluster and behaves differently - which is what the guest's
+# access-control profile would have been below 1.30, and validating only at the
+# version above would not have seen it.
+#
+# The privileged example, because that is the mode the floor is about: `userns`
+# needs 1.33 and the chart refuses it below that, so a userns example cannot
+# render at the floor at all.
+KUBE_VERSION_FLOOR ?= 1.30.0
+FLOOR_EXAMPLE ?= $(CHART)/examples/lxc.yaml
 
 .PHONY: all lint shell-lint test shell-test render conform docs image-build image-test integration-test seccomp-test
 
@@ -61,10 +72,21 @@ seccomp-test:
 render:
 	$(HELM) template stateful-pods $(CHART) --values $(RENDER_EXAMPLE) --kube-version $(KUBE_VERSION)
 
-## conform: validate every example's rendered manifest against the Kubernetes API schemas
+## conform: validate every example's rendered manifest against the Kubernetes API
+#  schemas, at the version this chart is developed against and at its own floor
 conform:
 	@for values in $(EXAMPLES); do \
-		echo "==> kubeconform $$values"; \
+		echo "==> kubeconform $$values (Kubernetes $(KUBE_VERSION))"; \
 		$(HELM) template stateful-pods $(CHART) --values $$values --kube-version $(KUBE_VERSION) \
 			| $(KUBECONFORM) -strict -summary -kubernetes-version $(KUBE_VERSION) || exit 1; \
 	done
+	@echo "==> kubeconform $(FLOOR_EXAMPLE) (Kubernetes $(KUBE_VERSION_FLOOR), the chart's floor)"
+	@#  Rendered on its own first. In a pipeline the exit status is kubeconform's,
+	@#  and kubeconform is perfectly happy with the empty input a failed render
+	@#  gives it - it reports no resources and succeeds, so a chart that could not
+	@#  render at its own floor would pass this silently.
+	@$(HELM) template stateful-pods $(CHART) --values $(FLOOR_EXAMPLE) \
+		--kube-version $(KUBE_VERSION_FLOOR) > /dev/null
+	@$(HELM) template stateful-pods $(CHART) --values $(FLOOR_EXAMPLE) \
+		--kube-version $(KUBE_VERSION_FLOOR) \
+		| $(KUBECONFORM) -strict -summary -kubernetes-version $(KUBE_VERSION_FLOOR)

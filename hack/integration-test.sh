@@ -289,11 +289,12 @@ step "asserting the machine holds the capability set its mode names, and nothing
 # The bounding set of the machine's own init. Nothing inside the machine can
 # exceed it, so this is a statement about every process the machine will ever run
 # and not about the shell this exec started. `capsh` is in the source image
-# because it installs libcap2-bin for the file-capability assertion above.
+# because it installs libcap2-bin for the file-capability assertion above, and it
+# is called by path for the same reason `getcap` is.
 # Both substitutions end in `|| true` so that a failure here is reported by the
 # check below rather than ending the run with errexit and no message at all.
 bounding="$(guest sh -c 'awk "/^CapBnd:/ {print \$2}" /proc/1/status' | tr -d '\r' || true)"
-granted="$(guest capsh --decode="$bounding" | sed 's/^[^=]*=//' | tr ',' '\n' | tr -d '\r' || true)"
+granted="$(guest /usr/sbin/capsh --decode="$bounding" | sed 's/^[^=]*=//' | tr ',' '\n' | tr -d '\r' || true)"
 [[ -n "$granted" ]] \
   || fail "could not read the machine's bounding capability set (CapBnd was '${bounding:-nothing}')"
 
@@ -336,16 +337,24 @@ step "asserting the machine cannot reach the node's own devices"
 # flag the same two commands read the node's disk.
 check "no block device of the node's is present in the machine" \
   guest sh -c '! ls -l /dev | grep -q "^b"'
-# The refusal is read rather than inferred from a non-zero exit. Anything can fail;
-# only the device cgroup says "Permission denied" here, and a node with no loop
-# device would otherwise make this assertion pass for saying "No such device".
-device_error="$(guest sh -c 'mknod /tmp/sp-node b 7 0 && dd if=/tmp/sp-node of=/dev/null bs=512 count=1' 2>&1 || true)"
-if grep --quiet --ignore-case 'permission denied' <<< "$device_error"; then
+# The node is made in /dev, which the mount plan mounts without nodev. On a nodev
+# filesystem - /tmp and /run, in this machine - the open fails whatever the device
+# cgroup allows, so probing there would hold under the old posture too and prove
+# nothing about this one. Asserted rather than assumed, because the mount plan
+# could change.
+check "the machine's /dev is not mounted nodev, so the probe below means what it says" \
+  guest sh -c 'awk "\$2 == \"/dev\" && \$4 ~ /nodev/ {found=1} END {exit found}" /proc/mounts'
+# The two refusals are told apart by their errno, and only one of them is this
+# mode's doing: nodev gives EACCES, "Permission denied"; the device cgroup gives
+# EPERM, "Operation not permitted". Matching the exact one is also what stops a
+# node with no such device from passing this for saying "No such device".
+device_error="$(guest sh -c 'mknod /dev/sp-node b 7 0 && dd if=/dev/sp-node of=/dev/null bs=512 count=1' 2>&1 || true)"
+if grep --quiet 'Operation not permitted' <<< "$device_error"; then
   pass "the machine cannot open one of the node's block devices, even through a node it made itself"
 elif grep --quiet 'records out' <<< "$device_error"; then
   fail "the machine read one of the node's block devices, which this mode is meant to have given up"
 else
-  fail "the machine neither read nor was refused the node's block device: ${device_error:-nothing}"
+  fail "the machine was refused the node's block device for another reason: ${device_error:-nothing}"
 fi
 
 step "asserting the files the chart maintains inside the machine"

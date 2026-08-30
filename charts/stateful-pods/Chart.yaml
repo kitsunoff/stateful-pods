@@ -4,10 +4,19 @@ description: Run a machine as a pet in a Kubernetes pod, with its root filesyste
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-# 1.27 is the floor for persistentVolumeClaimRetentionPolicy being honoured.
-# The higher requirement of the `userns` security mode is enforced per machine
-# at render time, so a `privileged` machine still installs on an older cluster.
-kubeVersion: ">= 1.27.0-0"
+# 1.30 is the floor for securityContext.appArmorProfile, which the guest container
+# declares in every mode: without that field a guest is confined by whatever
+# profile the node's runtime supplies, and every default one denies the mount the
+# guest exists to perform. Below 1.30 the field does not exist in the API, so it
+# is either dropped - leaving the machine unable to start on any node running
+# AppArmor - or rejected outright by a client that validates fields.
+#
+# The higher requirement of the `userns` security mode, 1.33, is enforced per
+# machine at render time, so a `privileged` machine still installs on the older
+# clusters that mode is for. 1.27 was the previous floor, for
+# persistentVolumeClaimRetentionPolicy; every release below 1.30 is long out of
+# support, and none of them could run `userns` anyway.
+kubeVersion: ">= 1.30.0-0"
 keywords:
   - lxc
   - proxmox

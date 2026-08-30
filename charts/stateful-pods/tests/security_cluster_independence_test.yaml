@@ -60,10 +60,10 @@ tests:
               add:
                 - SYS_ADMIN
 
-  - it: renders the privileged posture identically on Kubernetes 1.27
+  - it: renders the privileged posture identically on Kubernetes 1.30, the chart's floor
     capabilities:
       majorVersion: 1
-      minorVersion: 27
+      minorVersion: 30
     set:
       machines.web:
         source:

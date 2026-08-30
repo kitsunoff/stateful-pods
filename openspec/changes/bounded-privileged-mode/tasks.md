@@ -45,9 +45,10 @@
 - [x] 4.1 Rewrite the `privileged` entry in the mode ladder in `_helpers.tpl`, which is both the
   error message and the documentation of the modes, to describe a named capability set rather than a
   privileged container; verify the rejection message for a missing mode reads correctly
-- [x] 4.2 Document in `values.yaml` what the mode no longer grants — host devices, unmasked `/proc`
-  paths, module loading, raw I/O — with what to do instead for each, and keep a comment above every
-  key; verify `make docs` passes
+- [x] 4.2 Document in `values.yaml` what the mode no longer grants — the node's devices, module
+  loading, raw I/O, the host clock — with what to do instead for each, and keep a comment above every
+  key; verify `make docs` passes. The unmasked `/proc` paths were listed here too and are not
+  documented, because task 1.2 measured them to be unchanged in either mode; see `design.md`
 - [x] 4.3 Write the release note as a breaking change: what is removed, what a machine that depended
   on it should do, and that the volume is untouched so recovery is a values change; verify it names
   every item from the table in `design.md`

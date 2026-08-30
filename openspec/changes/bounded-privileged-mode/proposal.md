@@ -35,9 +35,11 @@ capabilities can be asked for by name.
   to confine is one it confines with a default profile that denies `mount(2)` outright, so a machine
   that named nothing would stop booting on any node with AppArmor enabled. The field is declared;
   no profile is shipped in it.
-- **What the mode loses is stated, not discovered**: host devices beyond the ones a container is
-  given, the unmasked `/proc` paths, and the ability to load kernel modules or use raw I/O from
-  inside a machine. Each is named in `values.yaml` with what to do instead.
+- **What the mode loses is stated, not discovered**: the node's own devices, and the ability to load
+  kernel modules, perform raw I/O or set the node's clock from inside a machine. Each is named in
+  `values.yaml` with what to do instead. The unmasked `/proc` paths were on this list until the
+  experiment showed they are not lost at all - the shim mounts a fresh procfs inside the new root,
+  which carries none of the runtime's masking, in either mode. See `design.md`.
 - **An escape hatch for a machine that genuinely needs the old behaviour.** If one is needed at all,
   it is a separate, explicitly named mode rather than a flag that quietly re-widens `privileged`,
   and it is added only if the integration suite finds a real case.
@@ -73,9 +75,12 @@ Non-goals:
 - **Chart**: the guest container's security context in `statefulset.yaml`, the mode's documentation
   in `values.yaml`, and the render tests that currently assert `privileged: true`.
 - **Breaking for existing machines in this mode.** The pod is replaced with a differently
-  privileged one on the next upgrade. A machine whose guest reaches for a host device, loads a
-  kernel module, or writes to a `/proc` path the runtime masks will stop being able to. The volume
-  is untouched, so the recovery is a values change, not a rebuild.
+  privileged one on the next upgrade. A machine whose guest reaches for one of the node's devices,
+  loads a kernel module or performs raw I/O will stop being able to. The volume is untouched, so the
+  recovery is a values change, not a rebuild.
+- **Breaking for clusters below Kubernetes 1.30.** The guest names the access-control profile it
+  runs under, and that field does not exist before 1.30, so the chart's floor moves up from 1.27.
+  Nothing below 1.30 could run the other mode anyway, and all of those releases are out of support.
 - **The main risk is empirical and belongs first**: whether a machine actually boots and runs under
   a named capability set. The mount work is well understood; a full systemd exercising a whole
   distribution is not, and the two source kinds and four presets are different enough that this is

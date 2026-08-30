@@ -41,7 +41,7 @@ tests:
           size: 8Gi
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)userns.*Kubernetes >= 1\.33.*privileged.*any cluster'
+          errorPattern: '(?s)userns.*Kubernetes >= 1\.33.*privileged.*Kubernetes 1\.30'
 
   - it: rejects an unknown security mode, naming the offending value
     set:

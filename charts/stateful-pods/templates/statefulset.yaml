@@ -233,9 +233,16 @@ spec:
             # and the failure that showed it. Without that the set drifts back
             # towards the blanket flag one well-intentioned commit at a time.
             #
-            # allowPrivilegeEscalation is deliberately left unset, exactly as it is
-            # in the other mode: setting it false is incompatible with an added
-            # SYS_ADMIN.
+            # allowPrivilegeEscalation is deliberately left unset, exactly as it
+            # is in the other mode - and not because the API would refuse it.
+            # Setting it false is accepted, and the container keeps SYS_ADMIN;
+            # what it does is set no_new_privs, and no_new_privs makes the kernel
+            # ignore setuid bits and file capabilities on every exec that
+            # follows. Inside a whole operating system that is su, sudo, ping and
+            # everything else the distribution ships - including the file
+            # capability the seeding step goes out of its way to preserve. It
+            # would not cost the container its privilege; it would cost the
+            # machine its own userland.
             capabilities:
               drop:
                 - ALL
@@ -257,8 +264,7 @@ spec:
                 - SYS_CHROOT
             {{- else }}
             # SYS_ADMIN is what the shim needs for mount(2) and pivot_root(2).
-            # allowPrivilegeEscalation is deliberately left unset: setting it to
-            # false is incompatible with an added SYS_ADMIN.
+            # allowPrivilegeEscalation is left unset for the reason given above.
             capabilities:
               add:
                 - SYS_ADMIN

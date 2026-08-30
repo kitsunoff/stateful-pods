@@ -303,6 +303,14 @@ to mount. Left to the node, a machine would boot or not boot depending on whethe
 This is not a profile the chart ships. It is the field a real one would be named in, and a profile
 that permits what a machine does is a later change.
 
+**This field is why the chart requires Kubernetes 1.30.** `securityContext.appArmorProfile` does not
+exist before then: on 1.27–1.29 it is either dropped, leaving the machine unable to start on any node
+running AppArmor, or rejected outright — `kubeconform -strict` against the 1.29 schema calls it an
+additional property that is not allowed. The chart's floor moved up rather than the field being made
+conditional, because a posture that varies with the cluster it was rendered against is the thing this
+chart most consistently refuses. Every release below 1.30 is long out of support, and none of them
+could run `userns` in any case.
+
 ### What each mode grants
 
 `userns` adds `CAP_SYS_ADMIN` to a pod running in its own user namespace, where it is void on the
@@ -342,9 +350,10 @@ boot on them:
 - whether the storage backend supports idmapped mounts — NFS does not.
 
 When one of them is missing the boot fails on a mount, naming the path and the filesystem type. The
-`privileged` mode has none of these prerequisites and works on any cluster. Its capabilities are real
-on the node, which is what the name is about, but it is a named set rather than an instruction to the
-runtime to stop applying policy — see *What each mode grants* below.
+`privileged` mode has none of these prerequisites and asks nothing of the cluster beyond the chart's
+own floor. Its capabilities are real on the node, which is what the name is about, but it is a named
+set rather than an instruction to the runtime to stop applying policy — see *What each mode grants*
+above.
 
 **What `userns` looks like when the environment cannot support it.** The mode has been exercised by
 hand on a `kind` cluster, where it does not work — a `kind` node is itself a container, so a pod's
@@ -377,6 +386,11 @@ with a differently privileged one on its next start.
 **The root filesystem is untouched.** Nothing about a machine's volume, its identity or its seeding
 record changes, so a machine that breaks under the new set is recovered with a values change and a
 pod replacement rather than a rebuild.
+
+**The chart's minimum Kubernetes version moves from 1.27 to 1.30**, because the guest now names the
+AppArmor profile it runs under and that field does not exist before 1.30. See *The access-control
+profile* above for why the field is not optional. A cluster below 1.30 gets a clear refusal from Helm
+rather than a machine that fails to mount.
 
 What a machine in this mode no longer has:
 
@@ -593,7 +607,6 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | An LXC template source renders without a container image of its own | `shim_image_test.yaml` |
 | An OCI source is never a container image | `shim_image_test.yaml`, `init_containers_test.yaml`, `hack/integration-test.sh` |
 | The guest container alone is privileged | `init_security_test.yaml` |
-| The guest container alone is granted the mode's capability set | `init_security_test.yaml` |
 | The guest container alone is granted the mode's capability | `init_security_test.yaml` |
 | Preparation steps are ordinary containers | `init_security_test.yaml` |
 

@@ -138,10 +138,12 @@ shim:
 #       #                containerd >= 2.0 or CRI-O, Linux >= 6.3, and idmap-capable
 #       #                storage (not NFS).
 #       #   privileged - the guest container is granted a named capability set, and
-#       #                every capability in it is real on the node. Works on any
-#       #                cluster and on any kernel. The set is what a container gets
-#       #                by default plus CAP_SYS_ADMIN, which is what mounting the
-#       #                machine's filesystems and changing its root require:
+#       #                every capability in it is real on the node. Asks nothing
+#       #                of the cluster beyond this chart's own floor of Kubernetes
+#       #                1.30, and nothing at all of the kernel. The set is what a
+#       #                container gets by default plus CAP_SYS_ADMIN, which is what
+#       #                mounting the machine's filesystems and changing its root
+#       #                require:
 #       #
 #       #                  AUDIT_WRITE CHOWN DAC_OVERRIDE FOWNER FSETID KILL MKNOD
 #       #                  NET_BIND_SERVICE NET_RAW SETFCAP SETGID SETPCAP SETUID
@@ -204,6 +206,13 @@ shim:
 #       # use to: it rendered a container the runtime was told to stop policing,
 #       # and containerd drops the profile such a container names before it builds
 #       # it. That mode renders a capability set now, so the profile reaches it.
+#       #
+#       # The guest also names the AppArmor profile it runs under - Unconfined,
+#       # in both modes, and not a chart input. A container the runtime is willing
+#       # to confine is one it confines with a default profile that denies the
+#       # mount the guest exists to perform, so the field is not optional. It is
+#       # also why this chart requires Kubernetes 1.30: the field does not exist
+#       # before then.
 #       seccompProfile:
 #         # Filter form: Unconfined | Localhost. Mandatory when seccompProfile is
 #         # declared at all.
