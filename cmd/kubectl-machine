@@ -51,10 +51,27 @@ die() {
     exit 1
 }
 
-# Prints a command in the form it is about to be run in, so that the plugin
-# teaches the underlying invocation rather than hiding it. On stderr, so that
-# what a command produces stays pipeable.
-show() { printf '==> %s\n' "$*" >&2; }
+# One argument of a printed command, quoted when it would not survive being
+# pasted back into a shell. The plugin prints what it runs so that a reader
+# learns the underlying invocation, and a printed command that cannot be run
+# teaches the wrong one - `-- sh -c echo hello; uname` is not what was run.
+quote_arg() {
+    case "$1" in
+        "") printf "''" ;;
+        *[!A-Za-z0-9_@%+=:,./-]*) printf "'%s'" "${1//\'/\'\\\'\'}" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# Prints a command in the form it is about to be run in. On stderr, so that what
+# the command itself produces stays pipeable.
+show_command() {
+    local line="" arg
+    for arg in "$@"; do
+        line="$line $(quote_arg "$arg")"
+    done
+    printf '==>%s\n' "$line" >&2
+}
 
 usage() {
     cat <<EOF
@@ -183,11 +200,19 @@ kube_flags() {
     return 0
 }
 
+# The same flags as an array, for running and for printing. Set rather than
+# returned, because bash 3.2 has no way to return one.
+SP_KUBE_FLAGS=()
+set_kube_flags() {
+    SP_KUBE_FLAGS=()
+    [ -n "$SP_CONTEXT" ] && SP_KUBE_FLAGS+=(--context "$SP_CONTEXT")
+    [ -n "$SP_NAMESPACE" ] && SP_KUBE_FLAGS+=(--namespace "$SP_NAMESPACE")
+    return 0
+}
+
 kubectl_run() {
-    local flags=()
-    [ -n "$SP_CONTEXT" ] && flags+=(--context "$SP_CONTEXT")
-    [ -n "$SP_NAMESPACE" ] && flags+=(--namespace "$SP_NAMESPACE")
-    kubectl ${flags[@]+"${flags[@]}"} "$@"
+    set_kube_flags
+    kubectl ${SP_KUBE_FLAGS[@]+"${SP_KUBE_FLAGS[@]}"} "$@"
 }
 
 current_context() {
@@ -422,35 +447,35 @@ derive_stage() {
                 SP_STAGE_ENTERABLE=1
                 if [ "$SP_CS_READY" = "true" ]; then
                     SP_STAGE="ready"
-                    SP_STAGE_TEXT="ready: its operating system has finished starting"
+                    SP_STAGE_TEXT="ready - its operating system has finished starting"
                 else
                     SP_STAGE="booting"
-                    SP_STAGE_TEXT="booting: its operating system is still starting"
+                    SP_STAGE_TEXT="booting - its operating system is still starting"
                 fi
                 ;;
             terminated)
                 SP_STAGE_CONTAINER="$SP_GUEST"
                 if [ "$SP_CS_EXIT" = "0" ]; then
                     SP_STAGE="stopped"
-                    SP_STAGE_TEXT="stopped: the $SP_GUEST container exited"
+                    SP_STAGE_TEXT="stopped - the $SP_GUEST container exited"
                 else
                     SP_STAGE="failed"
-                    SP_STAGE_TEXT="failed: the $SP_GUEST container exited with code $SP_CS_EXIT"
+                    SP_STAGE_TEXT="failed - the $SP_GUEST container exited with code $SP_CS_EXIT"
                 fi
                 ;;
             waiting)
                 SP_STAGE_CONTAINER="$SP_GUEST"
                 if waiting_is_failure "$SP_CS_REASON"; then
                     SP_STAGE="failed"
-                    SP_STAGE_TEXT="failed: the $SP_GUEST container is $SP_CS_REASON"
+                    SP_STAGE_TEXT="failed - the $SP_GUEST container is $SP_CS_REASON"
                 else
                     SP_STAGE="booting"
-                    SP_STAGE_TEXT="booting: the $SP_GUEST container is starting"
+                    SP_STAGE_TEXT="booting - the $SP_GUEST container is starting"
                 fi
                 ;;
             *)
                 SP_STAGE="pending"
-                SP_STAGE_TEXT="pending: the $SP_GUEST container has no state yet"
+                SP_STAGE_TEXT="pending - the $SP_GUEST container has no state yet"
                 ;;
         esac
         return 0
@@ -460,8 +485,19 @@ derive_stage() {
     # deliberately not folded into one: calling it "seeding" would be a stage
     # invented rather than read, and the answer is in the pod's events.
     SP_STAGE="pending"
-    SP_STAGE_TEXT="pending: nothing has started in its pod yet"
+    SP_STAGE_TEXT="pending - nothing has started in its pod yet"
     return 0
+}
+
+# The stage, said once. Most of the sentences name their own stage - "booting -
+# its operating system is still starting" - and the two that do not are the init
+# steps, whose stage is a word about the machine and whose sentence is about what
+# is being done to it.
+stage_sentence() {
+    case "$SP_STAGE_TEXT" in
+        "$SP_STAGE"*) printf '%s' "$SP_STAGE_TEXT" ;;
+        *) printf '%s - %s' "$SP_STAGE" "$SP_STAGE_TEXT" ;;
+    esac
 }
 
 # What to read to understand the stage a machine is in.
@@ -629,7 +665,7 @@ cmd_status() {
     fi
 
     printf 'Pod:        %s\n' "$SP_POD"
-    printf 'Stage:      %s - %s\n' "$SP_STAGE" "$SP_STAGE_TEXT"
+    printf 'Stage:      %s\n' "$(stage_sentence)"
     [ -n "$SP_STAGE_DETAIL" ] && printf 'Because:    %s\n' "$SP_STAGE_DETAIL"
     printf '\n  %s\n' "$(stage_hint "$SP_POD")"
     return 0
@@ -664,7 +700,7 @@ SP_SHELL_CHOOSER='if command -v bash >/dev/null 2>&1; then exec bash --login; el
 # exists.
 refuse_with_stage() {
     local verb="$1"
-    printf '%s is %s.\n' "$SP_MACHINE" "$SP_STAGE_TEXT" >&2
+    printf '%s: %s.\n' "$SP_MACHINE" "$(stage_sentence)" >&2
     [ -n "$SP_STAGE_DETAIL" ] && printf 'Because: %s\n' "$SP_STAGE_DETAIL" >&2
     printf '\nThere is nothing to %s yet. This is what explains it:\n\n  %s\n' \
         "$verb" "$(stage_hint "$SP_POD")" >&2
@@ -728,7 +764,8 @@ cmd_shell() {
 
     printf 'Entering %s (%s) in %s, on context %s.\n' \
         "$SP_MACHINE" "$SP_POD" "$(where_it_would_act)" "$(current_context)" >&2
-    show "kubectl$(kube_flags) exec ${exec_flags[*]} ${target[*]}"
+    set_kube_flags
+    show_command kubectl ${SP_KUBE_FLAGS[@]+"${SP_KUBE_FLAGS[@]}"} exec "${exec_flags[@]}" "${target[@]}"
     kubectl_run exec "${exec_flags[@]}" "${target[@]}"
 }
 
@@ -788,7 +825,8 @@ cmd_console() {
     [ -n "$tail" ] && args+=(--tail "$tail")
     [ "$follow" -eq 1 ] && args+=(--follow)
 
-    show "kubectl$(kube_flags) logs ${args[*]}"
+    set_kube_flags
+    show_command kubectl ${SP_KUBE_FLAGS[@]+"${SP_KUBE_FLAGS[@]}"} logs "${args[@]}"
     kubectl_run logs "${args[@]}"
 }
 
@@ -972,7 +1010,7 @@ $(create_help)"
     printf 'Machine:    %s\n' "$name"
     printf 'Release:    %s\n' "$release"
     printf 'Objects:    %s\n' "$release-$name"
-    show "helm ${args[*]}"
+    show_command helm "${args[@]}"
 
     local out rc=0
     if out="$(helm "${args[@]}" 2>&1)"; then
@@ -1082,7 +1120,7 @@ nothing was confirmed, so nothing was removed. Pass --yes for a run with nobody 
     local args=(uninstall "$SP_MACHINE_RELEASE")
     [ -n "$SP_CONTEXT" ] && args+=(--kube-context "$SP_CONTEXT")
     [ -n "$SP_NAMESPACE" ] && args+=(--namespace "$SP_NAMESPACE")
-    show "helm ${args[*]}"
+    show_command helm "${args[@]}"
     helm "${args[@]}"
 
     printf '\nThe root filesystem was not removed: it is what makes this machine a pet, and
