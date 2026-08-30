@@ -87,3 +87,117 @@ tests:
           pattern: 'delete pvc lab-web-lab-web-0'
       - notMatchRegexRaw:
           pattern: 'machine delete web.*pvc'
+
+  - it: names the backend the machine is provisioned by
+    asserts:
+      - matchRegexRaw:
+          pattern: 'provisioned by cloud-init'
+
+  - it: warns a cloud-init machine that its image has to be able to run it
+    asserts:
+      - matchRegexRaw:
+          pattern: 'guest\.provisioning: native'
+
+  - it: says nothing about provisioning inputs when none were supplied
+    asserts:
+      - notMatchRegexRaw:
+          pattern: 'shadow'
+
+  - it: names the native backend when that is what the machine chose
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: native
+    asserts:
+      - matchRegexRaw:
+          pattern: 'provisioned natively'
+      # None of the cloud-init advice belongs on a machine that did not choose it.
+      - notMatchRegexRaw:
+          pattern: 'NoCloud seed'
+      - notMatchRegexRaw:
+          pattern: 'cloud-init\.disabled'
+
+  # Silently ignoring half a values file is a bad surprise, and this is the one
+  # place a user sees it before the machine has already been made.
+  - it: says which structured inputs a raw file shadowed
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            value: "#cloud-config\n"
+          user:
+            value: maxim
+          password:
+            value: "$6$abc$def"
+    asserts:
+      - matchRegexRaw:
+          pattern: 'userData'
+      - matchRegexRaw:
+          pattern: 'shadow'
+      - matchRegexRaw:
+          pattern: 'user'
+      - matchRegexRaw:
+          pattern: 'password'
+
+  - it: warns about shadowing even when the raw file is a reference
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: user-data
+          user:
+            value: maxim
+    asserts:
+      - matchRegexRaw:
+          pattern: 'shadow'
+
+  - it: does not warn when a raw file shadowed nothing
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          userData:
+            value: "#cloud-config\n"
+    asserts:
+      - notMatchRegexRaw:
+          pattern: 'shadow'
+
+  - it: tells a machine with referenced material how to apply a rotation
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        cloudInit:
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: root-password-hash
+    asserts:
+      - matchRegexRaw:
+          pattern: 'provisioningRevision'

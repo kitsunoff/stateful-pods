@@ -4,11 +4,11 @@ A Helm chart that runs a *machine* — a pet with a persistent root filesystem �
 pod. Each machine gets its own StatefulSet, its own rootfs PersistentVolume and its own headless
 Service.
 
-> **The machine boots.** Its root filesystem is filled from the source it declares, mounted as a
-> root, and handed to its own init system. Guest provisioning — SSH host keys, accounts — arrives in
-> a later change, so a machine starts with the identity and accounts its source shipped. cloud-init
-> is *present* in two of the four presets and inert: the upstream ships these images with it
-> disabled, a preset carries that unmodified, and nothing here yet writes a seed or enables it.
+> **The machine boots, and it is provisioned.** Its root filesystem is filled from the source it
+> declares, mounted as a root, and handed to its own init system — and cloud-init, by default, gives
+> it the users, keys, packages and commands its values ask for. A machine on an image that cannot run
+> cloud-init says so and stops, rather than booting with no way in — which today is two of the four
+> presets, `ubuntu-noble` and `void-current`.
 
 ## Prerequisites
 
@@ -126,7 +126,7 @@ kubectl machine delete web                # the release; the root filesystem is 
 ```
 
 A machine takes minutes to become usable, and for most of that time a pod-level view says
-`Init:1/3`. The plugin answers the question that was actually asked: whether the machine is
+`Init:1/4`. The plugin answers the question that was actually asked: whether the machine is
 being seeded, prepared or customized, booting, ready or stopped — and when it cannot be
 entered, which stage it is in and the one command whose output explains the wait.
 
@@ -429,6 +429,178 @@ touch /etc/.stateful-pods-ignore.resolv.conf
 The marker is per file — claiming the resolver does not also claim the host name — and it lives on
 the volume, so it travels with the machine rather than with the release.
 
+## Provisioning
+
+A machine boots with the accounts its source image shipped, which for every preset this project
+publishes means none at all. Provisioning is how a user, an SSH key, a package list or a first-boot
+command gets into it.
+
+```yaml
+machines:
+  web:
+    guest:
+      provisioning: cloud-init      # cloud-init | native. cloud-init is the default.
+    cloudInit:
+      user:
+        value: maxim
+      sshAuthorizedKeys:
+        value: |
+          ssh-ed25519 AAAAC3Nz... maxim@workstation
+```
+
+### The two backends
+
+**`cloud-init`, the default.** The chart writes a NoCloud seed into the machine's own root
+filesystem at `/var/lib/cloud/seed/nocloud/` — `meta-data`, `user-data`, and `network-config` and
+`vendor-data` when they are supplied. A seed directory rather than the usual `cidata` image, because
+attaching one would need a raw block volume and `volumeDevices` is forbidden outright in
+user-namespaced pods. Four files and no privilege at all.
+
+Beside it goes a drop-in the chart owns, at `/etc/cloud/cloud.cfg.d/99-stateful-pods.cfg`, which
+hands back what other layers already own:
+
+```yaml
+datasource_list: [NoCloud, None]
+network:
+  config: disabled          # the CNI configured eth0 before any container started
+preserve_hostname: true     # the kubelet's, written into the machine on every boot
+manage_etc_hosts: false
+growpart:
+  mode: "off"               # the rootfs is a mounted volume, not a partitioned disk
+resize_rootfs: false
+```
+
+The network line is the important one. Proxmox's whole guest-customization layer exists to *write*
+`/etc/network/interfaces`; here the job is the exact inverse, because a configuration applied on top
+of what the CNI did takes away the address the pod was given.
+
+**`native`.** The chart writes nothing into the machine beyond the three files it already maintains
+on every boot. It asks nothing of the image, so it works with any of them, and it provisions no
+users and no keys. Switching an already-provisioned machine to it does not undo what was done: the
+volume is the machine, and a value change that silently edited a running machine's `/etc` would be a
+chart that destroys state on a typo.
+
+`systemd-credentials` is described in the design and is not implemented. Naming it fails rendering
+and says so, rather than pretending the name is a typo.
+
+### An image that cannot run cloud-init fails the machine
+
+Before anything is written, the provisioning step checks that the machine's root filesystem can
+actually run cloud-init — the program, and something an init system would start it with. If it
+cannot, **the pod fails** with a message naming `guest.provisioning: native` as the fix.
+
+This is deliberate and it is the point. On an image without cloud-init a seed would be written,
+nothing would read it, and the machine would boot with no users, no keys and no way in, with nothing
+in the logs to explain it — which looks exactly like a successful install. Auto-detection that fails
+loudly is fine; auto-detection that silently switches backends is not.
+
+Changing the value is not enough on its own: a StatefulSet does not replace a pod that never became
+ready, so delete the pod after the change.
+
+```bash
+helm upgrade … --set machines.web.guest.provisioning=native
+kubectl delete pod web-0
+```
+
+**Installing cloud-init is not enough either.** The distributions ship their LXC images with
+cloud-init installed *and* disabled, by an empty `/etc/cloud/cloud-init.disabled`: every systemd
+unit carries `ConditionPathExists=!` on it, and Alpine's OpenRC scripts test it by hand. Removing it
+is therefore part of what writing a seed means, and the chart does it — after the check, so an image
+that fails is left exactly as it was.
+
+### Which presets can serve which backend
+
+| Preset | Backends it can serve | Why |
+| --- | --- | --- |
+| `debian-trixie` | `cloud-init`, `native` | built from the upstream `cloud` variant |
+| `alpine-3.24` | `cloud-init`, `native` | built from the upstream `cloud` variant |
+| `ubuntu-noble` | **`native` only** | its upstream's cloud architectures are not yet on one build |
+| `void-current` | **`native` only** | its upstream publishes no cloud variant at all |
+
+Nothing is installed into a preset to close either gap, because a preset is the distribution's own
+root filesystem or it is not a preset. Void's upstream publishes only `default` and `musl`; Ubuntu's
+`cloud` variant exists but its two architectures are not on the same build, and one tag cannot
+honestly name two root filesystems. **A machine on either must name `guest.provisioning: native`**
+or it will not start.
+
+The column is what a preset can serve today, and it moves when an upstream does. `presets.yaml` and
+the table above the preset section are the two places it is recorded; check them rather than
+assuming a distribution that carries cloud-init everywhere else carries it here.
+
+### Every input, inline or by reference
+
+Each input takes one of exactly two forms, and they mix freely within one machine:
+
+```yaml
+cloudInit:
+  user:
+    value: maxim                    # not sensitive, inline is fine
+  password:
+    valueFrom:
+      secretKeyRef:                 # sensitive, never in git
+        name: machine-secrets
+        key: root-password-hash
+```
+
+The shape is `EnvVarSource`'s, because everyone already knows it. `configMapKeyRef` is accepted
+wherever `secretKeyRef` is: forcing a package list into a Secret is friction with no benefit.
+
+Supplying both forms for one input, naming two sources under one `valueFrom`, or supplying an input
+that belongs to a backend the machine did not select all fail while the manifest is still text.
+
+The material is assembled by a projected volume into a single directory of fixed file names, mounted
+into the provisioning step and **into no other container** — the guest a user execs into never sees
+it.
+
+> **Inline material is stored in the Helm release.** Helm keeps your values in a Secret that
+> `helm get values` prints back, and they are usually committed as well. That is a property of Helm,
+> not of this chart, and it is the reason the reference form exists.
+
+The inputs are `userData`, `networkConfig` and `vendorData` — the raw files — and `user`,
+`password`, `sshAuthorizedKeys`, `packages`, `runcmd` and `packageUpgrade`, which the chart composes
+into user-data. `sshAuthorizedKeys`, `packages` and `runcmd` take one item per line, so that the
+inline form and a Secret's bytes are the same shape. `values.yaml` documents each at the point of
+use.
+
+### Raw beats structured, per file
+
+Supplying `userData` replaces the structured inputs for user-data entirely. They are not merged, and
+the provisioning step's log says which ones were ignored. This is Proxmox's `cicustom` rule for the
+same choice: a YAML merge of two cloud-configs is a misfeature waiting to happen, and per-file
+replacement is the only rule anyone can predict. Shadowing is per file — raw `userData` does not
+affect a `networkConfig` given separately.
+
+### When provisioning is re-applied
+
+The seed's `instance-id` is computed by the provisioning step at boot, as a hash of the files it
+actually wrote plus the machine's namespace, release and name. cloud-init keys its per-instance
+work on that identifier, so:
+
+| What happened | What follows |
+| --- | --- |
+| The configuration changed | new identifier, so cloud-init re-applies on the next start |
+| The machine restarted, unchanged | same identifier, so nothing re-runs |
+| The volume was restored into the same machine | same identifier — it is the same machine |
+| The volume was restored under another release or name | new identifier, so machine-id and host keys are regenerated |
+
+It is computed at boot rather than while Helm renders because Helm cannot read a Secret it does not
+own — and a `lookup` would break `helm template`, `--dry-run` and every GitOps diff.
+
+Getting the restart to happen is a separate question from applying the change. Inline material is
+rendered by Helm, so changing it changes a `checksum/provisioning` pod annotation and the machine
+restarts. A referenced Secret that has rotated is invisible from here: use a controller that watches
+it, `kubectl rollout restart`, or bump `machines.<name>.guest.provisioningRevision`.
+
+### Where the material ends up
+
+On the volume, and in its snapshots. cloud-init copies user-data there itself, into
+`/var/lib/cloud/instances/<instance-id>/`, so hiding the seed would hide nothing — and this is how
+every cloud VM already behaves. It is accepted rather than fought.
+
+Put a **crypt(3) hash** in `password`, never a plaintext one: a hash on the volume is the same
+exposure as `/etc/shadow`, which is unavoidable. Treat a machine's volume as holding credentials,
+because it does, on every backend.
+
 ### Readiness, shutdown and logs
 
 The chart ships a **readiness probe and no liveness probe**. Readiness gates the Service endpoint
@@ -570,6 +742,46 @@ rendered, and it is verified against the cluster version at render time, but it 
 this repository's CI.
 
 ## Upgrading
+
+### Machines are provisioned by cloud-init unless they say otherwise
+
+**Breaking**, and it is the kind of break that shows up as a machine that will not start rather than
+as a machine that behaves differently.
+
+Every machine now selects a provisioning backend, and one that declares none selects `cloud-init`.
+On an image that cannot run cloud-init the pod fails, with a message naming
+`guest.provisioning: native` as the fix. That is the settled design working as intended: the
+alternative is a machine that installs cleanly, boots with no users and no keys, and gives nobody a
+way in.
+
+**What has to change, and where:**
+
+| A machine on … | What to do |
+| --- | --- |
+| `debian-trixie`, `alpine-3.24` | nothing — cloud-init runs and provisions from an empty configuration |
+| `ubuntu-noble` | set `guest.provisioning: native` — its upstream's cloud architectures are not yet on one build |
+| `void-current` | set `guest.provisioning: native` — its upstream publishes no cloud variant |
+| any other image without cloud-init | set `guest.provisioning: native` |
+
+```yaml
+machines:
+  web:
+    guest:
+      provisioning: native
+```
+
+**A machine that already exists is not re-seeded**, and nothing on its volume is replaced. What
+changes is that provisioning now runs on every start.
+
+**On the two cloud presets, cloud-init will really run.** It was present and inert before, kept
+that way by the `/etc/cloud/cloud-init.disabled` marker its upstream ships; the chart now removes
+that marker, because a seed written while it is in place is read by nothing. A machine that supplies
+no `cloudInit` inputs is provisioned from an empty cloud-config, which creates the distribution's
+default user and generates SSH host keys, and is otherwise uneventful.
+
+**After changing the backend on a machine that has already failed, delete its pod.** A StatefulSet
+does not replace a pod that never became ready, so the new value would sit in the object while the
+old pod went on failing.
 
 ### Two presets are now the upstream's cloud variant
 
@@ -949,3 +1161,58 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | An unknown preset name is rejected with the alternatives | `values_preset_source_test.yaml` |
 | A preset name is never substituted | `values_preset_source_test.yaml` |
 | A field belonging to another kind is rejected | `values_preset_source_test.yaml` |
+
+### guest-provisioning (added by guest-provisioning)
+
+| Scenario | Covered by |
+| --- | --- |
+| A machine that declares nothing is provisioned by cloud-init | `provisioning_volume_test.yaml` |
+| A machine can ask for no guest cooperation | `provisioning_volume_test.yaml`, `provision.bats` |
+| An unrecognised backend is refused | `values_provisioning_test.yaml` |
+| A machine on an image with no cloud-init does not boot silently | `provision.bats`, `hack/integration-test.sh` |
+| The check never switches backend on the machine's behalf | `provision.bats` |
+| An image that ships the backend disabled is not treated as able to run it | `provision.bats`, `hack/integration-test.sh` |
+| An input given inline reaches the machine | `provisioning_volume_test.yaml`, `hack/integration-test.sh` |
+| An input given by reference reaches the machine | `provisioning_volume_test.yaml` |
+| The two forms mix within one machine | `provisioning_volume_test.yaml` |
+| The guest cannot read the material through the pod | `provisioning_volume_test.yaml` |
+| A machine reads the configuration it was given | `hack/integration-test.sh`, which logs in over SSH as the provisioned user |
+| Provisioning does not take the machine's address away | `provision.bats`, `hack/integration-test.sh` |
+| Provisioning does not fight the files the chart maintains | `provision.bats`, `hack/integration-test.sh` |
+| Changing the configuration re-applies it | `provision.bats` |
+| Restarting with no change re-applies nothing | `provision.bats` |
+| A clone into another release is a different instance | `provision.bats` |
+| The identity does not depend on where the material came from | `provision.bats` |
+| Raw user-data wins over the structured shortcuts | `provision.bats` |
+| Shadowing is reported | `provision.bats`, `notes_test.yaml` |
+| Shadowing is per file | `provision.bats` |
+| A machine started again is provisioned again | `provision.bats`, `hack/integration-test.sh` |
+| Provisioning does not re-seed the root filesystem | `hack/integration-test.sh` |
+
+### values-validation (added by guest-provisioning)
+
+| Scenario | Covered by |
+| --- | --- |
+| An input given both ways is refused | `values_provisioning_test.yaml` |
+| A reference naming two sources is refused | `values_provisioning_test.yaml` |
+| An incomplete reference is refused | `values_provisioning_test.yaml` |
+| An input for an unselected backend is refused | `values_provisioning_test.yaml` |
+| An unknown provisioning input is refused | `values_provisioning_test.yaml` |
+| A designed but unimplemented backend says so | `values_provisioning_test.yaml` |
+
+### machine-topology (added by guest-provisioning)
+
+| Scenario | Covered by |
+| --- | --- |
+| The step that provisions reads fixed paths | `provisioning_volume_test.yaml`, `provision.bats` |
+| The material is mounted nowhere else | `provisioning_volume_test.yaml`, `init_scripts_test.yaml` |
+| A machine supplying nothing gets no volume | `provisioning_volume_test.yaml` |
+| Changed inline material takes effect | `provisioning_volume_test.yaml`, which pins the digest rather than only requiring one |
+| A referenced rotation can be applied deliberately | `provisioning_volume_test.yaml` |
+
+### distro-presets (added by guest-provisioning)
+
+| Scenario | Covered by |
+| --- | --- |
+| A preset that cannot serve the default backend is marked | the preset table above, the same table in the project README, and `values.yaml` beside the preset input |
+| What a preset can serve is stated per preset | the same three places, a row per preset |

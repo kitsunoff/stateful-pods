@@ -145,7 +145,7 @@ sts_line() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
 pod_line() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
 
 # The init container states of a machine that finished being made.
-seeded_init() { printf 'seed=terminated,Completed,0,true;prepare=terminated,Completed,0,true;customize=terminated,Completed,0,true;'; }
+seeded_init() { printf 'seed=terminated,Completed,0,true;prepare=terminated,Completed,0,true;customize=terminated,Completed,0,true;provision=terminated,Completed,0,true;'; }
 
 # The subcommands the plugin answers to. Kept here rather than in a suite so that
 # a command added without a help of its own fails in one place.

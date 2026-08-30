@@ -46,6 +46,23 @@ in_state() {
     [[ "$output" == *"files"* ]]
 }
 
+@test "the provision step running is provisioning the machine" {
+    in_state 'seed=terminated,Completed,0,true;prepare=terminated,Completed,0,true;customize=terminated,Completed,0,true;provision=running,,,false;' '' Pending
+    machine status web --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"provisioning"* ]]
+}
+
+# The step that refuses an image which cannot run the backend its machine named.
+# It is the one init step that fails on purpose, so the plugin has to point at
+# its logs rather than at the seeding step's.
+@test "a provision step that failed points at its own logs" {
+    in_state 'seed=terminated,Completed,0,true;prepare=terminated,Completed,0,true;customize=terminated,Completed,0,true;provision=terminated,Error,1,false;' '' Pending
+    machine status web --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--container provision"* ]]
+}
+
 @test "a guest that is running but not ready is booting" {
     in_state "$(seeded_init)" 'guest=running,,,false;' Running
     machine status web --namespace homelab

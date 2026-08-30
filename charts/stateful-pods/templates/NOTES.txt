@@ -42,6 +42,60 @@ boot. To keep one of them as the machine's own, create the marker beside it:
 
   touch /etc/.stateful-pods-ignore.resolv.conf
 
+{{- $provisioning := include "stateful-pods.machine.provisioning.resolved" $ctx | fromYaml }}
+{{- $backend := $provisioning.backend }}
+{{- if eq $backend "cloud-init" }}
+
+This machine is provisioned by cloud-init. The chart writes a NoCloud seed into it at
+/var/lib/cloud/seed/nocloud, hands its host name, host table, resolver and network
+configuration back to the layers above, and removes /etc/cloud/cloud-init.disabled - the
+marker the distributions ship in their LXC images, without which a seed is read by nothing.
+
+This needs cloud-init IN the machine's root filesystem. If it is not there the machine will
+not start, and the provisioning step says so:
+
+  kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --container provision
+
+That is deliberate. A machine seeded and never read would boot with no users, no keys and
+no way in, which looks exactly like a successful install. For an image without cloud-init -
+`void-current` among the presets, because its upstream publishes no cloud variant - set
+machines.{{ $name }}.guest.provisioning: native and then delete the pod, because a
+StatefulSet does not replace a pod that never became ready.
+{{- else }}
+
+This machine is provisioned natively: nothing is written into it beyond the three files
+above. It boots with the accounts and identity its source shipped, so getting in means
+`kubectl machine shell` until something inside it is configured to allow anything else.
+{{- end }}
+{{- $shadowed := list }}
+{{- if eq $backend "cloud-init" }}
+{{- $given := $machine.cloudInit | default dict }}
+{{- if and (kindIs "map" $given) (not (kindIs "invalid" (index $given "userData"))) }}
+{{- range $field := list "user" "password" "sshAuthorizedKeys" "packages" "runcmd" "packageUpgrade" }}
+{{- if not (kindIs "invalid" (index $given $field)) }}
+{{- $shadowed = append $shadowed $field }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $shadowed }}
+
+WARNING: userData was supplied, so it is used as it stands and these inputs are shadowed
+and will take no effect: {{ join ", " $shadowed }}.
+
+A raw file replaces the structured values for that file rather than being merged with
+them - the same rule Proxmox's cicustom follows, because a YAML merge of two cloud-configs
+is a misfeature waiting to happen. Fold what you need into userData, or remove it and let
+the chart compose one.
+{{- end }}
+{{- if $provisioning.refs }}
+
+Some of this machine's provisioning material is a reference to a Secret or ConfigMap, which
+the chart cannot see the content of. Rotating one produces no restart on its own. Either
+run a controller that watches it, `kubectl rollout restart statefulset/{{ $objectName }}`,
+or bump machines.{{ $name }}.guest.provisioningRevision.
+{{- end }}
+
 The root volume is retained when the release is uninstalled - by `helm uninstall
 {{ $root.Release.Name }}`, or by `kubectl machine delete {{ $name }}`, which says the same thing this
 does. Deleting a machine's state is a separate, deliberate action:
