@@ -69,6 +69,19 @@ sp_bind_devices() {
         mount --bind "/dev/$node" "$root/dev/$node" \
             || sp_die "machine ${SP_MACHINE:-?}: could not bind /dev/$node into the machine"
     done
+    # The pseudo-terminal multiplexer, at the path every program that wants a
+    # terminal opens. A link rather than a node, and not optional: the plan mounts
+    # devpts with `newinstance`, so the machine's terminals come from its own
+    # instance and that instance has its own multiplexer at pts/ptmx. A node here
+    # would allocate from a different instance and hand back a terminal that is not
+    # in the machine's /dev/pts - and could not be created anyway, for the reason
+    # every node above is bound rather than made. Without the link `kubectl exec
+    # --tty` fails in the runtime before the command starts, which is every
+    # interactive shell into a machine. This is what LXC and runc both do.
+    #
+    # Relative, so it resolves to the machine's own instance both before the root
+    # change and after it.
+    ln -sf pts/ptmx "$root/dev/ptmx" 2>/dev/null || true
     ln -sf /proc/self/fd "$root/dev/fd" 2>/dev/null || true
     ln -sf /proc/self/fd/0 "$root/dev/stdin" 2>/dev/null || true
     ln -sf /proc/self/fd/1 "$root/dev/stdout" 2>/dev/null || true

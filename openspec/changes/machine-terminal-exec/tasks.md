@@ -24,11 +24,11 @@
 
 ## 3. The fix
 
-- [ ] 3.1 In `sp_bind_devices` in `images/shim/scripts/lib-boot.sh`, link `dev/ptmx` to `pts/ptmx`
+- [x] 3.1 In `sp_bind_devices` in `images/shim/scripts/lib-boot.sh`, link `dev/ptmx` to `pts/ptmx`
   with a comment stating that the private instance is what forces a link rather than a device node,
   and that a node cannot be created by a pod in its own user namespace anyway; verify `make
   shell-test` now passes the cases from 2.1
-- [ ] 3.2 Run `make shell-lint`; verify shellcheck reports nothing
+- [x] 3.2 Run `make shell-lint`; verify shellcheck reports nothing
 
 ## 4. The integration assertion, which is the one that could have caught this
 
