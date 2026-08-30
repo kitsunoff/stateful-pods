@@ -333,11 +333,16 @@ step "asserting the machine cannot reach the node's own devices"
 # flag the same two commands read the node's disk.
 check "no block device of the node's is present in the machine" \
   guest sh -c '! ls -l /dev | grep -q "^b"'
-if guest sh -c 'mknod /tmp/sp-node b 7 0 && dd if=/tmp/sp-node of=/dev/null bs=512 count=1' \
-    >/dev/null 2>&1; then
-  fail "the machine opened one of the node's block devices, which this mode is meant to have given up"
-else
+# The refusal is read rather than inferred from a non-zero exit. Anything can fail;
+# only the device cgroup says "Permission denied" here, and a node with no loop
+# device would otherwise make this assertion pass for saying "No such device".
+device_error="$(guest sh -c 'mknod /tmp/sp-node b 7 0 && dd if=/tmp/sp-node of=/dev/null bs=512 count=1' 2>&1 || true)"
+if grep --quiet --ignore-case 'permission denied' <<< "$device_error"; then
   pass "the machine cannot open one of the node's block devices, even through a node it made itself"
+elif grep --quiet 'records out' <<< "$device_error"; then
+  fail "the machine read one of the node's block devices, which this mode is meant to have given up"
+else
+  fail "the machine neither read nor was refused the node's block device: ${device_error:-nothing}"
 fi
 
 step "asserting the files the chart maintains inside the machine"
