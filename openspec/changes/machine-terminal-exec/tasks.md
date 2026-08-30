@@ -32,11 +32,11 @@
 
 ## 4. The integration assertion, which is the one that could have caught this
 
-- [ ] 4.1 Add a helper to `hack/integration-test.sh` that runs a shell command on a real
+- [x] 4.1 Add a helper to `hack/integration-test.sh` that runs a shell command on a real
   pseudo-terminal, handling both `script` implementations — util-linux through `--command` with
   `--return`, the BSD one macOS ships as trailing arguments — with a comment naming the difference;
   verify the helper reports a non-zero status for a command that fails, on this host
-- [ ] 4.2 Add an assertion that execs into the booted machine with `--stdin --tty` through that
+- [x] 4.2 Add an assertion that execs into the booted machine with `--stdin --tty` through that
   helper and requires the shell to report a pseudo-terminal belonging to the machine; verify it
   fails against a machine booted from the unfixed script and passes against one booted from the
   fixed script
