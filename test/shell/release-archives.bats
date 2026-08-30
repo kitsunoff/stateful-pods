@@ -126,6 +126,10 @@ archive() { printf '%s/kubectl-machine_v%s.tar.gz' "$OUT" "$VERSION"; }
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"LICENSE"* ]]
     [[ "$stderr" == *"krew"* ]]
+    # Asserted before the negative below, which would otherwise be satisfied by
+    # an archive that was never written at all: tar would fail, grep would get an
+    # empty stream, and the negation would call that a pass.
+    [ -f "$tree/dist/kubectl-machine_v$VERSION.tar.gz" ]
     # Negated as a whole rather than with --invert-match: grep -v exits 0 when
     # *any* line does not match, and the archive always holds ./ and
     # ./kubectl-machine, so the inverted form passes whatever is in there.

@@ -103,13 +103,20 @@ sp_fill_rootfs() {
     # device nodes, where a `crane export` stream usually has none.
     #
     # A word list rather than an array, because this file is sh: it is sourced by
-    # the same seed driver as the bash oci path but carries no bashisms. Both
-    # `dev` and `./dev` are listed because a template packed with `tar -C src .`
-    # stores the second form and one packed from an absolute path stores the
-    # first, and --anchored keeps `dev` from also matching `usr/local/dev`.
+    # the same seed driver as the bash oci path but carries no bashisms.
+    #
+    # All three shapes a header name can take are listed, because matching runs
+    # against the name as stored and not against the path tar will finally write:
+    # `./dev` is what `tar -C src .` records, `dev` is what packing from inside
+    # the tree records, and `/dev` is what `tar -P` records - GNU tar strips the
+    # leading slash on extraction, but only after the exclusion has been tested.
+    # The absolute form matters more here than on the oci path, where a layer tar
+    # is machine-generated: a template is built from a running system by whoever
+    # published it. --anchored is what keeps `dev` from also matching
+    # `usr/local/dev`.
     _sp_excludes="--anchored"
     for _sp_dir in $SP_RUNTIME_DIRS; do
-        _sp_excludes="$_sp_excludes --exclude=$_sp_dir --exclude=./$_sp_dir"
+        _sp_excludes="$_sp_excludes --exclude=$_sp_dir --exclude=./$_sp_dir --exclude=/$_sp_dir"
     done
 
     sp_log "machine $SP_MACHINE: unpacking the template"

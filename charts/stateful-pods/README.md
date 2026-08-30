@@ -561,7 +561,9 @@ again and the pod is replaced. No volume is affected in either direction.
 ## Specification coverage
 
 Every scenario in the `chart-skeleton` change's specs maps to at least one test. Suite names
-below are files under `tests/`.
+below are files under `tests/` **in the source repository**. They are not in the packaged chart —
+`.helmignore` keeps them out of it, because an installed chart cannot run them and carries no
+helm-unittest to try.
 
 ### machine-topology
 
