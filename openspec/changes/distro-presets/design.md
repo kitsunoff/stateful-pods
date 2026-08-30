@@ -185,6 +185,16 @@ the tarballs, and the two do not overlap.
   everything except the shape of a root filesystem tarball, which is the only thing this build
   touches. If that stops being true, it stops being true loudly, at the capability assertion.
 
+- **A preset in `privileged` mode reconfigures its node's kernel** → Found by building this, not
+  reasoned about beforehand. A preset boots the distribution's own init, and that init applies the
+  distribution's sysctl defaults; `kernel.*` sysctls are not namespaced, so in `privileged` mode
+  those writes land on the node and outlive the machine. Void's `10-void-user.conf` sets
+  `kernel.kexec_load_disabled=1`, which is a one-way switch, and it broke the syscall-filter suite's
+  control assertions on the same runner two clusters later. Documented rather than prevented: it is
+  what `privileged` grants, working as described. `userns` is unaffected, because the write is
+  refused. The two integration suites are ordered so the one that needs a pristine kernel runs
+  first.
+
 ## Migration Plan
 
 1. `shim-owned-scripts` must be merged first. Both the Alpine and Void presets and the retention

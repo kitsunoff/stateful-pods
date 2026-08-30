@@ -87,11 +87,27 @@ image-build:
 image-test: image-build
 	IMAGE=$(IMAGE) ./hack/image-test.sh
 
-## integration-test: seed a machine end to end on a throwaway kind cluster, then
-#  assert the syscall filter on a second one whose kubelet filters by default
+## integration-test: assert the syscall filter on a kind cluster whose kubelet
+#  filters by default, then seed a machine end to end on a second one
+#
+#  The syscall suite runs first, and the order is not arbitrary. Its assertions
+#  are pairs: each call the profile denies is also made with no profile at all,
+#  so that "the profile denies it" cannot pass because the call was refused for
+#  some other reason. Those control halves need the host kernel in the state it
+#  booted in.
+#
+#  A machine in `privileged` mode can take it out of that state. Void's root
+#  filesystem ships kernel.kexec_load_disabled=1 in /usr/lib/sysctl.d, its init
+#  applies it, and that particular switch only goes one way - so once a Void
+#  machine has booted, kexec_load is refused for everything else on that host,
+#  including the second cluster. Every kind node shares the host's kernel.
+#
+#  This is what `privileged` means, working as documented rather than failing.
+#  The suites are ordered rather than the guest constrained, because constraining
+#  it would make the test prove something about a machine nobody runs.
 integration-test:
-	./hack/integration-test.sh
 	./hack/seccomp-test.sh
+	./hack/integration-test.sh
 
 ## seccomp-test: the syscall filter assertions alone, on their own kind cluster
 seccomp-test:

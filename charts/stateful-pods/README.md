@@ -167,6 +167,24 @@ want credentials — a preset is a name for a reference, not a promise about who
 Presets are not extensible through values. A user who wants their own image already has `kind: oci`,
 which is the honest way to say "an image I chose".
 
+#### A preset is a whole distribution, and in `privileged` mode it behaves like one
+
+A preset boots the distribution's own init, and that init does what it does on a real machine —
+including applying the distribution's sysctl defaults. In `privileged` mode those writes reach the
+**node's** kernel, because `kernel.*` sysctls are not namespaced and a privileged container is not
+prevented from setting them. They outlive the machine, and they affect every other pod on that node.
+
+This is not hypothetical, and it is not a defect. The Void preset ships
+`/usr/lib/sysctl.d/10-void-user.conf`, which sets `kernel.kexec_load_disabled=1`. That switch only
+goes one way: once a Void machine has booted on a node in `privileged` mode, nothing on that node
+can load a kexec kernel again until it reboots. `kernel.dmesg_restrict` and
+`kernel.yama.ptrace_scope` come from the same file.
+
+`privileged` grants a named capability set on purpose, and this is what that grant is worth. A
+machine in `userns` mode cannot do it: the sysctls in question are not namespaced, so the write is
+refused rather than applied. If a machine does not need to be able to reconfigure its node's kernel,
+that is the mode for it.
+
 **Any OCI image can be a source.** Nothing from it is executed, so an Alpine-, busybox- or
 distroless-based image is an ordinary source — it needs no shell and no archiver of its own. What it
 does need, to be a *machine*, is an init system for the boot to hand over to; an image with none is

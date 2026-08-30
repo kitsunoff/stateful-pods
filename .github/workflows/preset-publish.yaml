@@ -109,7 +109,7 @@ jobs:
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -o errexit -o nounset -o pipefail
-          while IFS=$'\t' read -r preset build reference; do
+          while IFS=$'\t' read -r preset _ _; do
             [ -n "$preset" ] || continue
             package="stateful-pods-$preset"
             visibility="$(gh api "/users/$REPOSITORY_OWNER/packages/container/$package" \
