@@ -137,14 +137,52 @@ shim:
 #       #                Requires Kubernetes >= 1.33 with user namespaces enabled,
 #       #                containerd >= 2.0 or CRI-O, Linux >= 6.3, and idmap-capable
 #       #                storage (not NFS).
-#       #   privileged - the guest container runs privileged. Works on any cluster
-#       #                and gives up almost all isolation from the node. No syscall
-#       #                filter reaches it: containerd drops the profile a privileged
-#       #                container names before it builds the container, so this mode
-#       #                cannot be confined by anything the chart sets. That was
-#       #                measured on a cluster, not inferred - a profile denying an
-#       #                ordinary system call stopped it in an unprivileged container
-#       #                and was absent from the privileged one's runtime spec.
+#       #   privileged - the guest container is granted a named capability set, and
+#       #                every capability in it is real on the node. Works on any
+#       #                cluster and on any kernel. The set is what a container gets
+#       #                by default plus CAP_SYS_ADMIN, which is what mounting the
+#       #                machine's filesystems and changing its root require:
+#       #
+#       #                  AUDIT_WRITE CHOWN DAC_OVERRIDE FOWNER FSETID KILL MKNOD
+#       #                  NET_BIND_SERVICE NET_RAW SETFCAP SETGID SETPCAP SETUID
+#       #                  SYS_ADMIN SYS_CHROOT
+#       #
+#       #                This is not the runtime's blanket privileged flag. That
+#       #                flag is not a capability set at all - it is an instruction
+#       #                to stop applying policy, and one consequence of it was that
+#       #                no syscall filter reached this mode, whatever the machine
+#       #                named. It now runs under the filter its values name, in
+#       #                exactly the same way the other mode does.
+#       #
+#       #                What a machine in this mode does NOT get, against that
+#       #                flag, and what to do instead:
+#       #
+#       #                  * The node's devices. A machine has the device nodes the
+#       #                    pod was given and cannot open any other, not even one
+#       #                    it creates the node for itself. A machine that needs a
+#       #                    real device is a case for a device plugin, not for
+#       #                    suspending the runtime's policy.
+#       #                  * Kernel modules. CAP_SYS_MODULE is not granted, so
+#       #                    nothing inside a machine loads or unloads one. Load
+#       #                    them on the node - it is the node's kernel either way.
+#       #                  * Raw I/O. CAP_SYS_RAWIO is not granted. A machine's disk
+#       #                    is the volume it boots from.
+#       #                  * The node's clock. CAP_SYS_TIME is not granted, so a
+#       #                    machine reads the time and cannot set it. Disable the
+#       #                    time daemon inside a machine; the node keeps the clock.
+#       #                  * The node's mandatory access control. CAP_MAC_ADMIN and
+#       #                    CAP_MAC_OVERRIDE are not granted.
+#       #                  * Anything else outside the set above, CAP_NET_ADMIN
+#       #                    included: a machine cannot run its own firewall or
+#       #                    bring up a tunnel. A pod's addressing belongs to the
+#       #                    cluster's CNI - see the end of this file.
+#       #
+#       #                These are the same five refusals the reference
+#       #                implementation makes of its own privileged container, and
+#       #                a machine that needs one of them back should be a reported
+#       #                case rather than a local edit: a capability added here
+#       #                without a machine and a failure behind it is how a named
+#       #                set drifts back into a blanket flag.
 #       #
 #       # The version check happens at render time. The node's kernel, the
 #       # runtime's configuration and whether the storage supports idmapped mounts
@@ -162,9 +200,10 @@ shim:
 #       # container makes to become the machine, so a machine that named it would
 #       # seed its volume over several minutes and then die at the root change.
 #       #
-#       # In privileged mode this input still renders, and confines nothing.
-#       # Containerd drops the profile a privileged container names before it
-#       # builds the container, so no value the chart sets can confine that mode.
+#       # Both modes run under the filter they name. The privileged mode did not
+#       # use to: it rendered a container the runtime was told to stop policing,
+#       # and containerd drops the profile such a container names before it builds
+#       # it. That mode renders a capability set now, so the profile reaches it.
 #       seccompProfile:
 #         # Filter form: Unconfined | Localhost. Mandatory when seccompProfile is
 #         # declared at all.

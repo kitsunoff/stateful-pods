@@ -284,11 +284,52 @@ suitable for a machine — LXC's own denylist, which every Proxmox container alr
 ships at `profiles/stateful-pods-machine.json`, and `profiles/README.md` documents the three ways to
 get it onto nodes and what it is worth in each mode.
 
-**In `privileged` mode no filter applies at all.** Containerd drops the profile a privileged
-container names before it builds the container. That was measured rather than assumed: a profile
-denying an ordinary system call stopped an unprivileged container and was absent from the privileged
-container's runtime spec, while the CRI request still carried the reference. The input is accepted in
-that mode and does nothing.
+**Both modes run under the filter they name.** The `privileged` mode did not use to: it rendered a
+container the runtime had been told to stop policing, and containerd drops the profile such a
+container names before it builds it — measured rather than assumed, a profile denying an ordinary
+system call stopped an unprivileged container and was absent from the privileged container's runtime
+spec while the CRI request still carried the reference. That mode renders a capability set now, so
+the reference is honoured and the machine reports a loaded filter.
+
+### The access-control profile
+
+The guest container also declares the AppArmor profile it runs under, `Unconfined`, in both modes,
+for the same kind of reason and against the same kind of default. Containerd confines every container
+it has not been told to stop policing with a default profile of its own, `cri-containerd.apparmor.d`,
+on any node where AppArmor is supported — and that profile contains `deny mount,`. The guest exists
+to mount. Left to the node, a machine would boot or not boot depending on whether that node has
+`apparmor_parser` installed.
+
+This is not a profile the chart ships. It is the field a real one would be named in, and a profile
+that permits what a machine does is a later change.
+
+### What each mode grants
+
+`userns` adds `CAP_SYS_ADMIN` to a pod running in its own user namespace, where it is void on the
+node.
+
+`privileged` grants the guest a named set, and every capability in it is real on the node:
+
+```text
+AUDIT_WRITE  CHOWN  DAC_OVERRIDE  FOWNER  FSETID  KILL  MKNOD  NET_BIND_SERVICE
+NET_RAW      SETFCAP  SETGID  SETPCAP  SETUID  SYS_ADMIN  SYS_CHROOT
+```
+
+That is what a container gets by default, plus the `CAP_SYS_ADMIN` the mount and the root change
+need. `ALL` is dropped first, so the list in the manifest is the whole of what the guest holds rather
+than an addition to whatever a runtime currently calls a default.
+
+It is deliberately narrower than the runtime's privileged flag, which is not a capability set at all.
+A machine in this mode cannot load a kernel module, perform raw I/O, set the node's clock, override
+the node's mandatory access control, or open a device the pod was not given — not even one it creates
+the node for itself. `CAP_DAC_READ_SEARCH` and `CAP_SYS_BOOT` are absent permanently: they are what
+`open_by_handle_at` and `kexec_load` need, and those are the two escape primitives the profile in
+`profiles/` exists to close.
+
+Capabilities outside the set are not refused on principle, merely not yet needed — `CAP_NET_ADMIN`
+is the one to watch, since a machine wanting its own firewall or tunnel needs it. A capability added
+here should name the machine that needed it and the failure that showed it; without that the set
+drifts back towards the blanket flag one well-intentioned commit at a time.
 
 ### Prerequisites the chart cannot check
 
@@ -301,8 +342,9 @@ boot on them:
 - whether the storage backend supports idmapped mounts — NFS does not.
 
 When one of them is missing the boot fails on a mount, naming the path and the filesystem type. The
-`privileged` mode has none of these prerequisites and works on any cluster, at the cost of almost all
-isolation from the node.
+`privileged` mode has none of these prerequisites and works on any cluster. Its capabilities are real
+on the node, which is what the name is about, but it is a named set rather than an instruction to the
+runtime to stop applying policy — see *What each mode grants* below.
 
 **What `userns` looks like when the environment cannot support it.** The mode has been exercised by
 hand on a `kind` cluster, where it does not work — a `kind` node is itself a container, so a pod's
@@ -322,6 +364,38 @@ its log names the mount it could not make.
 Because of this the project's own integration test boots `privileged` only. `userns` is supported and
 rendered, and it is verified against the cluster version at render time, but it is not exercised by
 this repository's CI.
+
+## Upgrading
+
+### `privileged` stops rendering the runtime's privileged flag
+
+**Breaking.** A machine whose `security.mode` is `privileged` used to render `privileged: true`,
+which is not a capability set but an instruction to the runtime to stop applying policy. It now
+renders the named set documented under *What each mode grants*. Upgrading replaces the machine's pod
+with a differently privileged one on its next start.
+
+**The root filesystem is untouched.** Nothing about a machine's volume, its identity or its seeding
+record changes, so a machine that breaks under the new set is recovered with a values change and a
+pod replacement rather than a rebuild.
+
+What a machine in this mode no longer has:
+
+| No longer granted | What breaks | What to do instead |
+| --- | --- | --- |
+| Any device the pod was not given | Opening one fails, including through a device node the machine creates itself | Ask for the device with a device plugin. Proxmox's own privileged container is allowed the same short list. |
+| `CAP_SYS_MODULE` | `modprobe`, `insmod` and `rmmod` inside a machine | Load the module on the node. It is the node's kernel in either case. |
+| `CAP_SYS_RAWIO` | Direct block-device access | A machine's disk is the volume it boots from. |
+| `CAP_SYS_TIME` | A time daemon inside a machine trying to set the clock | Disable it. The node keeps the clock and the machine reads it. |
+| `CAP_MAC_ADMIN`, `CAP_MAC_OVERRIDE` | Altering or overriding the node's mandatory access control | Nothing an operating system needs to start. |
+| Everything else outside the set, `CAP_NET_ADMIN` included | A machine running its own firewall, or bringing up a tunnel | A pod's addressing belongs to the cluster's CNI. If a machine genuinely needs one of these, report the case — the set grows on evidence, not on convenience. |
+
+What a machine in this mode gains: **the syscall filter its values name now reaches it.** A
+`privileged` machine that named a profile was running unfiltered, because containerd drops the
+profile a privileged container names before it builds one. It reports a loaded filter now, and
+`profiles/stateful-pods-machine.json` is worth the same in this mode as in the other.
+
+To go back, roll the release back one revision: the previous revision renders the privileged flag
+again and the pod is replaced. No volume is affected in either direction.
 
 ## Specification coverage
 
@@ -360,6 +434,8 @@ below are files under `tests/`.
 | A user-namespaced pod is rendered | `security_posture_test.yaml` |
 | Host namespaces are never shared in this mode | `security_negative_test.yaml` |
 | A privileged pod is rendered | `security_posture_test.yaml` |
+| The excluded capabilities are absent | `security_posture_test.yaml`, `hack/integration-test.sh` |
+| The mode can still be confined | `seccomp_named_profile_test.yaml`, `hack/seccomp-test.sh` |
 | The same values render the same posture everywhere | `security_cluster_independence_test.yaml` |
 | No unnamed privilege is granted | `security_negative_test.yaml` |
 | The mode is read from the machine | `values_security_mode_test.yaml`, `security_posture_test.yaml` |
@@ -517,6 +593,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | An LXC template source renders without a container image of its own | `shim_image_test.yaml` |
 | An OCI source is never a container image | `shim_image_test.yaml`, `init_containers_test.yaml`, `hack/integration-test.sh` |
 | The guest container alone is privileged | `init_security_test.yaml` |
+| The guest container alone is granted the mode's capability set | `init_security_test.yaml` |
 | The guest container alone is granted the mode's capability | `init_security_test.yaml` |
 | Preparation steps are ordinary containers | `init_security_test.yaml` |
 
@@ -531,6 +608,7 @@ Suites named `.bats` are under `test/shell/`; the rest are chart unit tests unde
 | The same values render the same posture everywhere | `security_cluster_independence_test.yaml` |
 | The syscall filter is never left to the cluster | `seccomp_posture_test.yaml` |
 | A cluster that filters by default does not change the machine | `hack/seccomp-test.sh` |
+| The guest declares the access-control profile it runs under | `apparmor_posture_test.yaml` |
 
 ### values-validation (added by seccomp-posture)
 
