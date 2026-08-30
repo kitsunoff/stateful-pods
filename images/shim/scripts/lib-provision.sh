@@ -329,11 +329,16 @@ sp_provision_cloud_init() {
     # objects are named from - which makes a volume restored under another name a
     # different instance, and a volume restored into its own machine the same
     # one.
+    # `if` rather than `[ -f … ] && cat`, which would be an AND-OR list returning
+    # non-zero whenever the optional file is absent. Bash does not fire errexit
+    # for that today because the list is not the last command in the group - but
+    # a reordering would make it one, and this script runs under errexit and
+    # pipefail precisely so that a failure to write cannot pass for a success.
     _sp_identity="$(
         {
             cat "$_sp_seed/user-data"
-            [ -f "$_sp_seed/network-config" ] && cat "$_sp_seed/network-config"
-            [ -f "$_sp_seed/vendor-data" ] && cat "$_sp_seed/vendor-data"
+            if [ -f "$_sp_seed/network-config" ]; then cat "$_sp_seed/network-config"; fi
+            if [ -f "$_sp_seed/vendor-data" ]; then cat "$_sp_seed/vendor-data"; fi
             printf '%s/%s/%s' "${SP_NAMESPACE:-}" "${SP_RELEASE:-}" "${SP_MACHINE:-}"
         } | sha1sum | cut -c1-40
     )"

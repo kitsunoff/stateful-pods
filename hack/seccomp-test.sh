@@ -397,10 +397,11 @@ init_filters="$(kc get pod oci-web-0 --output \
   || fail "the preparation steps declared '${init_filters:-nothing}'"
 pass "every preparation step declared the runtime's default filter"
 # They ran to completion under it, which is the assertion that the default
-# profile withholds nothing an unpack, a write or an HTTPS fetch needs.
+# profile withholds nothing an unpack, a write, an HTTPS fetch or the
+# provisioning of a guest needs.
 init_exits="$(kc get pod oci-web-0 --output \
   "jsonpath={.status.initContainerStatuses[*].state.terminated.exitCode}")"
-[[ "$init_exits" == "0 0 0" ]] \
+[[ "$init_exits" == "0 0 0 0" ]] \
   || fail "a preparation step under the default filter exited with '${init_exits:-nothing}'"
 pass "every preparation step succeeded under the runtime's default filter"
 
