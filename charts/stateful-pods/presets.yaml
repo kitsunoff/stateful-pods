@@ -40,4 +40,4 @@
 debian-trixie: ghcr.io/kitsunoff/stateful-pods-debian-cloud@sha256:62fa15bde5c1cfd54f3810a26d41d1d463ea2576fe67fc41d83dae9c400de8a5
 ubuntu-noble: ghcr.io/kitsunoff/stateful-pods-ubuntu@sha256:6f9449d586881fb028cd9d9a3c1db43091af772252cb4e1ad6812fef77fa9b44
 alpine-3.24: ghcr.io/kitsunoff/stateful-pods-alpine-cloud@sha256:86b295ab7ff3843b29d2ad1306de0abb5ecad67355191680f7e7e7010964ea00
-void-current: ghcr.io/kitsunoff/stateful-pods-void@sha256:55854c7562ab8daa2e1815d7adacf33aa0fd7a55a3d8b89ac51d4294677945d9
+void-current: ghcr.io/kitsunoff/stateful-pods-void@sha256:11641ecee2575726a342867c8d67b004acc2827c9aa77cbbf6a018b0c78f228c
