@@ -232,7 +232,7 @@ jobs:
       # publishes.
       - name: Build the image for every supported architecture
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: images/shim
           file: images/shim/Containerfile
@@ -249,7 +249,7 @@ jobs:
 
       - name: Publish the image
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: images/shim
           file: images/shim/Containerfile
