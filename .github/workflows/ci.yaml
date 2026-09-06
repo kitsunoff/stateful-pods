@@ -27,7 +27,7 @@ jobs:
       packages: write
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -125,7 +125,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install bats and shellcheck
         run: brew install bats-core shellcheck
@@ -163,7 +163,7 @@ jobs:
       contents: write
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Refuses when the tag, the plugin and the chart do not say the same thing,
       # and computes the published checksum from the archive it just wrote rather
@@ -207,7 +207,7 @@ jobs:
       packages: write
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -269,7 +269,7 @@ jobs:
       # revision to upgrade from does not resolve and that assertion skips
       # itself in silence.
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

@@ -47,7 +47,7 @@ jobs:
       any: ${{ steps.survey.outputs.any }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.7
@@ -156,7 +156,7 @@ jobs:
       packages: read
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.7
