@@ -49,7 +49,7 @@ jobs:
       published: ${{ steps.build.outputs.published }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # No QEMU and no Buildx. A preset's layer is the upstream archive itself,
       # so there is nothing to build and nothing for emulation to run: packaging
