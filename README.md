@@ -23,6 +23,8 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 - [What you get](#what-you-get)
 - [How a machine starts](#how-a-machine-starts)
 - [Declaring a machine](#declaring-a-machine)
+- [Getting into a machine](#getting-into-a-machine)
+- [The ports a machine serves](#the-ports-a-machine-serves)
 - [The kubectl plugin](#the-kubectl-plugin)
 - [Security modes](#security-modes)
 - [Distributions it ships a name for](#distributions-it-ships-a-name-for)
@@ -152,6 +154,35 @@ indistinguishable from success.
 [`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) is the full input contract,
 with a comment on every input, and [`charts/stateful-pods/README.md`](charts/stateful-pods/README.md)
 is the reference for the chart itself.
+
+## The ports a machine serves
+
+A machine declares the ports it serves, and may ask that the cluster admit traffic to those and to
+nothing else.
+
+```yaml
+machines:
+  web:
+    network:
+      ingress: declared      # `any` by default, which restricts nothing
+      ports:
+        ssh:
+          port: 22
+        http:
+          port: 80
+```
+
+The name each port is declared under is what its SRV record is published as, so a client finds
+`_ssh._tcp.lab-web.homelab.svc.cluster.local` rather than being told the number twice.
+
+**The declaration alone restricts nothing.** A pod is reachable on every port something inside it is
+listening on, whatever its container declares; `ingress: declared` is the input that renders a
+NetworkPolicy, and a NetworkPolicy is enforced by the cluster's network plugin and by nothing else.
+On a cluster whose plugin implements none, it is accepted and does nothing at all — which the chart
+cannot detect and therefore says out loud.
+
+The restriction is inbound only. A machine that asked for it keeps its resolver, its package mirror
+and everything else it reaches out to.
 
 ## The kubectl plugin
 

@@ -100,6 +100,43 @@ run a controller that watches it, `kubectl rollout restart statefulset/{{ $objec
 or bump machines.{{ $name }}.guest.provisioningRevision.
 {{- end }}
 
+{{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
+{{- $ingress := include "stateful-pods.machine.network.ingress" $ctx }}
+{{- if $ports }}
+
+This machine declares {{ len $ports }} port{{ if ne (len $ports) 1 }}s{{ end }}. Each is published under its own name, so a
+client can look one up rather than having the number written down twice:
+{{- range $port := $ports }}
+
+  {{ $port.name }}  {{ $port.port }}/{{ $port.protocol }}  _{{ $port.name }}._{{ lower $port.protocol }}.{{ $objectName }}.{{ $root.Release.Namespace }}.svc.cluster.local
+{{- end }}
+
+The guest container's port list opens nothing and closes nothing: the machine is reachable on
+every port something inside it is listening on, whatever it declares.
+{{- end }}
+{{- if eq $ingress "declared" }}
+{{- if $ports }}
+
+Only those ports are admitted: a NetworkPolicy named {{ $objectName }} selects this machine's pod and
+lets inbound traffic reach the ports above and nothing else. Outbound traffic is untouched.
+{{- else }}
+
+WARNING: this machine asks for ingress: declared and declares no ports, so the NetworkPolicy named
+{{ $objectName }} admits no inbound traffic at all. That may be exactly what you meant. If it is not,
+declare the ports under machines.{{ $name }}.network.ports, or set machines.{{ $name }}.network.ingress to
+`any`.
+{{- end }}
+
+A NetworkPolicy is enforced by the cluster's network plugin and by nothing else. If this cluster
+runs one that implements no policy, the object above exists and restricts nothing:
+
+  kubectl --namespace {{ $root.Release.Namespace }} get networkpolicy {{ $objectName }}
+
+`kubectl exec` and this machine's readiness are unaffected either way. Both go through the container
+runtime rather than over the network, so a machine that admits nothing still becomes ready and can
+still be logged into.
+{{- end }}
+
 The root volume is retained when the release is uninstalled - by `helm uninstall
 {{ $root.Release.Name }}`, or by `kubectl machine delete {{ $name }}`, which says the same thing this
 does. Deleting a machine's state is a separate, deliberate action:
