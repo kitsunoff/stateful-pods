@@ -133,3 +133,69 @@ setup() {
     [[ "$output" != *"lab-web-lab-web-0"* ]]
     [[ "$(calls)" == *"persistentvolumeclaims --selector stateful-pods.io/machine=web,app.kubernetes.io/instance=prod"* ]]
 }
+
+# ------------------------------------------- a release that holds more than one ---
+#
+# A release may hold several machines now, and this command uninstalls the
+# release. The sibling is somebody's pet, and finding out it had stopped by
+# noticing would be the worst way to learn it.
+
+@test "it names the other machines the release holds" {
+    # The read for one machine answers with that machine; the read for the
+    # release answers with everything the release holds. That asymmetry is the
+    # stub's, and it is what a selector naming a machine and one naming only a
+    # release really produce.
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)
+$(sts_line db lab lab-db)"
+    machine delete web --namespace homelab <<< "lab"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Also removed:"* ]]
+    [[ "$output" == *"db"* ]]
+}
+
+# What is being removed is the release. A confirmation that asks for the name of
+# one machine reads as a promise that only that machine goes.
+@test "it asks for the release's name, not the machine's, when a sibling would go too" {
+    # The read for one machine answers with that machine; the read for the
+    # release answers with everything the release holds. That asymmetry is the
+    # stub's, and it is what a selector naming a machine and one naming only a
+    # release really produce.
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)
+$(sts_line db lab lab-db)"
+    machine delete web --namespace homelab <<< "lab"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Type the name of the release"* ]]
+    [[ "$(calls)" == *"helm uninstall lab"* ]]
+}
+
+@test "the machine's own name is not the confirmation when a sibling would go too" {
+    # The read for one machine answers with that machine; the read for the
+    # release answers with everything the release holds. That asymmetry is the
+    # stub's, and it is what a selector naming a machine and one naming only a
+    # release really produce.
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)
+$(sts_line db lab lab-db)"
+    machine delete web --namespace homelab <<< "web"
+    [ "$status" -ne 0 ]
+    ! grep --quiet 'helm uninstall' "$RECORD"
+}
+
+@test "a release holding one machine still asks for the machine's name" {
+    machine delete web --namespace homelab <<< "web"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Type the name of the machine"* ]]
+    [[ "$output" != *"Also removed:"* ]]
+}
+
+@test "--yes still removes a release that holds several" {
+    # The read for one machine answers with that machine; the read for the
+    # release answers with everything the release holds. That asymmetry is the
+    # stub's, and it is what a selector naming a machine and one naming only a
+    # release really produce.
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)
+$(sts_line db lab lab-db)"
+    machine delete web --namespace homelab --yes < /dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"db"* ]]
+    [[ "$(calls)" == *"helm uninstall lab"* ]]
+}

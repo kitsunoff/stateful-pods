@@ -56,8 +56,14 @@ envoy:
 # Empty by default: there is no reasonable default machine, so installing the chart
 # with no values fails rather than quietly creating one.
 #
-# Exactly one machine per release is accepted for now. The map form is already in
-# place so that lifting that restriction renames nothing that already exists.
+# A release may hold as many as you like. Every object a machine gets is named
+# from its own name, so machines in one release share nothing but the release:
+# not a volume, not a Service, not a proxy, and not a restart - upgrading a
+# release replaces only the machines whose own values moved.
+#
+# What they do share is their lifetime. `helm uninstall` takes the whole release,
+# and so does `kubectl machine delete`, which names the other machines it is
+# about to stop and asks for the release's name rather than the machine's.
 #
 # Every object rendered for a machine is named `<release>-<machine>`, and that name
 # is permanent: the root filesystem lives in a PersistentVolumeClaim derived from

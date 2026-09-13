@@ -81,8 +81,7 @@ declaring the filter starts the same machine on the same volume. Run it on its o
 
 ## Usage
 
-A machine is declared under `machines`, keyed by its name. Exactly one machine per release is
-supported for now.
+A machine is declared under `machines`, keyed by its name. A release may hold as many as you like.
 
 ```yaml
 machines:
@@ -174,6 +173,22 @@ so the plugin uses none of bash 4 — no associative arrays, no `mapfile`, no `$
 job in CI runs its suite and the shell lint against that bash on every push, because a
 construct that breaks the target runs perfectly in the Linux container the other suites use
 and fails on somebody's Mac.
+
+### A release that holds more than one machine
+
+Both of these commands act on the **release**, not on the machine, and a release may hold several.
+
+`delete` uninstalls the release. When it holds more than the machine named, it lists the others
+before it does anything and then asks for the **release's** name to confirm — a confirmation that
+asked for one machine's name would read as a promise that only that machine goes. Every root
+filesystem is kept, as always.
+
+`create` installs a release from one machine's flags, so it **refuses** a `--release` that already
+holds another machine: Helm would take the values it was given and nothing else, and the sibling's
+objects would be deleted while its volume sat there. It does not reach for `--reuse-values` instead,
+because that flag stops the chart's own defaults moving on upgrade — a decision about somebody else's
+machine that this command has no business making. Two machines in one release are a values file and
+`helm upgrade`.
 
 ### Creating a machine
 

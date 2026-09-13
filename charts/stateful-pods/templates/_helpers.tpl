@@ -876,8 +876,6 @@ Takes the root context.
 {{- $errors = append $errors (include "stateful-pods.errors.noMachines" .) -}}
 {{- else if not (kindIs "map" $machines) -}}
 {{- $errors = append $errors (printf "machines: must be a map keyed by machine name, but is of type %s. Declare each machine under its own name, not as a list." (kindOf $machines)) -}}
-{{- else if gt (len $machines) 1 -}}
-{{- $errors = append $errors (printf "machines: %d machines declared. Multiple machines per release are not implemented yet; give each machine its own Helm release for now. The map form is already in place, so nothing has to be renamed when the restriction is lifted." (len $machines)) -}}
 {{- else -}}
 {{- range $name, $machine := $machines -}}
 {{- if not (kindIs "map" $machine) -}}
@@ -1891,7 +1889,7 @@ them, which is why it states what each one costs the operator.
 {{- end -}}
 
 {{- define "stateful-pods.errors.noMachines" -}}
-machines: no machines declared. Exactly one machine must be declared, keyed by its name:
+machines: no machines declared. At least one machine must be declared, keyed by its name:
 
       machines:
         web:

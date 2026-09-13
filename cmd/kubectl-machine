@@ -269,6 +269,32 @@ get_pods() {
     kubectl_run get pods --selector "$1" --output "go-template=$POD_TEMPLATE"
 }
 
+# The machines a release holds, other than the one named, one per line.
+#
+# A release may hold several now, and two of this plugin's commands act on the
+# release rather than on the machine: `delete` uninstalls it, and `create`
+# installs it from one machine's values. Both would take a sibling with them
+# without this, and the sibling is somebody's pet.
+#
+# Read by label rather than from the release's values: a machine is present
+# because its StatefulSet is, and reading the values would need helm where the
+# rest of these commands need only kubectl.
+siblings_of() {
+    local machine="$1" release="$2" other rest
+    local listed=""
+    listed="$(get_statefulsets "$SP_MACHINE_LABEL,$SP_RELEASE_LABEL=$release")" || return 1
+    # Only the first field is read; the release and the object name are already
+    # known here, and naming them would be two variables nothing uses.
+    while IFS='|' read -r other rest || [ -n "$other" ]; do
+        [ -n "$other" ] || continue
+        [ "$other" = "$machine" ] && continue
+        printf '%s\n' "$other"
+    done <<EOF
+$listed
+EOF
+    return 0
+}
+
 # A read that failed is not an empty answer. Without this, a cluster that cannot
 # be reached - a context that does not exist, a namespace with no access - is
 # reported as a namespace with no machines in it, which is the same confidently
@@ -940,7 +966,8 @@ Machine:
   --pull-secret <name>       a dockerconfigjson secret for a private source
 
 Release:
-  --release <release>        the release to install into (default: the machine's name)
+  --release <release>        the release to install into (default: the machine's name);
+                             a release that already holds another machine is refused
   --chart <chart>            the chart to install (default: $SP_DEFAULT_CHART)
   --version <version>        the chart version (default: $SP_VERSION)
   --set <key=value>          passed to helm unchanged, repeatable
@@ -1053,6 +1080,44 @@ $(create_help)"
     require_helm
 
     local release="${SP_RELEASE:-$name}"
+
+    # A release may hold several machines, and this command installs one from
+    # its own flags. Helm would take the values it is given and nothing else, so
+    # a release holding a sibling would come back holding only this machine -
+    # and the sibling's objects would be deleted while its volume sat there.
+    #
+    # It refuses rather than passing --reuse-values. That flag would make the
+    # chart's own defaults stop moving on upgrade, which is a decision about
+    # somebody else's machine that this command has no business making. Adding a
+    # machine to a release whose values live in a file is an edit to that file.
+    require_kubectl
+    local existing existing_line=""
+    existing="$(siblings_of "$name" "$release")" || read_failed
+    if [ -n "$existing" ]; then
+        local other
+        while IFS= read -r other || [ -n "$other" ]; do
+            [ -n "$other" ] || continue
+            existing_line="$existing_line $other"
+        done <<EOF
+$existing
+EOF
+        existing_line="${existing_line# }"
+        die "the release $release already holds $existing_line.
+
+This command installs a release from one machine's flags, so running it here would leave the release
+holding $name alone and remove the rest. Their root filesystems would survive; the machines would
+not.
+
+To add a machine to a release that already has one, put both machines in a values file and run helm
+yourself:
+
+  helm upgrade --install $release <chart> --values <your values>
+
+Or give this machine a release of its own, which is what happens when --release is left out:
+
+  kubectl machine create $name ..."
+    fi
+
     local values=()
     [ -n "$preset" ] && values+=(--set-string "machines.$name.source.kind=preset" \
         --set-string "machines.$name.source.name=$preset")
@@ -1125,6 +1190,10 @@ Flags:
 The machine's root filesystem is kept. The chart retains the claim, and removing
 it is a separate, deliberate command that this prints and does not run. There is
 no flag here that does both.
+
+What is removed is the RELEASE. A release may hold more than one machine, and
+the others stop with it - they are named before anything happens, and the
+confirmation then asks for the release's name rather than the machine's.
 EOF
 }
 
@@ -1175,23 +1244,53 @@ EOF
         claim_line=""
     fi
 
+    # What else goes. `delete` uninstalls the release, and a release may hold
+    # more than one machine - so the other machines in it are named here rather
+    # than discovered afterwards by whoever was running them.
+    local siblings sibling_line=""
+    siblings="$(siblings_of "$SP_MACHINE" "$SP_MACHINE_RELEASE")" || read_failed
+    if [ -n "$siblings" ]; then
+        local sibling
+        while IFS= read -r sibling || [ -n "$sibling" ]; do
+            [ -n "$sibling" ] || continue
+            sibling_line="$sibling_line $sibling"
+        done <<EOF
+$siblings
+EOF
+        sibling_line="${sibling_line# }"
+    fi
+
     printf 'Context:          %s\n' "$(current_context)"
     printf 'Namespace:        %s\n' "${SP_NAMESPACE:-(the one the context names)}"
     printf 'Machine:          %s\n' "$SP_MACHINE"
     printf 'Release:          %s\n' "$SP_MACHINE_RELEASE"
     printf 'Objects:          %s\n' "$SP_OBJECT"
     printf 'Root filesystem:  %s\n' "${claim_line:-(none found under this label)}"
-    printf '\nThis removes the release. The root filesystem above is kept.\n'
+    if [ -n "$sibling_line" ]; then
+        printf 'Also removed:     %s\n' "$sibling_line"
+        printf '\nThis removes the release %s, and the release holds those machines too. They stop
+with it. Their root filesystems are kept, like this one%ss.\n' "$SP_MACHINE_RELEASE" "'"
+    else
+        printf '\nThis removes the release. The root filesystem above is kept.\n'
+    fi
 
     if [ "$assume_yes" -ne 1 ]; then
-        local reply=""
-        printf 'Type the name of the machine to confirm: ' >&2
+        local reply="" expected="$SP_MACHINE" what="machine"
+        # When the release holds more than this machine, the name to type is the
+        # release's. What is being removed is the release, and a confirmation
+        # that asks for the name of one machine reads as a promise that only
+        # that machine goes.
+        if [ -n "$sibling_line" ]; then
+            expected="$SP_MACHINE_RELEASE"
+            what="release"
+        fi
+        printf 'Type the name of the %s to confirm: ' "$what" >&2
         if ! IFS= read -r reply; then
             die "
 nothing was confirmed, so nothing was removed. Pass --yes for a run with nobody to ask."
         fi
-        [ "$reply" = "$SP_MACHINE" ] ||
-            die "that is not the name of this machine, so nothing was removed."
+        [ "$reply" = "$expected" ] ||
+            die "that is not the name of this $what, so nothing was removed."
     fi
 
     local args=(uninstall "$SP_MACHINE_RELEASE")

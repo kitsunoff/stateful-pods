@@ -38,7 +38,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 
 | Piece | What it is |
 | --- | --- |
-| **The chart** | One StatefulSet, one rootfs PersistentVolumeClaim and one headless Service per machine. Exactly one machine per release, for now. |
+| **The chart** | One StatefulSet, one rootfs PersistentVolumeClaim and one headless Service per machine. As many machines per release as you like. |
 | **The shim image** | The small program that fills the volume, writes the files the chart maintains inside the machine, mounts the filesystems and hands control to the guest's own init. It also carries the chart's logic, which is why the chart pins it by digest rather than by tag. |
 | **An egress proxy, when asked for** | A machine that declares what it may reach runs Envoy beside itself, with its outbound TCP redirected into it. The only container this project runs from an image it did not build, and nothing renders it unless a machine asks. |
 | **The `kubectl machine` plugin** | Addresses a machine by the name you declared it under, and answers where it is in its life rather than reporting a container. One bash file, no build step. |
@@ -403,9 +403,6 @@ Changes go through [OpenSpec](openspec/): a proposal, a delta spec, a design and
 the code, and the specs under [`openspec/specs/`](openspec/specs) are what the chart is held to.
 
 ## Known limitations
-
-**One machine per release.** The map form is already in place so that lifting the restriction
-renames nothing that exists.
 
 **Windows is not supported and will not be.** The plugin is a bash program — one file, no build
 step, no toolchain — and there is no bash on Windows worth targeting. Under WSL it is an ordinary
