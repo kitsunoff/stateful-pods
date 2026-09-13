@@ -141,16 +141,52 @@ and the structured inputs for user-data are replaced rather than merged, which i
 `cicustom` rule for the same choice.
 
 **An image that cannot run cloud-init fails the pod**, with a message naming
-`guest.provisioning: native` as the fix. That is the whole point of the default: the alternative is a
+`guest.provisioning: exec` as the fix. That is the whole point of the default: the alternative is a
 machine that installs cleanly, boots with no users and no keys, and gives nobody a way in — a failure
 indistinguishable from success.
 
 | Preset | Backends it can serve | Why |
 | --- | --- | --- |
-| `debian-trixie` | `cloud-init`, `native` | built from the upstream `cloud` variant |
-| `alpine-3.24` | `cloud-init`, `native` | built from the upstream `cloud` variant |
-| `ubuntu-noble` | **`native` only** | its upstream's cloud architectures are not yet on one build |
-| `void-current` | **`native` only** | its upstream publishes no cloud variant at all |
+| `debian-trixie` | `cloud-init`, `exec` | built from the upstream `cloud` variant |
+| `alpine-3.24` | `cloud-init`, `exec` | built from the upstream `cloud` variant |
+| `ubuntu-noble` | **`exec` only** | its upstream's cloud architectures are not yet on one build |
+| `void-current` | **`exec` only** | its upstream publishes no cloud variant at all |
+
+### A machine that cannot run cloud-init runs its own script
+
+The other half of the presets has no cloud-init and never will, so it is configured by its own
+commands instead — inside the machine, after it has booted, as its own root:
+
+```yaml
+machines:
+  os:
+    guest:
+      provisioning: exec
+    exec:
+      script:
+        value: |
+          set -eu
+          xbps-install -Sy openssh
+          ln -sf /etc/sv/sshd /var/service/
+      environment:               # sourced from the machine's tmpfs, never an argument
+        valueFrom:
+          secretKeyRef:
+            name: machine-secrets
+            key: exec-environment
+```
+
+Nothing that runs before the guest could do this. At every earlier moment there is a directory of
+another system's binaries and no machine — no init, no package manager, no network — which is why a
+backend that writes files can create a user and never install a package.
+
+The script is carried by a **Job beside the machine**, which waits for it to boot and then execs into
+it. That Job holds a ServiceAccount whose Role may get one pod and exec into that same pod, and
+reach nothing else: it is root inside that one machine, which is exactly what running a script as
+root inside a machine requires and is stated in those words where the input is. Supply no script and
+none of it is rendered — which is what the `native` backend, now renamed to `exec`, always was.
+
+The Job's name carries a digest of what it runs, so an unchanged script is a no-op, a changed one
+runs again, and neither restarts the machine.
 
 [`charts/stateful-pods/values.yaml`](charts/stateful-pods/values.yaml) is the full input contract,
 with a comment on every input, and [`charts/stateful-pods/README.md`](charts/stateful-pods/README.md)
@@ -284,10 +320,10 @@ levels.
 
 | Preset | Upstream variant | Provisioning it can serve | Uncompressed |
 | --- | --- | --- | --- |
-| `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
-| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
-| `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
-| `void-current` | `default` | native only | 361 MiB |
+| `debian-trixie` | `cloud` | cloud-init, exec | 557 MiB |
+| `ubuntu-noble` | `default` (pending) | exec only | 585 MiB |
+| `alpine-3.24` | `cloud` | cloud-init, exec | 76 MiB |
+| `void-current` | `default` | exec only | 361 MiB |
 
 Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
 runtime with it. That is the cost of an Alpine that can be provisioned the same way the others are.
@@ -339,11 +375,13 @@ that a registry whose name ends in `.local` is spoken to over plain HTTP — and
 lets a machine seed from an in-cluster `<service>.<namespace>.svc.cluster.local` registry with no
 insecure-registry input in the chart.
 
-**The `native` backend provisions nothing of its own.** It is layer 0 — the host name, host table
-and resolver the chart maintains — and that is all. Its own inputs, and the `systemd-credentials`
-backend that would keep material off the volume entirely, arrive in a later change. A machine on an
-image without cloud-init therefore starts with the accounts its source shipped, which today is two
-of the four presets.
+**A machine's script does not re-run when its volume is destroyed and re-seeded.** The Job that ran
+it is named for what it ran, so an unchanged script is a Job that already completed. Deleting that
+Job and upgrading runs it again, and `NOTES.txt` prints the command.
+
+**`systemd-credentials` is not implemented.** It is the backend that would keep provisioning
+material off the machine's volume entirely, projected into a `tmpfs` instead. Naming it fails
+rendering and says so, rather than pretending the name is a typo.
 
 ## License
 
