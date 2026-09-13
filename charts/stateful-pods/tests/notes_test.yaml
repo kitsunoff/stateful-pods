@@ -212,3 +212,67 @@ tests:
     asserts:
       - matchRegexRaw:
           pattern: 'provisioningRevision'
+
+  - it: says nothing about ports for a machine that declares none
+    asserts:
+      - notMatchRegexRaw:
+          pattern: 'declares \d+ ports?'
+
+  - it: reports each declared port and the name it is published under
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+            http:
+              port: 80
+    asserts:
+      - matchRegexRaw:
+          pattern: 'This machine declares 2 ports'
+      - matchRegexRaw:
+          pattern: 'ssh  22/TCP  _ssh\._tcp\.lab-web\.homelab\.svc\.cluster\.local'
+
+  - it: says what the declared posture admits, and what enforces it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ingress: declared
+          ports:
+            ssh:
+              port: 22
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Only those ports are admitted'
+      - matchRegexRaw:
+          pattern: "enforced by the cluster's network plugin and by nothing else"
+
+  - it: warns when the declared posture is asked for with nothing declared
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ingress: declared
+    asserts:
+      - matchRegexRaw:
+          pattern: 'WARNING: this machine asks for ingress: declared and declares no ports'

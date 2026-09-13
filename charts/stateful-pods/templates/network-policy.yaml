@@ -1,0 +1,59 @@
+{{- include "stateful-pods.validate" . -}}
+{{- /* The policy a machine gets when it asks that only its declared ports be
+       reachable.
+
+       Rendered only when asked. The alternative is a chart that cuts a running
+       pet off from the network on a version bump - the machine is reachable on
+       5432 today, the chart starts rendering a policy tomorrow, and a database
+       whose port nobody declared stops answering. A machine's isolation is the
+       same class of decision as its security mode, and this chart has never
+       made that one on anybody's behalf.
+
+       Ingress only. A policy that also named egress would deny the machine its
+       resolver, its package mirror and everything else the moment it applied,
+       which is the same trap pointing the other way.
+
+       This object is enforced by the cluster's network plugin and by nothing
+       else. On a cluster whose plugin implements no policy it is accepted by
+       the API server and restricts nothing at all - which the chart cannot
+       detect and therefore says out loud, in values.yaml and in NOTES.txt. */ -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- if eq (include "stateful-pods.machine.network.ingress" $ctx) "declared" }}
+{{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "stateful-pods.machine.name" $ctx }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+spec:
+  # The machine's own pod and no other. The selector labels rather than anything
+  # broader, so that a policy never reaches a neighbour that happens to share a
+  # release.
+  podSelector:
+    matchLabels:
+      {{- include "stateful-pods.machine.selectorLabels" $ctx | nindent 6 }}
+  policyTypes:
+    - Ingress
+  {{- if $ports }}
+  # One rule, naming every declared port and no peer: traffic from anywhere is
+  # admitted to these, and nothing is admitted anywhere else.
+  ingress:
+    - ports:
+        {{- range $port := $ports }}
+        - port: {{ $port.port }}
+          protocol: {{ $port.protocol | quote }}
+        {{- end }}
+  {{- else }}
+  # No ports were declared, so this admits nothing. That is a legitimate thing to
+  # ask for and an easy thing to do by accident, which is why NOTES.txt says so
+  # when it happens. The machine is still reachable with `kubectl exec`: the
+  # readiness probe and the shell both go through the container runtime rather
+  # than over the network, so no ingress policy can affect either.
+  ingress: []
+  {{- end }}
+{{- end }}
+{{- end }}

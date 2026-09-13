@@ -429,6 +429,96 @@ touch /etc/.stateful-pods-ignore.resolv.conf
 The marker is per file — claiming the resolver does not also claim the host name — and it lives on
 the volume, so it travels with the machine rather than with the release.
 
+## Networking
+
+A machine is an operating system with services on it, and `machines.<name>.network` is where it says
+which ones. The block is about what the **cluster** is told; nothing in it configures the machine's
+own interface, which belongs to the CNI — see the *Deliberately not chart inputs* section at the end
+of [`values.yaml`](values.yaml) for the Proxmox options that have no equivalent here, and why.
+
+```yaml
+machines:
+  web:
+    network:
+      ingress: declared
+      ports:
+        ssh:
+          port: 22
+        http:
+          port: 80
+        dns-tcp:
+          port: 53
+          protocol: TCP
+        dns-udp:
+          port: 53
+          protocol: UDP
+```
+
+### Declaring a port
+
+Ports are a map keyed by the name each is published under, because the name is not decoration: the
+machine's headless Service publishes an SRV record per named port, so
+`_ssh._tcp.lab-web.homelab.svc.cluster.local` is how a client finds where the service is without the
+number being written down twice.
+
+Kubernetes validates a port name strictly — at most fifteen characters of lowercase letters, digits
+and hyphens, with at least one letter, no leading or trailing hyphen and no consecutive ones. The
+chart applies the same rule while it renders, because a name the API server refuses surfaces as a
+machine whose pod is never created.
+
+`protocol` is the transport — `TCP`, `UDP` or `SCTP`, defaulting to `TCP`. A port serving HTTP names
+`TCP`. Two ports may share a number only on different protocols, which is what the `dns-tcp` and
+`dns-udp` pair above is; a repeated number *and* protocol is refused while the chart renders, because
+the API server would otherwise refuse it on apply with a message about a field index.
+
+**The guest container's port list opens nothing and closes nothing.** A pod's network namespace is
+reachable on every port something inside it is listening on, whatever the list says. It is
+documentation the cluster can read — and it is worth having for that — but the input that restricts
+anything is the one below.
+
+### Admitting only the declared ports
+
+`network.ingress` takes `any` or `declared`, and defaults to `any`.
+
+| Posture | What it renders | What it does |
+| --- | --- | --- |
+| `any` | nothing | The machine is reachable on every port something inside it listens on. |
+| `declared` | one NetworkPolicy, named for the machine | Inbound traffic reaches the declared ports and nothing else. Outbound traffic is untouched. |
+
+The default is `any` because the alternative is a chart that cuts a running pet off from the network
+on a version bump — the machine is reachable on 5432 today, the chart starts rendering a policy
+tomorrow, and a database whose port nobody declared stops answering. This is the same class of
+decision as `security.mode`, which the chart has never made on anyone's behalf either.
+
+The policy names `Ingress` and nothing else on purpose. One that also named egress would deny the
+machine its resolver and its package mirror the instant it applied, which is the same trap pointing
+the other way.
+
+> [!IMPORTANT]
+> **A NetworkPolicy is enforced by the cluster's network plugin and by nothing else.** On a cluster
+> whose plugin implements no policy — kindnet, or flannel with no policy agent beside it — the object
+> is accepted by the API server and restricts nothing at all. The chart cannot see which plugin a
+> cluster runs, so it says so here and in `NOTES.txt` rather than leaving a machine believed to be
+> restricted looking exactly like one that is.
+
+Asking for `declared` while declaring no ports admits nothing. That is a legitimate thing to want and
+an easy thing to do by accident, so `NOTES.txt` says so when it happens.
+
+`kubectl exec` and the machine's readiness are unaffected under any posture. The readiness probe is
+an `exec` probe, so the kubelet runs it through the container runtime rather than over the network —
+which means the most common way a default-deny ingress policy takes a workload down, an HTTP probe
+it also blocks, cannot happen here.
+
+### What is not an input
+
+- **`hostPort`.** It pins a machine to one node's port space and fails the second machine that wants
+  the same number, which is a scheduling surprise rather than a network input.
+- **A ClusterIP or LoadBalancer Service.** A machine is a pet addressed by its own name, not a member
+  of a pool. Publishing one outside the cluster is the cluster's ingress story.
+- **Which peers may reach a machine.** The policy restricts ports and never sources. A `from`
+  selector is a statement about other workloads, and putting it in each machine's own values would
+  scatter half of a cluster's policy across them.
+
 ## Provisioning
 
 A machine boots with the accounts its source image shipped, which for every preset this project

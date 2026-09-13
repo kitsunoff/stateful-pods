@@ -1,0 +1,174 @@
+suite: rendering - the ports a machine declares
+templates:
+  - statefulset.yaml
+  - service.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders no port list anywhere for a machine that declares none
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].ports
+        template: statefulset.yaml
+      - notExists:
+          path: spec.ports
+        template: service.yaml
+
+  - it: renders a declared port on the guest container, defaulting the protocol
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports
+          value:
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+
+  - it: renders a declared port on the headless Service, targeting the number
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+    template: service.yaml
+    asserts:
+      - equal:
+          path: spec.ports
+          value:
+            - name: ssh
+              port: 22
+              targetPort: 22
+              protocol: TCP
+
+  - it: carries the protocol a port names
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            syslog:
+              port: 514
+              protocol: UDP
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].protocol
+          value: UDP
+
+  - it: renders the ports in a stable order whatever order they were written in
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+            http:
+              port: 80
+            admin:
+              port: 8443
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].name
+          value: admin
+      - equal:
+          path: spec.template.spec.containers[0].ports[1].name
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].ports[2].name
+          value: ssh
+
+  - it: gives the preparation steps no ports of their own
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+    template: statefulset.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers[0].ports
+      - notExists:
+          path: spec.template.spec.initContainers[1].ports
+      - notExists:
+          path: spec.template.spec.initContainers[2].ports
+      - notExists:
+          path: spec.template.spec.initContainers[3].ports
+
+  - it: accepts the same number on two protocols
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            dns-tcp:
+              port: 53
+              protocol: TCP
+            dns-udp:
+              port: 53
+              protocol: UDP
+    template: statefulset.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].ports
+          count: 2

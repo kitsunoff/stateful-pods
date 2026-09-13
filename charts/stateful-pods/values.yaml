@@ -334,6 +334,82 @@ shim:
 #       # packageUpgrade:
 #       #   value: "false"
 #
+#     # What the cluster is told about this machine's network presence.
+#     #
+#     # NOT the machine's own interface. A pod's addressing belongs to the
+#     # cluster's CNI - see the end of this file, where the Proxmox options that
+#     # would configure it are refused and the reason is given. Nothing in this
+#     # block changes an address, a route, a bridge or a resolver inside the
+#     # machine; it describes the machine to the cluster around it.
+#     network:
+#       # The ports this machine serves, keyed by the name each is published
+#       # under. That name is not decoration: it is what the machine's headless
+#       # Service publishes an SRV record for, and what `kubectl describe pod`
+#       # shows, so it is the name a client looks a port up by without the number
+#       # being written down twice.
+#       #
+#       # Kubernetes validates a port name strictly - at most fifteen characters
+#       # of lowercase letters, digits and hyphens, with at least one letter, no
+#       # leading or trailing hyphen and no consecutive ones - and this chart
+#       # applies the same rule while it renders, because a name the API server
+#       # refuses surfaces as a machine whose pod is never created.
+#       #
+#       # THE GUEST CONTAINER'S PORT LIST OPENS AND CLOSES NOTHING. A pod's
+#       # network namespace is reachable on every port something inside it is
+#       # listening on, whatever this declares; the field is documentation the
+#       # cluster can read. The input that restricts anything is `ingress`
+#       # below.
+#       ports:
+#         ssh:
+#           # The number the machine serves this port on. A whole number between
+#           # 1 and 65535, unquoted: the API server takes an integer here, and a
+#           # quoted value renders as a string and is refused on apply.
+#           port: 22
+#
+#           # The transport: TCP | UDP | SCTP. Defaults to TCP.
+#           #
+#           # This is the transport and not the application protocol - a port
+#           # serving HTTP names TCP. Two ports may share a number only when they
+#           # name different protocols, which is how a machine serving DNS
+#           # declares itself; a repeated number and protocol is refused while the
+#           # chart renders, because the API server would refuse it on apply with
+#           # a message about a field index rather than about a machine.
+#           protocol: TCP
+#
+#       # Whether the cluster is asked to admit traffic to the declared ports and
+#       # to no others: any | declared. Defaults to `any`.
+#       #
+#       #   any      - the cluster is told nothing about which ports may be
+#       #              reached, and the machine is reachable on every port
+#       #              something inside it listens on. Nothing is rendered.
+#       #
+#       #   declared - a NetworkPolicy admitting inbound traffic to the ports
+#       #              above and to nothing else, from any peer. Outbound traffic
+#       #              is deliberately untouched: a policy that named egress as
+#       #              well would take away the machine's resolver and its
+#       #              package mirror the moment it applied.
+#       #
+#       # `any` is the default because the alternative is a chart that cuts a
+#       # running pet off from the network on a version bump - the machine is
+#       # reachable on 5432 today, the chart starts rendering a policy tomorrow,
+#       # and a database whose port nobody declared stops answering. This is the
+#       # same class of decision as security.mode, which the chart has never made
+#       # on anyone's behalf either.
+#       #
+#       # A NETWORKPOLICY IS ENFORCED BY THE CLUSTER'S NETWORK PLUGIN AND BY
+#       # NOTHING ELSE. On a cluster whose plugin implements none the object is
+#       # accepted by the API server and restricts nothing at all. The chart
+#       # cannot see which plugin a cluster runs, so it says this here rather
+#       # than leaving a machine believed to be restricted looking exactly like
+#       # one that is.
+#       #
+#       # Asking for `declared` while declaring no ports admits nothing. That is
+#       # a legitimate thing to want and an easy thing to do by accident, so the
+#       # release notes say so when it happens. `kubectl exec` and the readiness
+#       # probe are unaffected either way: both go through the container runtime
+#       # rather than over the network.
+#       ingress: any
+#
 #     security:
 #       # Privilege level of this machine: userns | privileged. Mandatory, per
 #       # machine, with no default and no autodetection - the chart will not weaken
@@ -481,6 +557,10 @@ machines: {}
 #     not to the workload: the machine gets the pod's address and reaches the
 #     network through it, and it is addressable by other workloads through its
 #     headless Service rather than by a fixed address.
+#
+#     `machines.<name>.network` is not this. It declares what the cluster is told
+#     about the machine - which ports it serves, and whether only those may be
+#     reached - and changes nothing inside the machine.
 #
 #   * Per-guest DNS - the Proxmox `nameserver` and `searchdomain` options have no
 #     equivalent, for the same reason. Resolver configuration is the cluster's DNS
