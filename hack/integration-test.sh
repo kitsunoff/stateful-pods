@@ -219,8 +219,13 @@ on_exit() {
     kc get pods >&2 2>&1 || true
     for container in seed prepare provision; do
       echo "--- $container logs ---" >&2
-      kc logs --selector stateful-pods.io/machine --container "$container" --tail 40 >&2 2>&1 || true
+      # Not the Jobs: their pods carry the machine label too, and asking them for
+      # a container they do not have buries the logs that matter in errors.
+      kc logs --selector 'stateful-pods.io/machine,!batch.kubernetes.io/job-name' \
+        --container "$container" --tail 40 >&2 2>&1 || true
     done
+    echo "--- the jobs that run a machine's own script ---" >&2
+    kc logs --selector 'stateful-pods.io/machine,batch.kubernetes.io/job-name' --tail 40 >&2 2>&1 || true
   fi
   if [[ -n "$PORT_FORWARD_PID" ]]; then
     kill "$PORT_FORWARD_PID" 2>/dev/null || true
@@ -854,11 +859,13 @@ helm --kube-context "$CONTEXT" upgrade --install scripted "$CHART" \
   --values test/integration/exec.yaml \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.os.source.reference=$SOURCE_REFERENCE" \
-  --wait --timeout 10m >/dev/null
+  --wait --wait-for-jobs --timeout 10m >/dev/null
 wait_ready scripted-os-0
 # `helm --wait` waits for Jobs, so reaching here means the Job completed - which
 # is the assertion, because a script that failed would have failed the release.
 pass "the release did not report success until the machine's script had run"
+# `--wait` alone does not wait for a Job; `--wait-for-jobs` is what does, and
+# without it a release reports success while its machine is still unconfigured.
 
 scripted() { kc exec scripted-os-0 --container guest -- "$@"; }
 
@@ -914,7 +921,7 @@ helm --kube-context "$CONTEXT" upgrade scripted "$CHART" \
   --values test/integration/exec.yaml \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.os.source.reference=$SOURCE_REFERENCE" \
-  --wait --timeout 5m >/dev/null
+  --wait --wait-for-jobs --timeout 5m >/dev/null
 job_start_after="$(kc get job "$exec_job" --output "jsonpath={.status.startTime}")"
 if [[ "$job_start_before" == "$job_start_after" ]]; then
   pass "an upgrade that changed nothing left the Job exactly where it was"
@@ -932,7 +939,7 @@ helm --kube-context "$CONTEXT" upgrade scripted "$CHART" \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.os.source.reference=$SOURCE_REFERENCE" \
   --set-string 'machines.os.exec.script.value=printf second > /etc/sp-exec-second' \
-  --wait --timeout 5m >/dev/null
+  --wait --wait-for-jobs --timeout 5m >/dev/null
 check "the changed script ran" scripted test -f /etc/sp-exec-second
 jobs_now="$(kc get job --selector stateful-pods.io/machine=os \
   --output "jsonpath={range .items[*]}{.metadata.name} {end}")"
@@ -958,7 +965,7 @@ if helm --kube-context "$CONTEXT" upgrade scripted "$CHART" \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.os.source.reference=$SOURCE_REFERENCE" \
   --set-string 'machines.os.exec.script.value=exit 3' \
-  --wait --timeout 2m >/dev/null 2>&1
+  --wait --wait-for-jobs --timeout 2m >/dev/null 2>&1
 then
   fail "a script that exits non-zero was reported as a successful release"
 else

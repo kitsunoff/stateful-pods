@@ -388,6 +388,12 @@ shim:
 #       #
 #       # The machine's own pod gets no cluster credentials either way.
 #       #
+#       # WAITING FOR IT. `helm install --wait --wait-for-jobs`. Both flags:
+#       # `--wait` alone waits for workloads and not for Jobs, so without the
+#       # second one a release reports success while the machine is still being
+#       # configured, and a script that then fails leaves a green release and an
+#       # unconfigured machine.
+#       #
 #       # WHEN IT RUNS. Once, when what it would run changes - this script, the
 #       # environment below, or guest.provisioningRevision. An unchanged script
 #       # is not run again by an upgrade, and changing it does NOT restart the

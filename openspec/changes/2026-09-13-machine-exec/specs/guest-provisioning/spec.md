@@ -88,11 +88,11 @@ own purpose.
 - **THEN** its pod carries the same containers it would carry without one, and none of them is given
   access to the cluster's API
 
-#### Scenario: An install waits for the script
+#### Scenario: An install can be waited on
 
-- **WHEN** a release carrying such a machine is installed and waited on
+- **WHEN** a release carrying such a machine is installed and waited on, including waiting for Jobs
 - **THEN** the install does not report success until the machine has booted and its script has
-  completed
+  completed, and the documentation says which flags that takes
 
 #### Scenario: A failing script fails visibly
 

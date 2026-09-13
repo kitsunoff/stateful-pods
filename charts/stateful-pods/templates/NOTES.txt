@@ -99,6 +99,10 @@ The script is carried by a Job beside this pod, which is where its output is:
 
   kubectl --namespace {{ $root.Release.Namespace }} logs job/{{ $execJob }} --follow
 
+This install did not wait for it unless it was given `--wait --wait-for-jobs`: `--wait` alone waits
+for workloads and not for Jobs, so a release can report success while its machine is still being
+configured.
+
 That Job holds a ServiceAccount of its own that may get this machine's pod and exec into it,
 and reach nothing else in the namespace. That permission is root inside this machine.
 

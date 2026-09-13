@@ -21,8 +21,8 @@ file written from outside. None of them can install a package.
 - The commands run once per change of what they are, not once per pod start and not once per upgrade.
 - The mechanism's access to the cluster is the narrowest that can work, and it is stated plainly
   rather than buried.
-- A failure is legible: the Job fails, `helm install --wait` fails with it, and the logs are the
-  script's own output.
+- A failure is legible: the Job fails, `helm install --wait --wait-for-jobs` fails with it, and
+  the logs are the script's own output.
 
 ## Non-goals
 
@@ -61,9 +61,11 @@ disqualifies itself.
 what is implemented. It costs a ServiceAccount, a Role, a RoleBinding and `kubectl` in the image,
 and it buys the only shape in which the script runs inside a booted machine as that machine's root.
 
-It also composes with Helm rather than against it: `helm install --wait` waits for Jobs, so an
-install does not report success until the machine has booted and its script has run, and a script
-that fails fails the release.
+It also composes with Helm rather than against it: `helm install --wait --wait-for-jobs` does not
+report success until the machine has booted and its script has run, and a script that fails fails
+the release. Both flags are needed and the second is the one people forget — `--wait` alone waits for
+workloads and not for Jobs, so an install that omits it reports success while the machine is still
+unconfigured. The documentation says so wherever it says the install can be waited on.
 
 ### It waits for the root change, and readiness is how it knows
 

@@ -751,6 +751,16 @@ machine's mount namespace unless the pod sets `shareProcessNamespace` — and a 
 PID 1 to the pause container rather than to the machine's init, which systemd refuses to run
 without. The whole point of this chart is that a machine runs its own init.
 
+**To have the install wait for it**, pass both flags:
+
+```bash
+helm install lab … --wait --wait-for-jobs --timeout 10m
+```
+
+`--wait` alone does not wait for Jobs. Without `--wait-for-jobs` the install reports success as soon
+as the machine is ready, while its script is still running — and a script that then fails leaves a
+green release and an unconfigured machine.
+
 The script is streamed through `kubectl exec` rather than copied with `kubectl cp`, because
 `kubectl cp` runs `tar` **inside the target container**: a machine without an archiver would fail
 for a reason that has nothing to do with its script.
