@@ -71,6 +71,11 @@ PRESET_CHART_DIR=""
 # executed, so a single fixed URL passes on the machine it was chosen on and
 # crash-loops everywhere else.
 #
+# It may also contain {build}, which is replaced with the newest build directory
+# the publisher is currently serving. Use it: linuxcontainers.org keeps a
+# fortnight of builds and deletes the rest, so a URL naming one build stops
+# resolving on a schedule nothing in this repository controls.
+#
 # Leave the checksum empty to take it from the publisher's SHA256SUMS beside the
 # tarball, which is what a user would do and what makes one URL work for every
 # architecture. The chart still verifies it; this only decides what it is checked
@@ -1066,6 +1071,31 @@ else
   node_arch="$(kubectl --context "$CONTEXT" get nodes \
     --output "jsonpath={.items[0].status.nodeInfo.architecture}")"
   TEMPLATE_URL="${TEMPLATE_URL//\{arch\}/$node_arch}"
+  # The publishers of these templates rotate their builds: linuxcontainers.org
+  # keeps a fortnight of them and deletes the rest, so a URL naming one build
+  # stops resolving on a schedule that has nothing to do with this repository.
+  # What that produced was a suite that went red every other week for a reason
+  # no change caused, which is worse than no suite at all - a red run nobody
+  # believes is a red run nobody reads.
+  #
+  # So the URL may say {build} where the build directory goes, and the newest
+  # one the publisher is currently serving is resolved here. The checksum
+  # follows it, because it is read from the SHA256SUMS beside the tarball.
+  if [[ "$TEMPLATE_URL" == *"{build}"* ]]; then
+    step "resolving the newest upstream build of the template"
+    builds_url="${TEMPLATE_URL%%\{build\}*}"
+    listing="$(curl --silent --show-error --location --fail "$builds_url" || true)"
+    # The directory names are timestamps, so the newest is the last in sort
+    # order. The colon in them is percent-encoded in a link and literal in the
+    # text beside it, and both forms appear in one page - they are folded to one
+    # before sorting so that the same build cannot be counted as two.
+    build="$(grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}' <<< "$listing" \
+      | sed 's/%3A/:/' | sort --unique | tail -1)"
+    [[ -n "$build" ]] \
+      || fail "no build directory was found at $builds_url; the publisher's layout may have changed, or set TEMPLATE_URL to one build and TEMPLATE_SHA256 to its checksum"
+    TEMPLATE_URL="${TEMPLATE_URL//\{build\}/${build/:/%3A}}"
+    pass "the newest build the publisher serves is $build"
+  fi
   if [[ -z "$TEMPLATE_SHA256" ]]; then
     step "taking the template's checksum from its publisher"
     sums_url="${TEMPLATE_URL%/*}/SHA256SUMS"
