@@ -81,6 +81,7 @@ sp_exec_in_machine() {
 # different messages.
 sp_exec_wait_for_machine() {
     _sp_waited=0
+    _sp_polls=0
     while true; do
         _sp_ready="$(sp_kubectl get pod "$SP_TARGET_POD" --output \
             "jsonpath={.status.containerStatuses[?(@.name==\"$(sp_exec_container)\")].ready}" \
@@ -89,12 +90,15 @@ sp_exec_wait_for_machine() {
             sp_log "machine ${SP_MACHINE:-?}: the machine reports itself ready after ${_sp_waited}s"
             return 0
         fi
-        if [ $((_sp_waited % (SP_EXEC_POLL_SECONDS * SP_EXEC_REPORT_EVERY))) -eq 0 ]; then
+        # Counted in polls rather than in seconds, because the interval is an
+        # input and a suite that makes it instant would otherwise divide by zero.
+        if [ $((_sp_polls % SP_EXEC_REPORT_EVERY)) -eq 0 ]; then
             _sp_phase="$(sp_kubectl get pod "$SP_TARGET_POD" --output \
                 "jsonpath={.status.phase}" 2>/dev/null || true)"
             sp_log "machine ${SP_MACHINE:-?}: waiting for the machine to finish starting (pod ${_sp_phase:-not created yet}, ${_sp_waited}s so far). A machine seeding an operating system onto an empty volume takes minutes."
         fi
         sleep "$SP_EXEC_POLL_SECONDS"
+        _sp_polls=$((_sp_polls + 1))
         _sp_waited=$((_sp_waited + SP_EXEC_POLL_SECONDS))
     done
 }
