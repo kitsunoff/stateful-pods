@@ -21,19 +21,19 @@ tests:
         failedTemplate:
           errorPattern: 'source'
 
-  - it: reports only the count guard for two machines, not their individual problems
+  - it: reports both machines' problems, not the first machine's alone
     set:
       machines.web: {}
       machines.db: {}
     asserts:
       - failedTemplate:
-          errorPattern: 'machines: 2 machines declared'
-      - not: true
-        failedTemplate:
-          errorPattern: 'security\.mode'
-      - not: true
-        failedTemplate:
-          errorPattern: 'source: not declared'
+          errorPattern: 'machines\.web\.security\.mode: not set'
+      - failedTemplate:
+          errorPattern: 'machines\.db\.security\.mode: not set'
+      - failedTemplate:
+          errorPattern: 'machines\.web\.source: not declared'
+      - failedTemplate:
+          errorPattern: 'machines\.db\.source: not declared'
 
   - it: reports only the structural error for a machine entry that is not a map
     set:

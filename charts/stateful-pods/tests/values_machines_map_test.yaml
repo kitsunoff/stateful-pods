@@ -7,10 +7,10 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: rejects an absent machines map, stating that exactly one machine is required
+  - it: rejects an absent machines map, stating that at least one machine is required
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines: no machines declared.*[Ee]xactly one machine'
+          errorPattern: '(?s)machines: no machines declared.*[Aa]t least one machine'
 
   - it: shows the expected shape when no machine is declared
     asserts:
@@ -22,7 +22,7 @@ tests:
       machines: {}
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines: no machines declared.*[Ee]xactly one machine'
+          errorPattern: '(?s)machines: no machines declared.*[Aa]t least one machine'
 
   - it: accepts exactly one machine
     set:
@@ -38,7 +38,7 @@ tests:
       - hasDocuments:
           count: 1
 
-  - it: rejects two machines as not implemented yet
+  - it: accepts two machines in one release
     set:
       machines.web:
         source:
@@ -57,8 +57,8 @@ tests:
         security:
           mode: userns
     asserts:
-      - failedTemplate:
-          errorPattern: '(?s)machines: 2 machines declared.*not implemented yet.*own[^\n]*release'
+      - hasDocuments:
+          count: 2
 
   - it: rejects a machines map that is not a map
     set:

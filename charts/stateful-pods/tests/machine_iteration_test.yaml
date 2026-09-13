@@ -7,7 +7,7 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: fails two valid machines on the count guard, not on a naming collision
+  - it: renders both machines when a release declares two
     set:
       machines.web:
         source:
@@ -26,14 +26,16 @@ tests:
         security:
           mode: userns
     asserts:
-      - failedTemplate:
-          errorPattern: 'machines: 2 machines declared'
-      - not: true
-        failedTemplate:
-          errorPattern: 'not a valid machine name'
-      - not: true
-        failedTemplate:
-          errorPattern: 'already defined|duplicate|collision'
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.name
+          value: lab-db
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: lab-web
+        documentIndex: 1
 
   - it: renders a machine whose name is not the first key alphabetically
     set:

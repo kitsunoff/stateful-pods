@@ -1,0 +1,214 @@
+suite: rendering - more than one machine in a release
+templates:
+  - statefulset.yaml
+  - service.yaml
+  - network-policy.yaml
+  - egress-config.yaml
+  - exec-rbac.yaml
+  - exec-job.yaml
+  - provisioning-secret.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines:
+    web:
+      source:
+        kind: oci
+        reference: docker.io/library/debian:13
+      security:
+        mode: privileged
+      rootfs:
+        size: 8Gi
+      volumes:
+        data:
+          mountPath: /var/lib/data
+          size: 10Gi
+      network:
+        ingress: declared
+        ports:
+          http:
+            port: 80
+        egress:
+          default: deny
+          rules:
+            - name: mirror
+              ports: [443]
+              serverNames: [deb.debian.org]
+      guest:
+        provisioning: exec
+      exec:
+        script:
+          value: echo web
+    db:
+      source:
+        kind: oci
+        reference: docker.io/library/debian:13
+      security:
+        mode: privileged
+      rootfs:
+        size: 32Gi
+      volumes:
+        data:
+          mountPath: /var/lib/data
+          size: 100Gi
+      network:
+        ingress: declared
+        ports:
+          pg:
+            port: 5432
+      guest:
+        provisioning: exec
+      exec:
+        script:
+          value: echo db
+tests:
+  - it: renders one StatefulSet per machine, named for each
+    template: statefulset.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.name
+          value: lab-db
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: lab-web
+        documentIndex: 1
+
+  # A selector that matched both would make each StatefulSet adopt the other's
+  # pod, which is two controllers fighting over one machine.
+  - it: gives each machine a selector of its own
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["stateful-pods.io/machine"]
+          value: db
+        documentIndex: 0
+      - equal:
+          path: spec.selector.matchLabels["stateful-pods.io/machine"]
+          value: web
+        documentIndex: 1
+
+  - it: keeps each machine's inputs to itself
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 32Gi
+        documentIndex: 0
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.resources.requests.storage
+          value: 100Gi
+        documentIndex: 0
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 8Gi
+        documentIndex: 1
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.resources.requests.storage
+          value: 10Gi
+        documentIndex: 1
+
+  # The claim template is named for the volume alone, so two machines each with
+  # a volume called `data` is the ordinary case rather than a collision: the
+  # controller appends the pod's name, and the pods differ.
+  - it: lets two machines share a volume name without sharing a volume
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[1].metadata.name
+          value: data
+        documentIndex: 0
+      - equal:
+          path: spec.volumeClaimTemplates[1].metadata.name
+          value: data
+        documentIndex: 1
+
+  - it: renders a Service per machine
+    template: service.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.name
+          value: lab-db
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: lab-web
+        documentIndex: 1
+
+  - it: renders a policy per machine, each selecting only its own pod
+    template: network-policy.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: spec.podSelector.matchLabels["stateful-pods.io/machine"]
+          value: db
+        documentIndex: 0
+      - equal:
+          path: spec.podSelector.matchLabels["stateful-pods.io/machine"]
+          value: web
+        documentIndex: 1
+
+  # Only `web` declares one. A release-wide object would have given `db` a proxy
+  # it never asked for.
+  - it: renders the egress objects only for the machine that asked
+    template: egress-config.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: lab-web-egress
+
+  - it: gives each machine its own identity for its own script
+    template: exec-rbac.yaml
+    asserts:
+      # Three objects per machine - a ServiceAccount, a Role and a RoleBinding -
+      # so the Roles are the second of each triple.
+      - hasDocuments:
+          count: 6
+      - equal:
+          path: rules[1].resourceNames
+          value:
+            - lab-db-0
+        documentIndex: 1
+      - equal:
+          path: rules[1].resourceNames
+          value:
+            - lab-web-0
+        documentIndex: 4
+
+  - it: renders a Job per machine, each naming its own pod
+    template: exec-job.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - matchRegex:
+          path: metadata.name
+          pattern: '^lab-db-exec-[0-9a-f]{8}$'
+        documentIndex: 0
+      - matchRegex:
+          path: metadata.name
+          pattern: '^lab-web-exec-[0-9a-f]{8}$'
+        documentIndex: 1
+
+  - it: renders a Secret per machine for the material each supplied
+    template: provisioning-secret.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.name
+          value: lab-db-provisioning
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: lab-web-provisioning
+        documentIndex: 1

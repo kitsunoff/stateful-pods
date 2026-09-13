@@ -1,0 +1,38 @@
+# Two machines in one release.
+#
+# privileged mode, because a kind node is itself a container and user namespaces
+# nested inside one are unreliable - see docs/research/05-open-questions.md §12.
+#
+# Both declare a volume called `data`, which is the one name two machines can
+# share: the claim template is named for the volume, and the controller appends
+# the pod's name to it. If that were wrong they would share a volume, and the
+# assertions below are what would notice.
+machines:
+  alpha:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi
+    guest:
+      provisioning: exec
+    volumes:
+      data:
+        mountPath: /var/lib/data
+        size: 1Gi
+  beta:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi
+    guest:
+      provisioning: exec
+    volumes:
+      data:
+        mountPath: /var/lib/data
+        size: 1Gi

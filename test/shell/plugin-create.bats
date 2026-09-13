@@ -176,3 +176,67 @@ setup() { plugin_setup; }
     [ "$status" -ne 0 ]
     ! grep --quiet '^helm' "$RECORD"
 }
+
+# ------------------------------------------- a release that holds more than one ---
+#
+# A release may hold several machines now, and this command installs one from
+# its own flags. Helm takes the values it is given and nothing else, so a
+# release holding a sibling would come back holding only this machine - and the
+# sibling's objects would be deleted while its volume sat there.
+
+@test "it refuses to install over a release that already holds another machine" {
+    export SP_TEST_NARROWED="$(sts_line db lab lab-db)"
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"already holds db"* ]]
+    ! grep --quiet 'helm upgrade' "$RECORD"
+}
+
+# It refuses rather than passing --reuse-values: that flag stops the chart's own
+# defaults moving on upgrade, which is a decision about somebody else's machine.
+@test "the refusal says what to run instead, and never reaches for --reuse-values" {
+    export SP_TEST_NARROWED="$(sts_line db lab lab-db)"
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --namespace homelab
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"helm upgrade --install lab"* ]]
+    [[ "$output" != *"--reuse-values"* ]]
+}
+
+@test "a release that holds only this machine is still an update" {
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)"
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"helm upgrade --install lab"* ]]
+}
+
+@test "a machine with no release of its own is unaffected" {
+    # Another release holds db, so the read for THIS release answers with
+    # nothing - which is what a namespace full of other machines looks like.
+    export SP_TEST_NARROWED=""
+    machine create web --source-oci docker.io/library/debian:13 --mode userns --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"helm upgrade --install web"* ]]
+}
+
+@test "a release read that failed installs nothing" {
+    export SP_TEST_BROAD_STATUS=1
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --namespace homelab
+    [ "$status" -ne 0 ]
+    ! grep --quiet 'helm upgrade' "$RECORD"
+}
+
+# --values is passed to helm unchanged, so a file naming every machine in the
+# release is the user stating the release's machines themselves - which is what
+# the refusal tells them to do.
+@test "values of the user's own are not refused for holding another machine" {
+    export SP_TEST_NARROWED="$(sts_line db lab lab-db)"
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --values /tmp/both.yaml --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"helm upgrade --install lab"* ]]
+    [[ "$(calls)" == *"--values /tmp/both.yaml"* ]]
+}

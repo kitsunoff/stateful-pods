@@ -38,6 +38,11 @@ plugin_setup() {
     # other can be exercised. That asymmetry is real: an RBAC rule, or a
     # transient failure on one call and not the next.
     export SP_TEST_BROAD_STATUS=0
+    # The claim read, separately again. `delete` reads a machine's volumes after
+    # resolving it, and a cluster that allows the one and denies the other is an
+    # ordinary RBAC shape - which is the case where reporting "none found" would
+    # be a confidently wrong answer given just before a release is uninstalled.
+    export SP_TEST_PVC_STATUS=0
     export SP_TEST_HELM_STATUS=0
     export SP_TEST_HELM_OUTPUT=""
     export SP_TEST_UNAME="Linux"
@@ -100,6 +105,10 @@ case "$SP_ARGS" in
     # read that names only the machine answers with every claim carrying that
     # label, including one another release left behind.
     *persistentvolumeclaims*)
+        if [ "$SP_TEST_PVC_STATUS" -ne 0 ]; then
+            echo "Error from server (Forbidden): this read is denied" >&2
+            exit "$SP_TEST_PVC_STATUS"
+        fi
         if [[ "$SP_ARGS" == *"app.kubernetes.io/instance="* ]]; then
             [ -n "$SP_TEST_PVCS" ] && printf '%s\n' "$SP_TEST_PVCS"
         else
