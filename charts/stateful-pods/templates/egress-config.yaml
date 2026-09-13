@@ -16,14 +16,27 @@
 {{- $egress := include "stateful-pods.machine.egress" $ctx | fromYaml }}
 {{- if $egress.declared }}
 {{- $objectName := include "stateful-pods.machine.name" $ctx }}
-{{- /* The HTTP rules, grouped by port: one connection manager per port carries
-       every rule for it, because two filter chains cannot share a match. */ -}}
+{{- /* The HTTP rules, grouped twice.
+
+       By port, because two filter chains cannot share a match: one connection
+       manager per port carries every rule written for it.
+
+       Then by authority, because two virtual hosts cannot share a domain either -
+       Envoy refuses a configuration with a duplicate. Two rules allowing
+       different paths on one host are therefore two routes in one virtual host,
+       matched in the order they were written. */ -}}
 {{- $httpPorts := dict }}
+{{- $httpHosts := dict }}
 {{- range $rule := $egress.rules }}
 {{- if eq $rule.kind "http" }}
 {{- range $port := $rule.ports }}
-{{- $key := printf "%d" (int64 $port) }}
-{{- $_ := set $httpPorts $key (append (index $httpPorts $key | default list) $rule) }}
+{{- $portKey := printf "%d" (int64 $port) }}
+{{- $hosts := index $httpPorts $portKey | default list }}
+{{- if not (has $rule.authority $hosts) }}
+{{- $_ := set $httpPorts $portKey (append $hosts $rule.authority) }}
+{{- end }}
+{{- $hostKey := printf "%s/%s" $portKey $rule.authority }}
+{{- $_ := set $httpHosts $hostKey (append (index $httpHosts $hostKey | default list) $rule) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -142,7 +155,7 @@ data:
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- range $key, $rules := $httpPorts }}
+            {{- range $key, $hosts := $httpPorts }}
             # Plaintext HTTP on port {{ $key }}. One chain for the port, carrying
             # every rule written for it: two chains cannot share a match, and a
             # duplicate is a configuration Envoy refuses outright.
@@ -164,22 +177,28 @@ data:
                     route_config:
                       name: {{ printf "egress-%s" $key | quote }}
                       virtual_hosts:
-                        {{- range $rule := $rules }}
-                        - name: {{ $rule.name | quote }}
+                        {{- range $authority := $hosts }}
+                        {{- $rules := index $httpHosts (printf "%s/%s" $key $authority) }}
+                        - name: {{ printf "%s-%s" $key $authority | quote }}
                           domains:
-                            - {{ $rule.authority | quote }}
-                            - {{ printf "%s:%s" $rule.authority $key | quote }}
+                            - {{ $authority | quote }}
+                            - {{ printf "%s:%s" $authority $key | quote }}
                           routes:
-                            - match:
+                            {{- range $rule := $rules }}
+                            - name: {{ $rule.name | quote }}
+                              match:
                                 prefix: {{ $rule.pathPrefix | quote }}
                               route:
                                 cluster: passthrough
-                            - match:
+                            {{- end }}
+                            # Everything on this host that no rule above allowed.
+                            - name: {{ printf "%s-refused" $authority | quote }}
+                              match:
                                 prefix: "/"
                               direct_response:
                                 status: 403
                                 body:
-                                  inline_string: "stateful-pods: this machine may reach {{ $rule.authority }} only under {{ $rule.pathPrefix }}\n"
+                                  inline_string: "stateful-pods: this machine's egress policy does not allow this path on {{ $authority }}\n"
                         {{- end }}
                         # Everything the rules above did not name. A refusal with
                         # a reason, rather than a connection that hangs.

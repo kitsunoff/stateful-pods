@@ -310,3 +310,33 @@ tests:
       - contains:
           path: spec.template.spec.initContainers[4].args
           content: --file-flush-interval-msec
+
+  - it: gathers two paths on one host into one virtual host, not two
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: debian-main
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian/
+          - name: debian-security
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian-security/
+    template: egress-config.yaml
+    asserts:
+      # Two virtual hosts carrying one domain is a configuration the proxy
+      # refuses outright, so the rules for a host become routes within it -
+      # matched in the order they were written.
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '- name: "80-deb.debian.org"'
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)- "deb.debian.org:80".*- "deb.debian.org:80"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)prefix: "/debian/".*prefix: "/debian-security/"'
