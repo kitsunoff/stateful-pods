@@ -26,3 +26,11 @@ machines:
         dns-udp:
           port: 53
           protocol: UDP
+    # One volume beside the root filesystem. Small, because what is being
+    # asserted is that the path inside the machine really is this claim and not
+    # a directory on the root filesystem that looks like one - which is exactly
+    # what a mount that silently did not happen leaves behind.
+    volumes:
+      data:
+        mountPath: /var/lib/data
+        size: 1Gi

@@ -379,6 +379,86 @@ Restoring it under a different namespace, release or machine name is a clone: th
 cleared so the guest generates a fresh one, and nothing else on the volume is touched. SSH host keys
 are not yet handled and are inherited by a clone — that arrives with guest provisioning.
 
+## Storage beside the root filesystem
+
+The root filesystem is the machine. `machines.<name>.volumes` is the storage next to it: the data
+that should outlive a rebuild of the operating system rather than be rebuilt with it.
+
+```yaml
+machines:
+  db:
+    rootfs:
+      size: 8Gi
+    volumes:
+      data:
+        mountPath: /var/lib/postgresql
+        size: 200Gi
+        storageClassName: fast
+      archive:
+        mountPath: /srv/archive
+        existingClaim: archive-share
+        readOnly: true
+```
+
+### Provisioned, or somebody else's
+
+Each volume names exactly one of `size` or `existingClaim`, never both and never neither.
+
+| | `size` | `existingClaim` |
+| --- | --- | --- |
+| What the chart renders | another volume claim template on the StatefulSet | a pod volume naming the claim |
+| Who creates the storage | the StatefulSet controller, with the machine | whoever made the claim |
+| Access mode | `ReadWriteOnce`, because a machine is one instance | the claim's own, which is how a machine reaches a `ReadWriteMany` share |
+| Retained on uninstall | yes, like the root filesystem | it was never the release's to delete |
+| Takes a class and a snapshot | yes, its own | no — those belong to the claim, and naming them here is refused |
+
+They are not alternatives to one another: one creates storage and one consumes storage that exists.
+Choosing between them on your behalf would either provision a volume nobody asked for or ignore a
+size you believed was in effect, so naming both is refused while the chart renders.
+
+### The name is permanent, and the size is fixed
+
+The claim behind a volume named `data` on machine `web` in release `lab` is `data-lab-web-0`.
+**Renaming the volume does not move the data** — it orphans the old claim and provisions a new empty
+one, exactly as renaming a machine does to its root filesystem. The old claim is still there, because
+the chart retains every claim it provisions, but nothing carries across the rename.
+
+The claim template is named for the volume alone rather than for the machine, and it has to be: a
+volume name in a pod specification is a DNS-1123 label of at most 63 characters, and the chart
+already allows an object name of up to 61. The name that reaches the cluster still carries the
+machine's, because the StatefulSet controller appends the pod's.
+
+**`size` cannot be changed afterwards.** A StatefulSet's volume claim templates are immutable once
+it exists, so raising it renders a manifest the API server refuses. That is a property of the
+primitive, not a decision of this chart's: growing a volume means expanding the
+PersistentVolumeClaim itself, on a StorageClass that allows expansion.
+
+### Paths the boot sequence owns
+
+`/proc`, `/sys`, `/dev`, `/run`, `/tmp` and `/.stateful-pods` are refused as mount paths, along with
+anything under them and `/` itself.
+
+The boot sequence mounts the kernel filesystems and the machine's own temporary filesystems *after*
+the pod's volumes are in place. A volume underneath one of them would be provisioned, bound, mounted
+and then covered: it would exist, it would be empty on every start, and nothing anywhere would say
+why. `/` is refused separately — that is the root filesystem, declared under `rootfs` and seeded from
+`source`, and an empty claim mounted over an operating system is a different thing entirely.
+
+What is **not** refused is a path the machine's own source already has content at. Mounting a volume
+over a populated `/var/lib/postgresql` hides what was there rather than deleting it, and it comes
+back if the volume is removed. That is ordinary Unix behaviour and it is what the person who wrote
+the path meant.
+
+### How the mount is made
+
+The guest container mounts the root filesystem at `/mnt/rootfs` and each declared volume at
+`/mnt/rootfs<mountPath>`. When `pivot_root` makes `/mnt/rootfs` the machine's root, the volume is
+already where the values said it would be, and the boot script does not have to know it exists.
+
+No step that runs before the machine mounts a declared volume. The preparation steps fill and
+configure a root filesystem; a machine's data is not theirs to see, and the step that seeds is
+entitled to wipe the directory it works in when a previous attempt was interrupted.
+
 ## Booting
 
 Once the volume is seeded, the guest container mounts what an init system expects to find inside it,

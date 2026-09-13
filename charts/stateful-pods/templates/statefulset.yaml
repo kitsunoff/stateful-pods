@@ -19,6 +19,15 @@
 {{- $hasMaterial := include "stateful-pods.machine.provisioning.hasMaterial" $ctx }}
 {{- /* The ports the machine declares, normalised and in a stable order. */ -}}
 {{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
+{{- /* The volumes beside the root filesystem, ordered by mount path so that one
+       declared inside another is mounted after it. */ -}}
+{{- $volumes := include "stateful-pods.machine.volumes" $ctx | fromYamlArray }}
+{{- $mounted := list }}
+{{- range $volume := $volumes }}
+{{- if not $volume.provisioned }}
+{{- $mounted = append $mounted $volume }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -64,6 +73,49 @@ spec:
           kind: VolumeSnapshot
           name: {{ $snapshot }}
         {{- end }}
+    {{- /* The volumes the machine declares beside its root filesystem, in the
+           order they are mounted. The root filesystem stays first: the guest
+           mounts every one of these inside its mount point, and a container's
+           mounts are made in the order they appear.
+
+           Named for the volume alone rather than for the machine. A volume name
+           in a pod specification is a DNS-1123 label of at most 63 characters and
+           the object name may already be 61, so `<release>-<machine>-<volume>`
+           would leave two characters for the volume's own name. The claim the
+           controller creates still carries the machine's, because it appends the
+           pod's: `data-<release>-<machine>-0`.
+
+           That name is as permanent as the root filesystem's. Renaming a volume
+           orphans its claim and provisions a new empty one. */ -}}
+    {{- range $volume := $volumes }}
+    {{- if $volume.provisioned }}
+    - metadata:
+        name: {{ $volume.name | quote }}
+        labels:
+          {{- include "stateful-pods.machine.labels" $ctx | nindent 10 }}
+      spec:
+        # A machine is one instance, so every volume the chart provisions for it
+        # is single-writer. A claim that has to be shared is one somebody else
+        # made, named through existingClaim.
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ $volume.size | quote }}
+        {{- if $volume.hasClass }}
+        # An explicit "" means "no class" and disables dynamic provisioning,
+        # which is not the same as omitting the field; the difference is
+        # preserved here exactly as it is for the root filesystem.
+        storageClassName: {{ $volume.storageClassName | quote }}
+        {{- end }}
+        {{- if $volume.snapshot }}
+        dataSource:
+          apiGroup: snapshot.storage.k8s.io
+          kind: VolumeSnapshot
+          name: {{ $volume.snapshot }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
   template:
     metadata:
       {{- if $hasMaterial }}
@@ -93,8 +145,17 @@ spec:
       {{- with $machine.hostname }}
       hostname: {{ . }}
       {{- end }}
-      {{- if or $pullSecret $hasMaterial }}
+      {{- if or $pullSecret $hasMaterial $mounted }}
       volumes:
+        {{- /* The claims the machine mounts but the chart did not create. Their
+               size, class, access mode and lifetime belong to whoever made them,
+               which is what makes this the way a machine reaches shared
+               storage. */ -}}
+        {{- range $volume := $mounted }}
+        - name: {{ $volume.name | quote }}
+          persistentVolumeClaim:
+            claimName: {{ $volume.claim | quote }}
+        {{- end }}
         {{- if $pullSecret }}
         # The credentials for this machine's source, projected to the file name
         # every Docker client looks for so that the registry client finds them
@@ -393,4 +454,17 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
+            {{- /* Inside the root filesystem's own mount point, so that when
+                   pivot_root makes it the machine's root the volume is already at
+                   the path the values named and the boot script does not have to
+                   know it exists. Mounted into this container and no other: the
+                   preparation steps fill and configure a root filesystem, and the
+                   one that seeds is entitled to wipe the directory it works in. */ -}}
+            {{- range $volume := $volumes }}
+            - name: {{ $volume.name | quote }}
+              mountPath: {{ printf "/mnt/rootfs%s" $volume.mountPath | quote }}
+              {{- if $volume.readOnly }}
+              readOnly: true
+              {{- end }}
+            {{- end }}
 {{- end }}

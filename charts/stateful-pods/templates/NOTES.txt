@@ -3,6 +3,7 @@
 {{- $ctx := dict "root" $root "name" $name "machine" $machine }}
 {{- $objectName := include "stateful-pods.machine.name" $ctx }}
 {{- $rootfs := $machine.rootfs | default dict }}
+{{- $volumes := include "stateful-pods.machine.volumes" $ctx | fromYamlArray }}
 Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root.Release.Namespace }}.
 
   Object name:  {{ $objectName }}
@@ -13,6 +14,27 @@ Machine {{ $name }} has been rendered as {{ $objectName }} in namespace {{ $root
 Those names are permanent. The root volume above is derived from the object name, so
 renaming this machine or its release later does not move the volume - it orphans it and
 recreates the machine empty.
+{{- if $volumes }}
+
+Beside it, this machine has {{ len $volumes }} volume{{ if ne (len $volumes) 1 }}s{{ end }} of its own:
+{{- range $volume := $volumes }}
+{{- if $volume.provisioned }}
+
+  {{ $volume.mountPath }}  <-  {{ $volume.name }}-{{ $objectName }}-0 ({{ $volume.size }}, provisioned here, retained on uninstall)
+{{- else }}
+
+  {{ $volume.mountPath }}  <-  {{ $volume.claim }} (an existing claim; this release did not create it and will not delete it)
+{{- end }}
+{{- end }}
+
+Those names are permanent in the same way. Renaming a volume does not move its data - it
+orphans the claim and provisions a new empty one. Its size cannot be changed here either:
+a StatefulSet's volume claim templates are immutable once it exists, so growing a volume
+means expanding the claim itself, on a StorageClass that allows it.
+
+Whatever the machine's own root filesystem had at one of those paths is hidden while the
+volume is mounted, not deleted.
+{{- end }}
 
 On its first start the machine's root filesystem is filled from its {{ $machine.source.kind }} source,
 once. After that the volume is the machine's operating system and changing the source

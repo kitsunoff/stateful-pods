@@ -276,3 +276,35 @@ tests:
     asserts:
       - matchRegexRaw:
           pattern: 'WARNING: this machine asks for ingress: declared and declares no ports'
+
+  - it: says nothing about further volumes for a machine that declares none
+    asserts:
+      - notMatchRegexRaw:
+          pattern: 'Beside it, this machine has'
+
+  - it: reports each declared volume, its claim and the path it appears at
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+          media:
+            mountPath: /srv/media
+            existingClaim: media-share
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Beside it, this machine has 2 volumes of its own'
+      - matchRegexRaw:
+          pattern: '/srv/media  <-  media-share \(an existing claim'
+      - matchRegexRaw:
+          pattern: '/var/lib/data  <-  data-lab-web-0 \(50Gi, provisioned here, retained on uninstall\)'
+      - matchRegexRaw:
+          pattern: "Renaming a volume does not move its data"

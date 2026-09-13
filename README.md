@@ -25,6 +25,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 - [Declaring a machine](#declaring-a-machine)
 - [Getting into a machine](#getting-into-a-machine)
 - [The ports a machine serves](#the-ports-a-machine-serves)
+- [Storage beside the root filesystem](#storage-beside-the-root-filesystem)
 - [The kubectl plugin](#the-kubectl-plugin)
 - [Security modes](#security-modes)
 - [Distributions it ships a name for](#distributions-it-ships-a-name-for)
@@ -183,6 +184,40 @@ cannot detect and therefore says out loud.
 
 The restriction is inbound only. A machine that asked for it keeps its resolver, its package mirror
 and everything else it reaches out to.
+
+## Storage beside the root filesystem
+
+The root filesystem is the machine. A machine may declare volumes next to it, for the data that
+should outlive a rebuild of the operating system rather than be rebuilt with it — which is the
+Proxmox distinction between a container's `rootfs` and its mount points.
+
+```yaml
+machines:
+  db:
+    rootfs:
+      size: 8Gi
+    volumes:
+      data:
+        mountPath: /var/lib/postgresql
+        size: 200Gi
+        storageClassName: fast
+      archive:
+        mountPath: /srv/archive
+        existingClaim: archive-share
+        readOnly: true
+```
+
+A volume names `size`, and the chart provisions a claim for it with the machine — its own class, its
+own snapshot to restore from, retained on uninstall exactly as the root filesystem is. Or it names
+`existingClaim`, and the chart mounts a claim somebody else made and creates nothing, which is how a
+machine reaches a share that a single-writer claim of this chart's could never be.
+
+**The name of a volume is as permanent as the machine's own**, and its size cannot be changed
+afterwards: a StatefulSet's volume claim templates are immutable once it exists.
+
+`/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/.stateful-pods` and `/` are refused as mount paths. The
+boot sequence mounts over those after the pod's volumes are in place, so a volume there would be
+present, empty on every start, and with nothing to say why.
 
 ## The kubectl plugin
 

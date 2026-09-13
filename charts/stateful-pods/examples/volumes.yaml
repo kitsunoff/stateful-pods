@@ -1,0 +1,40 @@
+# A machine whose data lives beside its operating system rather than on it.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/volumes.yaml
+#
+# The root filesystem is small, on the cluster's default class, and is the
+# machine: its /etc, its packages, its init. Everything worth keeping when the
+# operating system is rebuilt is on a volume of its own.
+machines:
+  db:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    volumes:
+      # Provisioned by the chart, on its own class, restorable on its own.
+      data:
+        mountPath: /var/lib/postgresql
+        size: 200Gi
+        storageClassName: fast
+
+      # Provisioned too, but ordinary: no class named, so the cluster's default
+      # applies, exactly as it does for the root filesystem.
+      backups:
+        mountPath: /var/backups/postgresql
+        size: 500Gi
+
+      # Somebody else's claim, mounted read-only. The chart creates nothing for
+      # this one, so its size, its class and its access mode are the claim's
+      # own - which is how a machine reaches a ReadWriteMany share that a volume
+      # this chart provisioned could never be.
+      archive:
+        mountPath: /srv/archive
+        existingClaim: archive-share
+        readOnly: true

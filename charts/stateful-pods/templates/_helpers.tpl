@@ -495,6 +495,85 @@ any
 
 {{/*
 --------------------------------------------------------------------------------
+The volumes a machine has beside its root filesystem
+--------------------------------------------------------------------------------
+
+A machine's root filesystem is the machine, and it is declared under `rootfs`.
+Everything here is the storage beside it: the data a machine would want to keep
+when its operating system is rebuilt, on its own claim, at its own size, on its
+own class.
+*/}}
+
+{{/*
+The inputs one volume entry accepts, so that the refusal of anything else can
+list them rather than merely reject.
+*/}}
+{{- define "stateful-pods.volume.inputs" -}}
+mountPath size storageClassName dataSource existingClaim readOnly
+{{- end -}}
+
+{{/*
+The paths the boot sequence mounts over inside the machine, after the pod's own
+volumes are in place. A declared volume at or under one of these is provisioned,
+bound, mounted and then covered: it exists, it is empty on every start, and
+nothing anywhere says why - so the chart refuses them.
+
+/.stateful-pods is not mounted over; it is where the record that says the volume
+has been seeded lives, and a volume over it would make every start look like a
+first one.
+*/}}
+{{- define "stateful-pods.volume.reservedPaths" -}}
+/proc /sys /dev /run /tmp /.stateful-pods
+{{- end -}}
+
+{{/*
+The volume names the pod already uses for purposes of its own, which a declared
+volume may not take. The machine's own object name is reserved too, and is
+checked separately because it is not a constant.
+*/}}
+{{- define "stateful-pods.volume.reservedNames" -}}
+source-credentials provisioning
+{{- end -}}
+
+{{/*
+A machine's declared volumes, normalised: one entry per volume, carrying the name
+it was declared under, the path it appears at inside the machine, whether the
+chart provisions it, and everything the pod spec needs either way.
+
+Ordered by mount path rather than by name, so that a volume declared inside
+another's path is mounted after it. A parent path is a prefix of its children, so
+sorting the paths puts the parent first; sorting by name would not, and the
+kubelet passes a container's mounts to the runtime in the order they appear.
+
+Validation has already run by the time this is called, so it assumes the entries
+are well formed.
+
+Takes (dict "root" $ "name" $name "machine" $machine). Emits a YAML list.
+*/}}
+{{- define "stateful-pods.machine.volumes" -}}
+{{- $volumes := list -}}
+{{- $given := .machine.volumes | default dict -}}
+{{- if kindIs "map" $given -}}
+{{- $byPath := dict -}}
+{{- range $name := keys $given | sortAlpha -}}
+{{- $entry := index $given $name -}}
+{{- if kindIs "map" $entry -}}
+{{- $claim := index $entry "existingClaim" | default "" | toString -}}
+{{- $class := index $entry "storageClassName" -}}
+{{- $path := index $entry "mountPath" | default "" | toString -}}
+{{- $volume := dict "name" ($name | toString) "mountPath" $path "readOnly" (index $entry "readOnly" | default false) "provisioned" (eq $claim "") "claim" $claim "size" (index $entry "size" | default "" | toString) "hasClass" (not (kindIs "invalid" $class)) "storageClassName" (ternary ($class | toString) "" (not (kindIs "invalid" $class))) "snapshot" (dig "dataSource" "volumeSnapshotName" "" $entry | default "" | toString) -}}
+{{- $_ := set $byPath (printf "%s %s" $path ($name | toString)) $volume -}}
+{{- end -}}
+{{- end -}}
+{{- range $key := keys $byPath | sortAlpha -}}
+{{- $volumes = append $volumes (index $byPath $key) -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $volumes }}
+{{- end -}}
+
+{{/*
+--------------------------------------------------------------------------------
 Validation
 --------------------------------------------------------------------------------
 
@@ -844,6 +923,144 @@ possibly empty.
 {{ toYaml $errors }}
 {{- end -}}
 {{/*
+The checks on a machine's declared volumes.
+
+Two kinds of mistake are caught here, and the second is why this is worth as much
+code as it takes. One kind renders a manifest the API server refuses on apply - a
+name that is not a label, a size that is not a quantity - and surfaces as a
+StatefulSet that never creates a pod. The other renders a manifest everything
+accepts and produces a machine whose volume is silently empty for the rest of its
+life: a volume mounted under a path the boot sequence covers is provisioned,
+bound, mounted and then hidden, and it works in every observable way except the
+one it was created for.
+
+Takes (dict "objectName" $objectName "name" $name "machine" $machine). Emits a
+YAML list of errors, possibly empty.
+*/}}
+{{- define "stateful-pods.validate.volumes" -}}
+{{- $name := .name -}}
+{{- $objectName := .objectName -}}
+{{- $machine := .machine -}}
+{{- $errors := list -}}
+{{- $given := index $machine "volumes" -}}
+{{- if not (kindIs "invalid" $given) -}}
+{{- if not (kindIs "map" $given) -}}
+{{- $errors = append $errors (printf "machines.%s.volumes: must be a map keyed by volume name, but is of type %s. The key is the name the volume's claim is derived from, so each volume is declared under its own name rather than as an item in a list." $name (kindOf $given)) -}}
+{{- else -}}
+{{- $inputs := splitList " " (include "stateful-pods.volume.inputs" .) -}}
+{{- $reservedPaths := splitList " " (include "stateful-pods.volume.reservedPaths" .) -}}
+{{- $reservedNames := splitList " " (include "stateful-pods.volume.reservedNames" .) -}}
+{{- $seenPaths := dict -}}
+{{- range $volumeName := keys $given | sortAlpha -}}
+{{- $field := printf "machines.%s.volumes.%s" $name $volumeName -}}
+{{- $entry := index $given $volumeName -}}
+
+{{- /* The name first: it becomes a volume name in the pod specification and the
+       stem of the claim, so a name the API server refuses makes the rest
+       academic. */ -}}
+{{- if or (gt (len $volumeName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $volumeName)) -}}
+{{- $errors = append $errors (printf "%s: %q is not a valid volume name. It must be a DNS-1123 label: at most 63 lowercase alphanumeric characters or '-', starting and ending with an alphanumeric character. The name becomes a volume in the pod and the stem of the claim behind it, and the API server refuses anything else." $field $volumeName) -}}
+{{- else if has $volumeName $reservedNames -}}
+{{- $errors = append $errors (printf "%s: %q is a name the chart already uses for a volume of its own in this pod. Choose another: a volume name has to be unique within the pod, and a collision is rejected by the API server. The names in use are: %s, and the machine's own object name %q." $field $volumeName (join ", " $reservedNames) $objectName) -}}
+{{- else if eq $volumeName $objectName -}}
+{{- $errors = append $errors (printf "%s: %q is the machine's own object name, which is what its root filesystem's volume is called. Choose another name: this one would collide with the root filesystem inside the pod." $field $volumeName) -}}
+{{- end -}}
+
+{{- if not (kindIs "map" $entry) -}}
+{{- $errors = append $errors (printf "%s: must be a map of the volume's inputs, but is of type %s. Accepted inputs: %s." $field (kindOf $entry) (join ", " ($inputs | sortAlpha))) -}}
+{{- else -}}
+{{- range $key, $value := $entry -}}
+{{- if not (has $key $inputs) -}}
+{{- $errors = append $errors (printf "%s.%s: is not an input of a volume. Accepted inputs: %s." $field $key (join ", " ($inputs | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Where it appears inside the machine. */ -}}
+{{- $path := index $entry "mountPath" -}}
+{{- if kindIs "invalid" $path -}}
+{{- $errors = append $errors (printf "%s.mountPath: not set. A volume needs the path it appears at inside the machine, for example /var/lib/data." $field) -}}
+{{- else if not (kindIs "string" $path) -}}
+{{- $errors = append $errors (printf "%s.mountPath: must be a path, but is of type %s. A path is a string - quote it if it is one YAML reads as something else." $field (kindOf $path)) -}}
+{{- else if not (hasPrefix "/" ($path | toString)) -}}
+{{- $errors = append $errors (printf "%s.mountPath: %q is not an absolute path. It is where the volume appears inside the machine, so it begins at the machine's root: /var/lib/data, not var/lib/data." $field ($path | toString)) -}}
+{{- else if has ".." (splitList "/" ($path | toString)) -}}
+{{- $errors = append $errors (printf "%s.mountPath: %q contains \"..\". Give the path as it will be inside the machine, with no component that climbs out of it." $field ($path | toString)) -}}
+{{- else if eq ($path | toString) "/" -}}
+{{- $errors = append $errors (printf "%s.mountPath: \"/\" is the machine's root filesystem, which is declared at machines.%s.rootfs and seeded from machines.%s.source. A volume here would be an empty claim mounted over the operating system. Declare this volume at a path inside the machine, or change the root filesystem's own size and class under machines.%s.rootfs." $field $name $name $name) -}}
+{{- else -}}
+{{- $normalised := ($path | toString) | trimSuffix "/" -}}
+{{- range $reserved := $reservedPaths -}}
+{{- if or (eq $normalised $reserved) (hasPrefix (printf "%s/" $reserved) $normalised) -}}
+{{- $errors = append $errors (printf "%s.mountPath: %q is at or under %s, which the boot sequence mounts over inside the machine after the pod's volumes are in place. A volume there would be provisioned, bound, mounted and then covered - present, empty on every start, and with nothing to say why. The machine already has a tmpfs /run and /tmp of its own; /proc, /sys and /dev are the kernel's. Choose a path the machine owns, such as /var/lib/%s." $field $normalised $reserved $volumeName) -}}
+{{- end -}}
+{{- end -}}
+{{- $already := index $seenPaths $normalised -}}
+{{- if $already -}}
+{{- $errors = append $errors (printf "%s.mountPath: %q is already declared by machines.%s.volumes.%s. Two volumes cannot occupy one path: whichever the runtime mounted second would hide the other." $field $normalised $name $already) -}}
+{{- else -}}
+{{- $_ := set $seenPaths $normalised $volumeName -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Provisioned, or somebody else's. Exactly one, and never guessed: one
+       creates storage and the other consumes storage that exists. */ -}}
+{{- $size := index $entry "size" -}}
+{{- $claim := index $entry "existingClaim" -}}
+{{- $hasSize := not (kindIs "invalid" $size) -}}
+{{- $hasClaim := not (kindIs "invalid" $claim) -}}
+{{- if and $hasSize $hasClaim -}}
+{{- $errors = append $errors (printf "%s: names both `size` and `existingClaim`. Supply exactly one: `size` has the chart provision a claim for this machine, and `existingClaim` mounts a claim somebody else made. They are not alternatives - choosing between them here would either provision a volume nobody asked for or ignore a size you believed was in effect." $field) -}}
+{{- else if not (or $hasSize $hasClaim) -}}
+{{- $errors = append $errors (printf "%s: names neither `size` nor `existingClaim`. Give a size to have the chart provision a claim for this volume, or name an existing PersistentVolumeClaim in this release's namespace to mount one that is already there." $field) -}}
+{{- else if $hasSize -}}
+{{- if not (regexMatch "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$" ($size | toString)) -}}
+{{- $errors = append $errors (printf "%s.size: %q is not a storage quantity. Give a number with a unit, quoted or not, as the root filesystem does: 50Gi, 2Ti, 500Mi. A value the API server cannot parse renders cleanly and is refused on apply, which surfaces as a machine whose pod is never created." $field ($size | toString)) -}}
+{{- end -}}
+{{- $class := index $entry "storageClassName" -}}
+{{- if and (not (kindIs "invalid" $class)) (not (kindIs "string" $class)) -}}
+{{- $errors = append $errors (printf "%s.storageClassName: must be the name of a StorageClass, but is of type %s. Leave it out entirely to use the cluster's default class; an explicit \"\" means \"no class\" and disables dynamic provisioning, which is a different thing." $field (kindOf $class)) -}}
+{{- end -}}
+{{- $dataSource := index $entry "dataSource" -}}
+{{- if not (kindIs "invalid" $dataSource) -}}
+{{- if not (kindIs "map" $dataSource) -}}
+{{- $errors = append $errors (printf "%s.dataSource: must be a map naming what the volume is restored from, but is of type %s. The one source it accepts is volumeSnapshotName." $field (kindOf $dataSource)) -}}
+{{- else -}}
+{{- range $key, $value := $dataSource -}}
+{{- if ne $key "volumeSnapshotName" -}}
+{{- $errors = append $errors (printf "%s.dataSource.%s: is not an input. Accepted inputs: volumeSnapshotName." $field $key) -}}
+{{- end -}}
+{{- end -}}
+{{- $snapshot := index $dataSource "volumeSnapshotName" -}}
+{{- if and (not (kindIs "invalid" $snapshot)) (not (kindIs "string" $snapshot)) -}}
+{{- $errors = append $errors (printf "%s.dataSource.volumeSnapshotName: must be the name of a VolumeSnapshot in this release's namespace, but is of type %s." $field (kindOf $snapshot)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- if or (not (kindIs "string" $claim)) (eq ($claim | toString) "") -}}
+{{- $errors = append $errors (printf "%s.existingClaim: must name a PersistentVolumeClaim in this release's namespace. The chart creates nothing for a volume declared this way, so its size, class, access mode and lifetime are the claim's own." $field) -}}
+{{- else if or (gt (len ($claim | toString)) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" ($claim | toString))) -}}
+{{- $errors = append $errors (printf "%s.existingClaim: %q is not a valid claim name. It must be a DNS-1123 subdomain: at most 253 lowercase alphanumeric characters, '-' or '.', with each dot-separated part starting and ending with an alphanumeric character." $field ($claim | toString)) -}}
+{{- end -}}
+{{- range $unused := list "size" "storageClassName" "dataSource" -}}
+{{- if not (kindIs "invalid" (index $entry $unused)) -}}
+{{- $errors = append $errors (printf "%s.%s: does not belong to a volume that names an existingClaim. The chart creates nothing for such a volume, so its size, class and restore source are decided by whoever made the claim. Remove the field, or remove existingClaim to have the chart provision this volume." $field $unused) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- $readOnly := index $entry "readOnly" -}}
+{{- if and (not (kindIs "invalid" $readOnly)) (not (kindIs "bool" $readOnly)) -}}
+{{- $errors = append $errors (printf "%s.readOnly: must be true or false, but is of type %s." $field (kindOf $readOnly)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+
+{{/*
 Stage two: every remaining check, accumulated and reported together.
 Takes the root context.
 */}}
@@ -1048,6 +1265,9 @@ Takes the root context.
 
 {{- /* What the cluster is told about the machine's network presence. */ -}}
 {{- $errors = concat $errors (include "stateful-pods.validate.network" (dict "name" $name "machine" $machine) | fromYamlArray) -}}
+
+{{- /* The storage the machine has beside its root filesystem. */ -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.volumes" (dict "objectName" $objectName "name" $name "machine" $machine) | fromYamlArray) -}}
 
 {{- end -}}
 

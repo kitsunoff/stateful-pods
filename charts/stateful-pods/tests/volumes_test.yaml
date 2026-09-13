@@ -1,0 +1,251 @@
+suite: rendering - the volumes beside the root filesystem
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders one claim template and one mount for a machine that declares none
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+    asserts:
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+
+  - it: provisions a claim template for a sized volume, keeping the root filesystem first
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+    asserts:
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 2
+      - equal:
+          path: spec.volumeClaimTemplates[0].metadata.name
+          value: lab-web
+      - equal:
+          path: spec.volumeClaimTemplates[1].metadata.name
+          value: data
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.accessModes
+          value:
+            - ReadWriteOnce
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.resources.requests.storage
+          value: 50Gi
+      - notExists:
+          path: spec.volumeClaimTemplates[1].spec.storageClassName
+
+  - it: mounts a declared volume inside the root filesystem's own mount point
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /mnt/rootfs
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1]
+          value:
+            name: data
+            mountPath: /mnt/rootfs/var/lib/data
+
+  - it: carries a volume's own class and its own restore source
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+            storageClassName: fast
+            dataSource:
+              volumeSnapshotName: data-yesterday
+          scratch:
+            mountPath: /var/lib/scratch
+            size: 5Gi
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[1].metadata.name
+          value: data
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.storageClassName
+          value: fast
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.dataSource
+          value:
+            apiGroup: snapshot.storage.k8s.io
+            kind: VolumeSnapshot
+            name: data-yesterday
+      - equal:
+          path: spec.volumeClaimTemplates[2].metadata.name
+          value: scratch
+      - notExists:
+          path: spec.volumeClaimTemplates[2].spec.storageClassName
+      - notExists:
+          path: spec.volumeClaimTemplates[2].spec.dataSource
+
+  - it: preserves the difference between no class and no dynamic provisioning
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+            storageClassName: ""
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.storageClassName
+          value: ""
+
+  - it: mounts an existing claim and provisions nothing for it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          media:
+            mountPath: /srv/media
+            existingClaim: media-share
+            readOnly: true
+    asserts:
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value:
+            name: media
+            persistentVolumeClaim:
+              claimName: media-share
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1]
+          value:
+            name: media
+            mountPath: /mnt/rootfs/srv/media
+            readOnly: true
+
+  - it: mounts a volume declared inside another one after it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          inner:
+            mountPath: /srv/media/photos
+            size: 1Gi
+          outer:
+            mountPath: /srv/media
+            size: 10Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].mountPath
+          value: /mnt/rootfs/srv/media
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[2].mountPath
+          value: /mnt/rootfs/srv/media/photos
+
+  - it: gives no preparation step a declared volume
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers[0].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[1].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.initContainers[3].volumeMounts
+          count: 1
+
+  - it: keeps the retention policy that covers every claim the machine has
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 50Gi
+    asserts:
+      - equal:
+          path: spec.persistentVolumeClaimRetentionPolicy
+          value:
+            whenDeleted: Retain
+            whenScaled: Retain
