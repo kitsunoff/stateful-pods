@@ -782,8 +782,19 @@ machine's `/etc` would be a chart that destroys state on a typo.
 > mean something else is worse than one that moved. `exec` with no script behaves exactly as
 > `native` did.
 
-`systemd-credentials` is described in the design and is not implemented. Naming it fails rendering
-and says so, rather than pretending the name is a typo.
+**There are two, and no third is planned.** Any other name is refused as an unknown backend, listing
+these. They were chosen for what they do *not* ask for:
+
+| Backend | Asks the image for | Asks the init system for |
+| --- | --- | --- |
+| `cloud-init` | cloud-init, and fails the pod loudly when it is absent | nothing — systemd units and OpenRC scripts are both recognised |
+| `exec` | a shell | nothing |
+
+An earlier design named a third, built on systemd's `/run/host/credentials`, to keep provisioning
+material off a machine's volume. It is not built and will not be: it would have been the only backend
+tied to one init system, and two of the four presets do not run systemd. The half of the idea that
+had a home is already here — `exec` places its script and its environment on the machine's own
+`tmpfs`, so neither reaches the volume or any snapshot of it.
 
 ### An image that cannot run cloud-init fails the machine
 
