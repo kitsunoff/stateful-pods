@@ -368,12 +368,17 @@ Rendering SHALL fail when a machine supplies a provisioning input that the backe
 not use.
 
 Silently ignoring it leaves the user believing the machine is configured to do something it is not.
-Supplying user-data to a machine provisioned natively is a mistake worth catching while the manifest
-is still text.
+Supplying user-data to a machine provisioned by its own script is a mistake worth catching while the
+manifest is still text, and so is supplying a script to a machine provisioned by cloud-init.
 
 #### Scenario: An input for an unselected backend is refused
 
-- **WHEN** a machine selects the `native` backend and supplies a cloud-init input
+- **WHEN** a machine selects the `exec` backend and supplies a cloud-init input
+- **THEN** rendering fails, names the input, and says which backend it belongs to
+
+#### Scenario: An input for the other unselected backend is refused too
+
+- **WHEN** a machine selects the `cloud-init` backend and supplies an `exec` input
 - **THEN** rendering fails, names the input, and says which backend it belongs to
 
 #### Scenario: An unknown provisioning input is refused
@@ -393,3 +398,176 @@ name is wrong would send them looking for the right spelling of something that i
 
 - **WHEN** a machine names a backend the design describes and the chart has not implemented
 - **THEN** rendering fails, says it is not implemented yet, and names the backends that are
+
+### Requirement: A machine's network inputs are checked while the chart renders
+
+The chart SHALL reject, while rendering and with a message naming the input, a network block that
+is not a map, a port collection that is not a map, a port entry that is not a map, a port name the
+Kubernetes API would reject, a missing or non-integer port number, a port number outside 1–65535, a
+protocol that is not `TCP`, `UDP` or `SCTP`, a key under a port entry that is not an input, a key
+under the network block that is not an input, and two entries declaring the same number and
+protocol.
+
+Every one of these renders a manifest the API server rejects on apply, or — in the case of the
+duplicate — one it rejects with a message about a field index rather than about a machine. The
+chart's own refusals name the machine, the input and the rule, and they accumulate with the rest of
+the semantic stage so that fixing one does not merely reveal the next.
+
+#### Scenario: A port name the API would reject is refused
+
+- **WHEN** a machine declares a port whose name is longer than fifteen characters, or contains a
+  character outside lowercase alphanumerics and hyphens, or contains no letter at all
+- **THEN** rendering fails, naming the port and stating the rule
+
+#### Scenario: A port number outside the valid range is refused
+
+- **WHEN** a machine declares a port number that is not an integer between 1 and 65535
+- **THEN** rendering fails, naming the port
+
+#### Scenario: An unknown protocol is refused
+
+- **WHEN** a machine declares a protocol other than `TCP`, `UDP` or `SCTP`
+- **THEN** rendering fails, listing the protocols that are accepted
+
+#### Scenario: A duplicate port and protocol is refused
+
+- **WHEN** two entries declare the same number with the same protocol
+- **THEN** rendering fails, naming both entries
+
+#### Scenario: The same number on two protocols is accepted
+
+- **WHEN** two entries declare the same number with different protocols
+- **THEN** both are rendered
+
+#### Scenario: An unknown key is refused rather than ignored
+
+- **WHEN** a machine declares a key under the network block, or under one port entry, that the
+  chart does not accept
+- **THEN** rendering fails and lists the keys that are accepted
+
+#### Scenario: An unknown ingress posture is refused
+
+- **WHEN** a machine names an ingress posture other than `any` or `declared`
+- **THEN** rendering fails, listing the postures that are accepted and what each one renders
+
+### Requirement: A machine's declared volumes are checked while the chart renders
+
+The chart SHALL reject, while rendering and with a message naming the volume, a volumes block that
+is not a map, a volume entry that is not a map, a volume name that is not a DNS-1123 label or that
+collides with a volume the pod already has, a missing or non-absolute mount path, a mount path the
+boot sequence mounts over, two volumes sharing one mount path, a volume naming both a size and an
+existing claim, a volume naming neither, an existing claim name the API server would reject, and a
+key under a volume entry that is not an input.
+
+Each of these either renders a manifest the API server refuses on apply, or renders one it accepts
+and that produces a machine whose volume is silently empty. The second kind is the reason the checks
+are worth having: a volume mounted under a path the boot sequence covers works in every observable
+way except the one it was created for.
+
+#### Scenario: A mount path that is not absolute is refused
+
+- **WHEN** a machine declares a volume whose mount path does not begin with `/`
+- **THEN** rendering fails, naming the volume and the path
+
+#### Scenario: A mount path the boot sequence covers is refused
+
+- **WHEN** a machine declares a volume mounted at or under `/proc`, `/sys`, `/dev`, `/run` or `/tmp`
+- **THEN** rendering fails, naming the path and saying that the boot sequence mounts over it, so the
+  volume would be present and empty on every start
+
+#### Scenario: A volume naming neither a size nor a claim is refused
+
+- **WHEN** a machine declares a volume that names no size and no existing claim
+- **THEN** rendering fails, explaining that one creates storage and the other consumes storage that
+  exists
+
+#### Scenario: An unknown key under a volume is refused rather than ignored
+
+- **WHEN** a machine declares a key under a volume entry that the chart does not accept
+- **THEN** rendering fails and lists the keys that are accepted
+
+#### Scenario: A name the pod already uses is refused
+
+- **WHEN** a machine declares a volume named after the machine's own object name, or after a volume
+  the chart renders for its own purposes
+- **THEN** rendering fails, naming what already holds that name
+
+### Requirement: The exec backend's inputs are checked while the chart renders
+
+The chart SHALL reject, while rendering and with a message naming the input, an `exec` block that is
+not a map, a key under it that is not an input, a script or environment supplied neither inline nor
+by reference, a script or environment supplied both ways at once, a retry count that is not a
+non-negative whole number, a timeout that is not a positive whole number, and `exec` inputs on a
+machine that selected another backend.
+
+The chart SHALL also reject a machine whose object name leaves no room for the name of the object
+that would run its script, naming the object, its length and the number of characters over the
+limit — the same treatment the machine's own object name already gets.
+
+An input belonging to a backend the machine did not select is an error rather than something
+ignored, for the reason the `cloud-init` inputs are: silently dropping it leaves the user believing
+the machine is configured to do something it is not.
+
+#### Scenario: A script on a cloud-init machine is refused
+
+- **WHEN** a machine selects `cloud-init` and supplies `exec` inputs
+- **THEN** rendering fails, naming the inputs and the backend they belong to
+
+#### Scenario: cloud-init inputs on an exec machine are refused
+
+- **WHEN** a machine selects `exec` and supplies `cloudInit` inputs
+- **THEN** rendering fails, naming the inputs and the backend they belong to
+
+#### Scenario: A name too long for the object that would run the script is refused
+
+- **WHEN** a machine supplies a script and its object name leaves fewer characters than the name of
+  that object needs
+- **THEN** rendering fails, naming the object, its length, and how many characters over the limit it
+  is
+
+#### Scenario: A retry count that is not a count is refused
+
+- **WHEN** a machine names a number of retries that is negative or is not a whole number
+- **THEN** rendering fails, naming the input
+
+### Requirement: A machine's egress policy is checked while the chart renders
+
+The chart SHALL reject, while rendering and with a message naming the rule, an egress block that is
+not a map, a key under it that is not an input, a missing or unknown default, a rules list that is
+not a list, a rule that is not a map, a rule with no name or a duplicate name, a rule naming more
+than one or fewer than one matcher, a missing or empty port list, a port outside 1–65535, a port the
+proxy itself holds, a malformed host name, address range or path prefix, a UDP rule matching on
+anything a proxy would be needed for, and two rules that would render the same match.
+
+The last of those is not tidiness. The proxy validates its configuration on startup and exits when
+it cannot reconcile it, and two filter chains with the same match are the commonest way to get
+there — which surfaces as a sidecar that crash-loops behind a machine whose own containers are all
+healthy.
+
+The chart SHALL also reject a machine that declares a served port the proxy holds inside the same
+pod, because nothing outside would reach the machine there.
+
+#### Scenario: A policy with no default is refused
+
+- **WHEN** a machine declares an egress policy and names no default
+- **THEN** rendering fails, saying what each accepted default does
+
+#### Scenario: A rule matching on two layers is refused
+
+- **WHEN** a rule names both a server name and an address range
+- **THEN** rendering fails, naming both
+
+#### Scenario: A UDP rule matching above layer 4 is refused
+
+- **WHEN** a rule names `UDP` and matches on a server name
+- **THEN** rendering fails, saying that UDP is not proxied and that such a rule would never match
+
+#### Scenario: Two rules rendering one match are refused
+
+- **WHEN** two rules would allow the same server name on the same port
+- **THEN** rendering fails, naming both rules and saying that the proxy refuses a duplicate
+
+#### Scenario: A served port the proxy holds is refused
+
+- **WHEN** a machine declares an egress policy and a served port that the proxy occupies
+- **THEN** rendering fails, naming the port and both inputs

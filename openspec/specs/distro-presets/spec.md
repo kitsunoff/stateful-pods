@@ -34,53 +34,30 @@ A preset SHALL be built from the upstream variant that carries cloud-init, for e
 and release whose upstream publishes one as a single build covering every architecture this project
 supports. Where the upstream publishes no such variant, or publishes one its architectures do not
 agree on, the preset SHALL be built from the `default` variant, and the project SHALL state that the
-preset serves the `native` provisioning backend only and why.
+preset serves the `exec` provisioning backend only and why.
 
 The chart's default provisioning backend is cloud-init, and an image without it is required to fail
 the pod loudly. A project that ships both a default backend and a catalog of images that cannot
-serve it would fail every default install of its own presets.
+serve it has shipped a default that does not work, so the catalog moves where it can and says where
+it cannot.
 
-Which variant to take is settled by reading the upstream's index rather than by assuming the
-distributions are symmetric. They are not: at the time of writing, Debian, Ubuntu and Alpine publish
-a `cloud` variant and Void publishes only `default` and `musl`.
+#### Scenario: A distribution whose upstream publishes a cloud variant
 
-The single-build condition is not a loophole; it is the same rule that already governs publishing.
-A preset covers every architecture or it is not published, because a root filesystem for the wrong
-architecture seeds without error. A variant whose architectures are on different upstream builds
-offers nothing one tag can honestly name, so there is nothing to take from it yet — and taking the
-`default` variant meanwhile is the honest state rather than a downgrade, provided it is stated.
+- **WHEN** an upstream publishes a `cloud` variant for a distribution and release, as one build
+  covering every architecture this project supports
+- **THEN** the preset for it is built from that variant
 
-A variant that carries some other provisioning implementation does not satisfy this requirement.
-Alpine's `tinycloud` is tiny-cloud rather than cloud-init, and answers a different configuration
-surface, so a cloud-init backend pointed at it would fail in a way that reads as cloud-init being
-broken.
+#### Scenario: A distribution whose upstream publishes none
 
-#### Scenario: A preset built from a cloud variant carries cloud-init
+- **WHEN** an upstream publishes no variant carrying cloud-init
+- **THEN** the preset is built from the `default` variant, and the documentation says that a machine
+  on it must select the `exec` backend
 
-- **WHEN** the root filesystem of a preset built from a cloud variant is inspected
-- **THEN** it contains the cloud-init program, cloud-init's service units for the init system the
-  image uses, and `/etc/cloud`
+#### Scenario: A distribution whose architectures disagree
 
-#### Scenario: A distribution with no cloud variant keeps the default one
-
-- **WHEN** the upstream publishes no variant carrying cloud-init for a preset's distribution and
-  release
-- **THEN** that preset is built from the `default` variant rather than having cloud-init installed
-  into it, and what it can be provisioned with is stated
-
-#### Scenario: A variant its architectures disagree on is not taken yet
-
-- **WHEN** the upstream publishes a variant carrying cloud-init but its architectures are on
-  different upstream builds
-- **THEN** the preset stays on the variant that resolves as one build, and the project records that
-  it is waiting on the upstream rather than presenting the preset as one that carries cloud-init
-
-#### Scenario: The variant is looked up, not assumed
-
-- **WHEN** a preset is resolved against the upstream index
-- **THEN** the build named in the project's list of presets is the one looked up, and a variant the
-  upstream does not offer for every supported architecture stops the build rather than falling back
-  to another
+- **WHEN** an upstream publishes a cloud variant whose architectures are not on the same build
+- **THEN** the preset stays on the `default` variant until they are, because one tag cannot honestly
+  name two root filesystems
 
 ### Requirement: A preset carries cloud-init installed, not enabled
 
@@ -371,7 +348,7 @@ filesystem or it is not a preset.
 
 - **WHEN** a preset's root filesystem does not carry cloud-init, for any reason
 - **THEN** the values file, the chart documentation and the project documentation each say that a
-  machine on that preset must select the `native` backend
+  machine on that preset must select the `exec` backend
 
 #### Scenario: What a preset can serve is stated per preset
 
@@ -383,5 +360,5 @@ filesystem or it is not a preset.
 
 - **WHEN** a preset's upstream publishes a variant carrying cloud-init but the preset is not yet
   built from it
-- **THEN** that preset is documented as serving `native` only, for as long as that holds, rather
+- **THEN** that preset is documented as serving `exec` only, for as long as that holds, rather
   than as carrying cloud-init because its distribution does elsewhere

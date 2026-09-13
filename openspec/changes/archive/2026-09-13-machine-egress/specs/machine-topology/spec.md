@@ -10,7 +10,7 @@ The proxy is in the machine's pod and not beside it because it must share the ma
 namespace: a redirect is a rule in that namespace, and a proxy in another pod would be a proxy the
 redirect could not reach.
 
-#### Scenario: The objects are rendered together
+#### Scenario: The proxy and its step are rendered together
 
 - **WHEN** a machine declares an egress policy
 - **THEN** a ConfigMap named for the machine, a proxy container that keeps running, and a

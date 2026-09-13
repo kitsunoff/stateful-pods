@@ -1,3 +1,29 @@
+## MODIFIED Requirements
+
+### Requirement: An input belonging to another backend is refused, not ignored
+
+Rendering SHALL fail when a machine supplies a provisioning input that the backend it selected does
+not use.
+
+Silently ignoring it leaves the user believing the machine is configured to do something it is not.
+Supplying user-data to a machine provisioned by its own script is a mistake worth catching while the
+manifest is still text, and so is supplying a script to a machine provisioned by cloud-init.
+
+#### Scenario: An input for an unselected backend is refused
+
+- **WHEN** a machine selects the `exec` backend and supplies a cloud-init input
+- **THEN** rendering fails, names the input, and says which backend it belongs to
+
+#### Scenario: An input for the other unselected backend is refused too
+
+- **WHEN** a machine selects the `cloud-init` backend and supplies an `exec` input
+- **THEN** rendering fails, names the input, and says which backend it belongs to
+
+#### Scenario: An unknown provisioning input is refused
+
+- **WHEN** a machine supplies a provisioning input the chart does not recognise
+- **THEN** rendering fails and lists the inputs the backend accepts
+
 ## ADDED Requirements
 
 ### Requirement: The exec backend's inputs are checked while the chart renders

@@ -17,7 +17,7 @@ capability existed.
 - **WHEN** a machine declares an egress policy without naming what happens to unmatched traffic
 - **THEN** rendering fails, saying what each accepted default does
 
-#### Scenario: Declaring nothing changes nothing
+#### Scenario: Declaring no egress policy changes nothing
 
 - **WHEN** a machine declares no egress policy
 - **THEN** its pod carries no proxy, no packet-filter step and no policy
