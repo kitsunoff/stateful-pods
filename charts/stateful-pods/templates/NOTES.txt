@@ -217,9 +217,11 @@ Every decision it makes is a line on the proxy's own output, allowed and refused
 That is where "why can this machine not reach X" is answered. Nothing has to be turned on.
 {{- if eq $egress.default "deny" }}
 
-The pod's own resolver is allowed without a rule, because a rule written as a name needs one.
-IPv6 is not proxied and is dropped outright. A process inside the machine running as user 1337 is
-exempt from the redirect, which is why a policy worth relying on has a rule matching an address.
+The pod's own resolver is allowed without a rule, because a rule written as a name needs one, and so
+is DNS over TCP to it. IPv6 is not proxied and is dropped outright.
+
+This policy governs the machine's software and not the machine's root: a process inside the machine
+running as user 1337 is exempt from the redirect, and root inside the machine can become it.
 {{- end }}
 {{- end }}
 

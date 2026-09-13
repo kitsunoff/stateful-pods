@@ -1,5 +1,9 @@
 # Test environment for the shim image's shell scripts. Not shipped, not published:
 # it exists so that a developer on a non-Linux host runs the same tests CI does.
+#
+# netcat is here for one reason: the egress step waits for its proxy by opening a
+# connection to it, and the only honest way to test a wait for a listener is to
+# have something listen.
 FROM debian:13-slim
 
 RUN apt-get update \
@@ -13,6 +17,7 @@ RUN apt-get update \
       zstd \
       gzip \
       jq \
+      netcat-openbsd \
  && rm --recursive --force /var/lib/apt/lists/*
 
 WORKDIR /src

@@ -735,13 +735,15 @@ authority pathPrefix
 {{- end -}}
 
 {{/*
-The ports Envoy listens on and is administered through, inside the machine's own
-pod. Not inputs: they are the chart's own numbers, and a machine that wanted to
-serve one of them would be declaring a port the proxy already holds - which the
-validation stage refuses, naming both.
+The port Envoy listens on inside the machine's own pod. Not an input: it is the
+chart's own number, and a machine that wanted to serve it would be declaring a
+port the proxy already holds - which the validation stage refuses, naming both.
+
+There is no second one. The proxy has no administration interface: an endpoint on
+the loopback address would be reachable from inside the machine, which shares this
+network namespace.
 */}}
 {{- define "stateful-pods.egress.proxyPort" -}}15001{{- end -}}
-{{- define "stateful-pods.egress.adminPort" -}}15000{{- end -}}
 
 {{/*
 The user the proxy runs as. The redirect exempts it by exactly this number, which
@@ -1417,7 +1419,6 @@ possibly empty.
 {{- else -}}
 {{- $accepted := splitList " " (include "stateful-pods.egress.inputs" .) -}}
 {{- $proxyPort := include "stateful-pods.egress.proxyPort" . | int64 -}}
-{{- $adminPort := include "stateful-pods.egress.adminPort" . | int64 -}}
 {{- range $field, $value := $egress -}}
 {{- if not (has $field $accepted) -}}
 {{- $errors = append $errors (printf "machines.%s.network.egress.%s: is not an input of the egress policy. Accepted inputs: %s." $name $field (join ", " ($accepted | sortAlpha))) -}}
@@ -1504,8 +1505,8 @@ possibly empty.
 {{- if or (kindIs "string" $port) (not (regexMatch "^[0-9]+$" ($port | toString))) (lt ($port | int64) 1) (gt ($port | int64) 65535) -}}
 {{- $errors = append $errors (printf "%s.ports: %v is not a port number. Each must be a whole number between 1 and 65535, unquoted." $field $port) -}}
 {{- $portsUsable = false -}}
-{{- else if or (eq ($port | int64) $proxyPort) (eq ($port | int64) $adminPort) -}}
-{{- $errors = append $errors (printf "%s.ports: %v is a port the proxy itself holds inside this pod (%d for the traffic it decides, %d for its administration). A rule naming it would describe traffic that never reaches the network." $field $port $proxyPort $adminPort) -}}
+{{- else if eq ($port | int64) $proxyPort -}}
+{{- $errors = append $errors (printf "%s.ports: %v is the port the proxy itself listens on inside this pod. A rule naming it would describe traffic that never reaches the network." $field $port) -}}
 {{- $portsUsable = false -}}
 {{- end -}}
 {{- end -}}
@@ -1590,6 +1591,22 @@ possibly empty.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* An http rule and a serverNames rule on one port. Both render, and the
+       combination is not what anybody means: the name chain is the more
+       specific, so TLS carrying a name no rule allows falls into the connection
+       manager instead - where it is read as a broken plaintext request and
+       answered with a 400 rather than refused as the policy says. Two ports, or
+       one form. */ -}}
+{{- range $sniChain, $sniField := $seenChains -}}
+{{- if hasPrefix "sni/" $sniChain -}}
+{{- $sniPort := index (splitList "/" $sniChain) 1 -}}
+{{- $httpField := index $httpPorts $sniPort -}}
+{{- if $httpField -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress: %s matches a server name on port %s and %s matches a plaintext request on the same port. One port takes one form: the name chain is the more specific, so a TLS connection carrying a name no rule allows would fall into the plaintext one and be answered as a broken request rather than refused. Move one of them to a port of its own." $name $sniField $sniPort $httpField) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- end -}}
 {{- end -}}
 
@@ -1597,8 +1614,8 @@ possibly empty.
        namespace, and the two blocks are far enough apart in a values file
        that nobody would notice. */ -}}
 {{- range $port := include "stateful-pods.machine.ports" (dict "root" $.root "name" $name "machine" $machine) | fromYamlArray -}}
-{{- if or (eq (int64 $port.port) $proxyPort) (eq (int64 $port.port) $adminPort) -}}
-{{- $errors = append $errors (printf "machines.%s.network.ports.%s: %d is a port the egress proxy holds inside this machine's pod. Nothing outside would reach the machine on it, because the proxy answers there first. Serve this on another port, or remove machines.%s.network.egress." $name $port.name (int64 $port.port) $name) -}}
+{{- if eq (int64 $port.port) $proxyPort -}}
+{{- $errors = append $errors (printf "machines.%s.network.ports.%s: %d is the port the egress proxy listens on inside this machine's pod. Nothing outside would reach the machine on it, because the proxy answers there first. Serve this on another port, or remove machines.%s.network.egress." $name $port.name (int64 $port.port) $name) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

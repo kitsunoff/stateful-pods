@@ -137,6 +137,7 @@ spec:
         # reference form for a firewall rule - so the digest is exact.
         checksum/egress: {{ include "stateful-pods.machine.egress.checksum" $ctx | quote }}
         {{- end }}
+        {{- if $inPod }}
         # What restarts a machine when its provisioning material changes. Helm
         # renders the inline material itself, so a change to it changes this
         # digest and the pod is replaced.
@@ -149,7 +150,6 @@ spec:
         # happen the change applies either way, because the instance identity is
         # recomputed from the files that were actually materialized. The gap is
         # in triggering the restart, not in applying the change.
-        {{- if $inPod }}
         checksum/provisioning: {{ include "stateful-pods.machine.provisioning.checksum" $ctx | quote }}
         {{- end }}
       {{- end }}
@@ -383,10 +383,9 @@ spec:
             - "1000"
           securityContext:
             # The user the redirect exempts, by exactly this number. A process
-            # inside the machine running as it would be exempted too, which
-            # values.yaml says out loud - and which is why a policy worth
-            # relying on has a layer-4 half, enforced where a process's own
-            # identity is not what decides.
+            # inside the machine running as it is exempted too, and its TCP then
+            # bypasses every rule the policy has - which values.yaml says out
+            # loud, because it is what bounds what the policy is worth.
             runAsUser: {{ include "stateful-pods.egress.proxyUser" $ctx }}
             runAsGroup: {{ include "stateful-pods.egress.proxyUser" $ctx }}
             allowPrivilegeEscalation: false
@@ -425,8 +424,6 @@ spec:
               value: /etc/stateful-pods/egress
             - name: SP_EGRESS_PROXY_PORT
               value: {{ include "stateful-pods.egress.proxyPort" $ctx | quote }}
-            - name: SP_EGRESS_ADMIN_PORT
-              value: {{ include "stateful-pods.egress.adminPort" $ctx | quote }}
             - name: SP_EGRESS_PROXY_USER
               value: {{ include "stateful-pods.egress.proxyUser" $ctx | quote }}
           securityContext:

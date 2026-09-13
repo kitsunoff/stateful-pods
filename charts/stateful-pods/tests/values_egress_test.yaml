@@ -151,7 +151,7 @@ tests:
             serverNames: [deb.debian.org]
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.ports: 15001 is a port the proxy itself holds'
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.ports: 15001 is the port the proxy itself listens on'
 
   - it: rejects a server name that is an address
     set:
@@ -245,18 +245,34 @@ tests:
       - failedTemplate:
           errorPattern: '(?s)machines\.web\.network\.egress\.rules\[1\]: allows deb\.debian\.org on port 443, which machines\.web\.network\.egress\.rules\[0\] already allows.*the proxy refuses'
 
-  - it: rejects a served port the proxy holds inside the same pod
+  - it: rejects a served port the proxy listens on inside the same pod
     set:
       machines.web.network:
         ingress: any
         ports:
-          admin:
-            port: 15000
+          proxied:
+            port: 15001
         egress:
           default: allow
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.network\.ports\.admin: 15000 is a port the egress proxy holds'
+          errorPattern: '(?s)machines\.web\.network\.ports\.proxied: 15001 is the port the egress proxy listens on'
+
+  - it: refuses a server name and a plaintext rule on one port, naming both
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror-tls
+            ports: [80]
+            serverNames: [deb.debian.org]
+          - name: mirror-plain
+            ports: [80]
+            http:
+              authority: deb.debian.org
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)matches a server name on port 80 and .* matches a plaintext request on the same port'
 
   - it: accepts a policy of every form at once
     set:

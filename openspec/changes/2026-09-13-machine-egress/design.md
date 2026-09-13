@@ -72,10 +72,16 @@ Three constraints fix this ordering and there is no other arrangement that satis
 
 The important honesty is on `serverNames`. **It is a claim the machine makes about itself.** A
 process inside the machine can open a TLS connection to any address and put any name in the
-handshake; SNI matching stops a package manager reaching the wrong mirror, and it does not stop a
-determined program inside the machine. What does bound that program is the layer-4 half — an address
-it cannot lie about — and the two are meant to be used together. Saying this in `values.yaml` is
-worth more than the feature is.
+handshake, and the proxy will believe it; a `cidrs` rule beside it is stronger, because an address is
+not something the machine gets to assert.
+
+Neither bounds a program that has root inside the machine, and the documentation says so rather than
+implying otherwise. The proxy is exempted from the redirect by the user it runs as, and nothing in a
+shared network namespace can tell that user's traffic from a process inside the machine running as
+the same user — so a machine's own root steps around the whole policy with one `setpriv`, `cidrs`
+rules included. That is the shape every sidecar proxy has. What the policy is worth is what it is: a
+machine's package manager, its cron table and its first-boot script go where the rules say, and a
+mistake in any of them is caught. Saying that in `values.yaml` is worth more than the feature is.
 
 `http` is plaintext only, and that is not a limitation to be worked around later. Matching a path on
 an HTTPS connection means terminating TLS in the sidecar and installing a certificate authority

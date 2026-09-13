@@ -62,11 +62,14 @@ data:
     {{- end }}
     {{- end }}
   envoy.yaml: |
-    admin:
-      address:
-        socket_address:
-          address: 127.0.0.1
-          port_value: {{ include "stateful-pods.egress.adminPort" $ctx }}
+    # No administration interface. One on the loopback address would be reachable
+    # from inside the machine - which shares this network namespace - where
+    # /quitquitquit would stop the policy and /config_dump would read it. What it
+    # was used for was asking whether the proxy is listening, and the answer to
+    # that is a connection to the listener itself.
+    #
+    # The policy is readable without it: it is this ConfigMap.
+    #
     # A bound on the connections the proxy will hold open. Envoy warns on
     # startup when there is none, and the warning is right: a machine is an
     # operating system, and a process inside one that opens connections without

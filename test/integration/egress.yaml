@@ -32,8 +32,11 @@ machines:
             http:
               authority: registry.example.invalid
               pathPrefix: /v2/
-          # Layer 4: an address the machine cannot lie about.
+          # Layer 4: an address the machine cannot lie about. The address here
+          # is the documentation range and is always replaced by the suite - one
+          # inside 127.0.0.0/8 would be exempt from the redirect, so a lost
+          # override would fail this for a reason unrelated to the policy.
           - name: apiserver
             ports: [443]
             cidrs:
-              - 127.0.0.1/32
+              - 192.0.2.1/32

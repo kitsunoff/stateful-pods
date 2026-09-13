@@ -260,8 +260,9 @@ kubectl logs lab-web-0 --container envoy
 ```
 
 **A server-name rule is a claim the machine makes about itself**: a process inside it can put any
-name in a handshake. That is why a policy worth relying on also has an address rule, which is
-enforced where a process's identity is not what decides.
+name in a handshake, and the proxy believes it. An address rule is stronger, because an address is
+not something the machine gets to assert — but the policy governs the machine's software and not its
+root, and both READMEs say where that line is.
 
 ## Storage beside the root filesystem
 

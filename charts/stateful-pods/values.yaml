@@ -603,11 +603,14 @@ envoy:
 #             #
 #             # IT IS A CLAIM THE MACHINE MAKES ABOUT ITSELF. A process inside
 #             # the machine can open a TLS connection to any address and put any
-#             # name in the handshake. This stops a package manager reaching the
-#             # wrong mirror; it does not stop a determined program inside the
-#             # machine. What does bound that program is a `cidrs` rule, which
-#             # matches the address it cannot lie about - the two forms are meant
-#             # to be used together.
+#             # name in the handshake, and the proxy will believe it. This stops
+#             # a package manager reaching the wrong mirror, and a `cidrs` rule
+#             # beside it stops the same connection reaching the wrong address -
+#             # which is a different and stronger thing, because an address is
+#             # not something the machine gets to assert.
+#             #
+#             # Neither stops a program that has root inside the machine. See the
+#             # holes at the end of this block.
 #             #
 #             # A leading "*." matches one level of subdomain.
 #           - name: debian-mirror
@@ -675,11 +678,19 @@ envoy:
 #     #
 #     # TWO HOLES, NAMED RATHER THAN HIDDEN:
 #     #
-#     #   * The proxy is exempted from the redirect by the user it runs as, 1337.
-#     #     A process inside the machine running as that user is exempted too,
-#     #     and the machine's own root can create one. A `cidrs` rule is enforced
-#     #     by the packet filter, where a process's identity is not what decides,
-#     #     which is why a policy worth relying on has a layer-4 half.
+#     #   * THE POLICY GOVERNS THE MACHINE'S SOFTWARE, NOT THE MACHINE'S ROOT.
+#     #     The proxy is exempted from the redirect by the user it runs as,
+#     #     1337, and nothing in this namespace can tell that user's traffic from
+#     #     a process inside the machine running as the same user. A machine's
+#     #     own root can become that user with one command, and its TCP then
+#     #     bypasses every rule here - `cidrs` rules included, because those are
+#     #     decided by the proxy too.
+#     #
+#     #     This is the shape every sidecar proxy has, and it cannot be closed
+#     #     from inside the namespace the guest shares. What the policy is worth
+#     #     is what it is: a machine's package manager, its cron table and its
+#     #     first-boot script go where the rules say, and a mistake in any of
+#     #     them is caught. It is not a sandbox around a hostile administrator.
 #     #   * IPv6 is not proxied. Under `deny` it is dropped outright; under
 #     #     `allow` it is untouched. A machine that needs a named IPv6
 #     #     destination is not something this serves.

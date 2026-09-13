@@ -633,10 +633,10 @@ would be one whose refusals nobody could predict; the chart refuses it, naming b
 
 > [!IMPORTANT]
 > **A `serverNames` rule is a claim the machine makes about itself.** A process inside the machine
-> can open a TLS connection to any address and put any name in the handshake. This stops a package
-> manager reaching the wrong mirror; it does not stop a determined program inside the machine. What
-> bounds such a program is the layer-4 half — an address it cannot lie about — so a policy worth
-> relying on has a `cidrs` rule in it.
+> can open a TLS connection to any address and put any name in the handshake, and the proxy will
+> believe it. A `cidrs` rule beside it is stronger, because an address is not something the machine
+> gets to assert — but neither stops a program that has root inside the machine. See *what it costs,
+> and two holes* below.
 
 `http` is plaintext only, and deliberately. Matching a path on an HTTPS connection means terminating
 TLS in the proxy and installing a certificate authority inside the machine, which is a different
@@ -692,10 +692,16 @@ refusals are silent is one that gets disabled rather than debugged.
 
 The two holes, named rather than hidden:
 
-- **The proxy is exempted from the redirect by the user it runs as, 1337.** A process inside the
-  machine running as that user is exempted too, and the machine's own root can create one. A `cidrs`
-  rule is enforced by the packet filter, where a process's identity is not what decides — which is
-  the second reason a policy worth relying on has a layer-4 half.
+- **The policy governs the machine's software, not the machine's root.** The proxy is exempted from
+  the redirect by the user it runs as, 1337, and nothing in this namespace can tell its traffic from
+  a process inside the machine running as the same user. A machine's own root becomes that user with
+  one `setpriv`, and its TCP then bypasses every rule — `cidrs` rules included, because those are
+  decided by the proxy too.
+
+  This is the shape every sidecar proxy has, and it cannot be closed from inside a namespace the
+  guest shares. What the policy is worth is what it is: a machine's package manager, its cron table
+  and its first-boot script go where the rules say, and a mistake in any of them is caught. It is not
+  a sandbox around a hostile administrator.
 - **IPv6 is not proxied.** Under `deny` it is dropped outright; under `allow` it is untouched. A
   machine that needs a named IPv6 destination is not something this serves, and an IPv6 range in a
   `cidrs` rule is refused rather than rendered into a rule that never matches.
