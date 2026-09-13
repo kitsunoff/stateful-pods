@@ -107,14 +107,14 @@ tests:
   - it: warns a cloud-init machine that its image has to be able to run it
     asserts:
       - matchRegexRaw:
-          pattern: 'guest\.provisioning: native'
+          pattern: 'guest\.provisioning: exec'
 
   - it: says nothing about provisioning inputs when none were supplied
     asserts:
       - notMatchRegexRaw:
           pattern: 'shadow'
 
-  - it: names the native backend when that is what the machine chose
+  - it: names the exec backend when that is what the machine chose
     set:
       machines.web:
         source:
@@ -123,10 +123,10 @@ tests:
         security:
           mode: userns
         guest:
-          provisioning: native
+          provisioning: exec
     asserts:
       - matchRegexRaw:
-          pattern: 'provisioned natively'
+          pattern: 'provisioned by exec'
       # None of the cloud-init advice belongs on a machine that did not choose it.
       - notMatchRegexRaw:
           pattern: 'NoCloud seed'

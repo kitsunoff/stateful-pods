@@ -3,10 +3,12 @@
 # Provisioning a machine: the users, keys, packages and commands its values ask
 # for, written into the machine's own root filesystem.
 #
-# Two backends. `native` is layer 0 and nothing else - the three files the chart
-# already maintains on every boot - and it works with any image. `cloud-init` is
-# the default and writes a NoCloud seed directory, which is four files and a
-# drop-in and no ISO, no block device and no privilege.
+# Two backends, and only one of them acts here. `cloud-init` is the default and
+# writes a NoCloud seed directory, which is four files and a drop-in and no ISO,
+# no block device and no privilege. `exec` writes nothing at this point in a
+# machine's life and could not: its script runs inside the machine after the
+# machine has booted, carried by a Job beside the pod, which is a place this
+# step cannot reach and a moment it cannot wait for.
 #
 # This runs before the root change, in the chart's own image, and it manipulates
 # files in the machine's filesystem. It never executes anything belonging to the
@@ -195,7 +197,7 @@ sp_check_cloud_init() {
         fi
     done
     if [ -z "$_sp_binary" ]; then
-        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem does not carry cloud-init. Looked for: $SP_CLOUD_INIT_BINARIES (under $_sp_root). Nothing has been written into the machine. Either seed it from an image that carries cloud-init - the distributions publish a 'cloud' variant for exactly this - or set machines.${SP_MACHINE:-<name>}.guest.provisioning: native, which provisions nothing beyond the host name, host table and resolver the chart maintains on every boot and works with any image. Then delete this pod: a StatefulSet does not replace a pod that never became ready, so the new value will sit in the object while this pod goes on failing."
+        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem does not carry cloud-init. Looked for: $SP_CLOUD_INIT_BINARIES (under $_sp_root). Nothing has been written into the machine. Either seed it from an image that carries cloud-init - the distributions publish a 'cloud' variant for exactly this - or set machines.${SP_MACHINE:-<name>}.guest.provisioning: exec, which asks nothing of the image - with no script it writes nothing beyond the host name, host table and resolver the chart maintains on every boot, and with machines.${SP_MACHINE:-<name>}.exec.script it runs that script inside the machine once the machine has booted. Then delete this pod: a StatefulSet does not replace a pod that never became ready, so the new value will sit in the object while this pod goes on failing."
     fi
 
     _sp_unit=""
@@ -206,7 +208,7 @@ sp_check_cloud_init() {
         fi
     done
     if [ -z "$_sp_unit" ]; then
-        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem carries $_sp_binary but nothing that would start it. Looked for: $SP_CLOUD_INIT_UNITS (under $_sp_root). A seed written into an image whose init system never runs cloud-init is read by nothing, so nothing has been written. Set machines.${SP_MACHINE:-<name>}.guest.provisioning: native and then delete this pod - a StatefulSet does not replace a pod that never became ready. Or report this image: the check is deliberately narrow, and the paths above are what it searched."
+        sp_die "machine ${SP_MACHINE:-?}: this machine is provisioned by cloud-init, and its root filesystem carries $_sp_binary but nothing that would start it. Looked for: $SP_CLOUD_INIT_UNITS (under $_sp_root). A seed written into an image whose init system never runs cloud-init is read by nothing, so nothing has been written. Set machines.${SP_MACHINE:-<name>}.guest.provisioning: exec and then delete this pod - a StatefulSet does not replace a pod that never became ready. Or report this image: the check is deliberately narrow, and the paths above are what it searched."
     fi
 
     sp_log "machine ${SP_MACHINE:-?}: the machine can run cloud-init ($_sp_binary, started by $_sp_unit)"
@@ -355,12 +357,17 @@ sp_provision() {
         cloud-init)
             sp_provision_cloud_init "$_sp_root"
             ;;
-        native)
-            # Layer 0 and nothing else, which the step before this one has
-            # already done. Nothing is removed either: switching a machine to
-            # this backend means "stop managing this", not "undo what was done",
-            # and the volume is the machine.
-            sp_log "machine ${SP_MACHINE:-?}: provisioning is native, so nothing is written into the machine beyond the host name, host table and resolver the chart maintains"
+        exec)
+            # Nothing is written here, and nothing could be. The script this
+            # backend runs needs the machine to exist - its shell, its init and
+            # its package manager - and at this point in the boot there is a
+            # directory of another system's binaries and no machine. A Job
+            # beside the pod waits for the machine and runs the script inside it.
+            #
+            # Nothing is removed either: switching a machine to this backend
+            # means "stop managing this", not "undo what was done", and the
+            # volume is the machine.
+            sp_log "machine ${SP_MACHINE:-?}: provisioning is exec, so nothing is written into the machine here. Its script, if it has one, runs inside the machine once the machine has booted, from the job beside this pod."
             ;;
         *)
             sp_die "machine ${SP_MACHINE:-?}: ${SP_PROVISIONING:-} is not a provisioning backend this image implements. The chart refuses an unknown backend while it renders, so reaching here means the chart and this image are different versions of themselves."

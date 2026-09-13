@@ -151,8 +151,14 @@ shim:
 #     hostname: null
 #
 #     guest:
-#       # How this machine is provisioned: cloud-init | native. Defaults to
+#       # How this machine is provisioned: cloud-init | exec. Defaults to
 #       # cloud-init.
+#       #
+#       # `native` was this backend's former name, back when it was defined by
+#       # writing nothing. It is refused with a message saying so: the backend
+#       # runs a machine's own script inside the machine now, which is not that,
+#       # and a name that quietly came to mean something else would be worse
+#       # than one that moved.
 #       #
 #       #   cloud-init - the chart writes a NoCloud seed into the machine at
 #       #                /var/lib/cloud/seed/nocloud, plus a drop-in of its own at
@@ -171,13 +177,13 @@ shim:
 #       #                two of the four presets are built from one.
 #       #
 #       #                TWO PRESETS CANNOT RUN IT, and a machine on either must
-#       #                name `native` below or it will not start:
+#       #                name `exec` below or it will not start:
 #       #
-#       #                  debian-trixie  cloud-init, native
-#       #                  alpine-3.24    cloud-init, native
-#       #                  ubuntu-noble   NATIVE ONLY - its upstream's cloud
+#       #                  debian-trixie  cloud-init, exec
+#       #                  alpine-3.24    cloud-init, exec
+#       #                  ubuntu-noble   EXEC ONLY - its upstream's cloud
 #       #                                 architectures are not yet on one build
-#       #                  void-current   NATIVE ONLY - its upstream publishes no
+#       #                  void-current   EXEC ONLY - its upstream publishes no
 #       #                                 cloud variant at all
 #       #
 #       #                Nothing is installed into a preset to close either gap: a
@@ -187,17 +193,29 @@ shim:
 #       #                assuming a distribution that carries cloud-init elsewhere
 #       #                carries it here.
 #       #
-#       #                A `kind: lxc` source almost always needs `native` too.
+#       #                A `kind: lxc` source almost always needs `exec` too.
 #       #                The templates linuxcontainers.org and Proxmox publish are
 #       #                `default` variant root filesystems and carry no
 #       #                cloud-init; the cloud variants are not distributed in
 #       #                that form.
 #       #
-#       #   native     - the chart writes nothing into the machine beyond the
-#       #                host name, host table and resolver it maintains on every
-#       #                boot. Asks nothing of the image, so it works with any of
-#       #                them, and provisions no users and no keys - the machine
-#       #                starts with whatever its source shipped.
+#       #   exec       - the chart writes nothing into the machine before it
+#       #                starts, and asks nothing of the image, so it works with
+#       #                any of them. With no script supplied that is the whole
+#       #                of it and the machine starts with whatever its source
+#       #                shipped - which is exactly what `native` was.
+#       #
+#       #                With machines.<name>.exec.script supplied, the chart
+#       #                renders a Job beside the machine which waits for the
+#       #                machine to finish booting and then runs that script
+#       #                inside it, as the machine's own root, with the machine's
+#       #                own shell, init and package manager. Nothing before the
+#       #                guest can do that: at every earlier moment the machine
+#       #                does not exist.
+#       #
+#       #                THAT JOB HOLDS THE RIGHT TO EXEC INTO THIS MACHINE, which
+#       #                is root inside it. See machines.<name>.exec.script below,
+#       #                where the grant is spelled out.
 #       #
 #       #                Switching an already-provisioned machine to this does
 #       #                not undo what was done. The volume is the machine, and a
@@ -333,6 +351,112 @@ shim:
 #       # everything is a machine that looks hung.
 #       # packageUpgrade:
 #       #   value: "false"
+#
+#     # Inputs to the exec backend. Rejected if the machine selected another
+#     # backend, rather than ignored - for the reason the cloudInit inputs are:
+#     # silently dropping them would leave you believing the machine is
+#     # configured to do something it is not.
+#     #
+#     # The two inputs below take the same `value` / `valueFrom` forms every
+#     # provisioning input takes, and mix freely. The inputs after them are
+#     # plain scalars, because they are not material: a timeout is not something
+#     # anybody needs to keep out of a values file.
+#     exec:
+#       # The script to run inside the machine, once the machine has booted.
+#       #
+#       # It runs as the machine's own root, in the machine's own root
+#       # filesystem, with the machine's own init and package manager already
+#       # running. That is the whole point of this backend and the thing no step
+#       # before the guest can do: at every earlier moment the machine does not
+#       # exist yet, and what the chart has is a directory of another system's
+#       # binaries it must never execute.
+#       #
+#       # HOW IT GETS THERE, AND WHAT THAT COSTS. The chart renders a Job beside
+#       # the machine, with a ServiceAccount of its own, which waits for the
+#       # machine to finish starting, streams this script onto the machine's
+#       # tmpfs and runs it. The Job's Role can `get` exactly one pod - this
+#       # machine's - and `create` an `exec` on that same pod. Nothing else in
+#       # the namespace is reachable from it.
+#       #
+#       # That permission is root inside this machine. It cannot be smaller: a
+#       # mechanism that runs a script as root inside a machine IS the right to
+#       # run a command as root inside that machine. Anyone who can read that
+#       # ServiceAccount's token can open a root shell in this machine. If that
+#       # is not a trade you want to make, do not supply a script - the backend
+#       # with no script renders no Job, no ServiceAccount and no Role, and
+#       # writes nothing into the machine.
+#       #
+#       # The machine's own pod gets no cluster credentials either way.
+#       #
+#       # WAITING FOR IT. `helm install --wait --wait-for-jobs`. Both flags:
+#       # `--wait` alone waits for workloads and not for Jobs, so without the
+#       # second one a release reports success while the machine is still being
+#       # configured, and a script that then fails leaves a green release and an
+#       # unconfigured machine.
+#       #
+#       # WHEN IT RUNS. Once, when what it would run changes - this script, the
+#       # environment below, or guest.provisioningRevision. An unchanged script
+#       # is not run again by an upgrade, and changing it does NOT restart the
+#       # machine: it is applied from outside a running machine, and replacing a
+#       # pet's pod to change something it never reads at boot would destroy
+#       # state for no effect.
+#       #
+#       # The one gap, stated rather than hidden: if this machine's volume is
+#       # destroyed and seeded again while the Job that ran this script is
+#       # already complete, the script does not run again. Delete the Job and
+#       # upgrade - NOTES.txt prints the command.
+#       #
+#       # WHAT IT IS NOT. It is not a way to undo anything. Removing this input
+#       # removes the Job and changes nothing inside the machine, exactly as
+#       # switching backends never undid what a backend had done. The volume is
+#       # the machine.
+#       script:
+#         value: |
+#           set -eu
+#           apk add --no-cache openssh
+#           rc-update add sshd default
+#           rc-service sshd start
+#
+#       # Optional: an environment for the script, one KEY=VALUE per line.
+#       #
+#       # It exists so that a script can stay readable in this file while the
+#       # secret it needs is named rather than spelled out. It is written to the
+#       # machine's tmpfs and sourced from there, so it never appears on a
+#       # command line - not in the Job's logs, not in the machine's process
+#       # table, and not in the cluster's audit log.
+#       #
+#       # Like the script, it is gone at the machine's next boot: /run is a
+#       # tmpfs the boot sequence mounts, so neither reaches the machine's
+#       # volume or any snapshot of it.
+#       # environment:
+#       #   valueFrom:
+#       #     secretKeyRef:
+#       #       name: machine-secrets
+#       #       key: exec-environment
+#
+#       # What runs the script. Defaults to /bin/sh, which every machine has.
+#       #
+#       # Named rather than taken from a shebang line, because the shebang is
+#       # read by the kernel when a file is executed and this file is handed to
+#       # an interpreter by path. Anything the machine can execute works:
+#       # /bin/bash, /usr/bin/python3.
+#       # interpreter: /bin/sh
+#
+#       # How long the whole of it may take: waiting for the machine to boot and
+#       # running the script, together. Defaults to 1800 seconds.
+#       #
+#       # One budget rather than two, because the wait includes seeding an
+#       # operating system onto an empty volume and no one can usefully split
+#       # that from the script's own time. When it runs out the Job fails with
+#       # DeadlineExceeded rather than waiting forever.
+#       # timeoutSeconds: 1800
+#
+#       # How many times a failed run is tried again. Defaults to 0.
+#       #
+#       # Zero, because a provisioning script is somebody's shell and re-running
+#       # one that failed half way is a decision only its author can make. Raise
+#       # it for a script you know to be idempotent.
+#       # retries: 0
 #
 #     # What the cluster is told about this machine's network presence.
 #     #

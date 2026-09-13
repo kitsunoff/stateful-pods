@@ -1,0 +1,74 @@
+{{- include "stateful-pods.validate" . -}}
+{{- /* The identity the Job that runs a machine's script acts under.
+
+       It is a real grant and it is written out here so that a reviewer can read
+       the whole of it in one place: the right to get one pod, and the right to
+       create an exec on that same pod. Both are restricted by name, so nothing
+       else in the namespace is reachable from this identity - not another
+       machine in the same release, not a Secret, not a list of pods.
+
+       `create` on `pods/exec` for one pod IS root inside that machine. It
+       cannot be smaller than that: a mechanism that runs a script as root
+       inside a machine is, definitionally, the right to run a command as root
+       inside that machine. values.yaml says so at the input that causes it, so
+       that the person choosing the backend is the person who weighs it.
+
+       The wait is a poll of `get pod` rather than `kubectl wait`, and that is
+       why `list` and `watch` are absent. A watch cannot be restricted to one
+       object: `resourceNames` does not apply to list and watch, so a Job that
+       used `kubectl wait` would need the right to watch every pod in the
+       namespace. */ -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- if include "stateful-pods.machine.exec.hasScript" $ctx }}
+{{- $objectName := include "stateful-pods.machine.name" $ctx }}
+{{- $identity := include "stateful-pods.machine.exec.name" $ctx }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $identity }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+# The token is mounted into the Job's pod, which is the only place it is used.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $identity }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+rules:
+  # Whether the machine has finished starting. Polled rather than watched, so
+  # that it can be restricted to this one pod.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+    resourceNames:
+      - {{ printf "%s-0" $objectName | quote }}
+  # Running the machine's script, inside the machine. This is root in that
+  # machine and in no other.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+    resourceNames:
+      - {{ printf "%s-0" $objectName | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $identity }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $identity }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $identity }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}
+{{- end }}

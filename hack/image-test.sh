@@ -9,7 +9,9 @@
 #      extended-attribute support, so it drops file capabilities silently and the
 #      resulting rootfs looks fine until an unprivileged `ping` fails forever;
 #   3. it can fetch an image from a registry and flatten it into the same tar,
-#      keeping security.capability and honouring the layer whiteouts.
+#      keeping security.capability and honouring the layer whiteouts;
+#   4. it carries a Kubernetes client, which the exec provisioning backend needs
+#      in order to reach a booted machine at all.
 #
 # The third is what an oci source now depends on: the chart fetches the image
 # itself rather than running it, so a flatten that dropped an attribute or
@@ -222,6 +224,18 @@ exit "$status"
   pass "every entry point is executable and every sourced library is not"
 else
   fail "a script the chart runs as a container command is not executable"
+fi
+
+echo "==> 8. the image carries a Kubernetes client"
+# The exec provisioning backend reaches a booted machine through the cluster's
+# API, from a Job that runs this image like every other container the chart
+# renders. A client that is missing fails that Job at its first command, on a
+# cluster, minutes after the machine it was waiting for finished booting - which
+# is the most expensive place to find out.
+if in_image 'kubectl version --client >/dev/null' >/dev/null 2>&1; then
+  pass "kubectl is present and reports a client version"
+else
+  fail "kubectl is missing or unusable; the exec provisioning backend cannot work"
 fi
 
 echo "all image assertions held"

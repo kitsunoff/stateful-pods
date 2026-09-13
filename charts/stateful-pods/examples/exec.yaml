@@ -1,0 +1,66 @@
+# A machine on an image that cannot run cloud-init, configured by its own script.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/exec.yaml
+#
+# `void-current` is the preset whose upstream publishes no cloud variant at all,
+# so it cannot serve the default backend and has to name this one. Until now
+# that meant such a machine booted with the accounts its source shipped and no
+# way in but `kubectl machine shell`.
+#
+# The script runs INSIDE the machine, once the machine has booted, as its own
+# root. The chart renders a Job beside the machine to carry it there, with a
+# ServiceAccount whose Role may get this machine's pod and exec into that same
+# pod - which is root inside this machine, and nothing else in the namespace.
+machines:
+  os:
+    source:
+      kind: preset
+      name: void-current
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    guest:
+      provisioning: exec
+
+      # Bumped by hand to run the script again without editing it - after
+      # restoring this machine's volume, say. Helm cannot see the content of a
+      # referenced Secret, so nothing else here would notice one rotating.
+      provisioningRevision: "1"
+
+    exec:
+      # Not sensitive, so it stays readable here. The secret it needs is named
+      # below rather than spelled out.
+      script:
+        value: |
+          set -eu
+          xbps-install -Sy openssh
+          ln -sf /etc/sv/sshd /var/service/
+          install -d -m 0700 /root/.ssh
+          printf '%s\n' "$AUTHORIZED_KEY" > /root/.ssh/authorized_keys
+
+      # Written to the machine's tmpfs and sourced from there, so it appears on
+      # no command line: not in this Job's logs, not in the machine's process
+      # table, and not in the cluster's audit log. It is gone at the machine's
+      # next boot.
+      environment:
+        valueFrom:
+          secretKeyRef:
+            name: machine-secrets
+            key: exec-environment
+
+      # The machine's own shell. /bin/sh is the default; this names it because
+      # the example is about what runs where.
+      interpreter: /bin/sh
+
+      # Waiting for the machine to boot and running the script, together. A
+      # first boot seeds an operating system onto an empty volume, so the
+      # default is generous.
+      timeoutSeconds: 1800
+
+      # Zero is the default: re-running a provisioning script that failed half
+      # way is a decision only its author can make. This one is idempotent.
+      retries: 1

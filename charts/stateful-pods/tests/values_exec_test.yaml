@@ -1,0 +1,285 @@
+suite: values validation - the exec backend and its inputs
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: refuses the backend's former name, and says what it became
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: native
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "native" was renamed to "exec".*with no script supplied it writes nothing into the machine, exactly as native did'
+
+  - it: lists the backends that exist when one is misspelled
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: ansible
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "ansible" is not a provisioning backend.*cloud-init, exec'
+
+  - it: refuses an exec block that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec: echo hello
+    asserts:
+      - failedTemplate:
+          errorPattern: "(?s)machines\\.web\\.exec: must be a map of the exec backend's inputs"
+
+  - it: refuses exec inputs on a machine provisioned by cloud-init
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec: belongs to the "exec" backend, but this machine selected "cloud-init"'
+
+  - it: refuses cloud-init inputs on a machine provisioned by exec
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        cloudInit:
+          user:
+            value: maxim
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.cloudInit: belongs to the "cloud-init" backend, but this machine selected "exec"'
+
+  - it: refuses a script supplied both inline and by reference
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: script
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec\.script: carries both `value` and `valueFrom`'
+
+  - it: refuses an environment whose reference names no key
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          environment:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec\.environment\.valueFrom\.secretKeyRef\.key: not set'
+
+  - it: refuses a key the backend does not accept, and lists the ones it does
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          shell: /bin/bash
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec\.shell: is not an input of the "exec" backend.*Accepted inputs: environment, interpreter, retries, script, timeoutSeconds'
+
+  - it: refuses an interpreter that is not an absolute path
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          interpreter: bash
+    asserts:
+      - failedTemplate:
+          errorPattern: "(?s)machines\\.web\\.exec\\.interpreter: \"bash\" is not an absolute path.*resolved inside the machine"
+
+  - it: refuses a budget that is not a number of seconds
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          timeoutSeconds: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec\.timeoutSeconds: 0 is not a number of seconds'
+
+  - it: refuses a negative retry count
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          retries: -1
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.exec\.retries: -1 is not a number of retries'
+
+  - it: refuses a machine whose name leaves no room for the Job that runs its script
+    release:
+      name: a-release-with-a-name-of-some-length
+    set:
+      machines.a-machine-named-at-length:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)the Job that would run this machine.s script is named .* over the 63-character limit'
+
+  - it: accepts a machine whose name fits, and renders it
+    release:
+      name: lab
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          environment:
+            value: |
+              TOKEN=hunter2
+          interpreter: /bin/bash
+          timeoutSeconds: 600
+          retries: 1
+    asserts:
+      - isKind:
+          of: StatefulSet
+
+  - it: accepts the backend with no inputs at all, which is what native was
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+    asserts:
+      - isKind:
+          of: StatefulSet
+      - notExists:
+          path: spec.template.spec.volumes

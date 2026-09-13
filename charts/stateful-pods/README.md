@@ -267,10 +267,10 @@ bump reads that field and never writes it.
 
 | Preset | Upstream variant | Provisioning it can serve | Uncompressed |
 | --- | --- | --- | --- |
-| `debian-trixie` | `cloud` | cloud-init, native | 557 MiB |
-| `ubuntu-noble` | `default` (pending) | native only | 585 MiB |
-| `alpine-3.24` | `cloud` | cloud-init, native | 76 MiB |
-| `void-current` | `default` | native only | 361 MiB |
+| `debian-trixie` | `cloud` | cloud-init, exec | 557 MiB |
+| `ubuntu-noble` | `default` (pending) | exec only | 585 MiB |
+| `alpine-3.24` | `cloud` | cloud-init, exec | 76 MiB |
+| `void-current` | `default` | exec only | 361 MiB |
 
 Alpine's cloud variant is six times the size of its default one, because cloud-init brings a Python
 runtime with it.
@@ -609,7 +609,7 @@ command gets into it.
 machines:
   web:
     guest:
-      provisioning: cloud-init      # cloud-init | native. cloud-init is the default.
+      provisioning: cloud-init      # cloud-init | exec. cloud-init is the default.
     cloudInit:
       user:
         value: maxim
@@ -644,11 +644,25 @@ The network line is the important one. Proxmox's whole guest-customization layer
 `/etc/network/interfaces`; here the job is the exact inverse, because a configuration applied on top
 of what the CNI did takes away the address the pod was given.
 
-**`native`.** The chart writes nothing into the machine beyond the three files it already maintains
-on every boot. It asks nothing of the image, so it works with any of them, and it provisions no
-users and no keys. Switching an already-provisioned machine to it does not undo what was done: the
-volume is the machine, and a value change that silently edited a running machine's `/etc` would be a
-chart that destroys state on a typo.
+**`exec`.** The chart writes nothing into the machine before it starts, and asks nothing of the
+image, so it works with any of them. With no script supplied that is the whole of it, and the
+machine starts with whatever its source shipped — which is exactly what the former `native` backend
+was.
+
+With `machines.<name>.exec.script` supplied, the chart renders a **Job beside the machine** which
+waits for the machine to finish booting and then runs that script inside it, as the machine's own
+root, with the machine's own shell, init and package manager. See [Running a machine's own
+script](#running-a-machines-own-script) below.
+
+Switching an already-provisioned machine to it does not undo what was done, and neither does
+removing a script: the volume is the machine, and a value change that silently edited a running
+machine's `/etc` would be a chart that destroys state on a typo.
+
+> [!NOTE]
+> **`native` was renamed to `exec`.** It is refused rather than translated, with a message saying
+> so, because the backend is no longer defined by writing nothing — and a name that quietly comes to
+> mean something else is worse than one that moved. `exec` with no script behaves exactly as
+> `native` did.
 
 `systemd-credentials` is described in the design and is not implemented. Naming it fails rendering
 and says so, rather than pretending the name is a typo.
@@ -657,7 +671,7 @@ and says so, rather than pretending the name is a typo.
 
 Before anything is written, the provisioning step checks that the machine's root filesystem can
 actually run cloud-init — the program, and something an init system would start it with. If it
-cannot, **the pod fails** with a message naming `guest.provisioning: native` as the fix.
+cannot, **the pod fails** with a message naming `guest.provisioning: exec` as the fix.
 
 This is deliberate and it is the point. On an image without cloud-init a seed would be written,
 nothing would read it, and the machine would boot with no users, no keys and no way in, with nothing
@@ -668,7 +682,7 @@ Changing the value is not enough on its own: a StatefulSet does not replace a po
 ready, so delete the pod after the change.
 
 ```bash
-helm upgrade … --set machines.web.guest.provisioning=native
+helm upgrade … --set machines.web.guest.provisioning=exec
 kubectl delete pod web-0
 ```
 
@@ -682,21 +696,114 @@ that fails is left exactly as it was.
 
 | Preset | Backends it can serve | Why |
 | --- | --- | --- |
-| `debian-trixie` | `cloud-init`, `native` | built from the upstream `cloud` variant |
-| `alpine-3.24` | `cloud-init`, `native` | built from the upstream `cloud` variant |
-| `ubuntu-noble` | **`native` only** | its upstream's cloud architectures are not yet on one build |
-| `void-current` | **`native` only** | its upstream publishes no cloud variant at all |
+| `debian-trixie` | `cloud-init`, `exec` | built from the upstream `cloud` variant |
+| `alpine-3.24` | `cloud-init`, `exec` | built from the upstream `cloud` variant |
+| `ubuntu-noble` | **`exec` only** | its upstream's cloud architectures are not yet on one build |
+| `void-current` | **`exec` only** | its upstream publishes no cloud variant at all |
 
 Nothing is installed into a preset to close either gap, because a preset is the distribution's own
 root filesystem or it is not a preset. Void's upstream publishes only `default` and `musl`; Ubuntu's
 `cloud` variant exists but its two architectures are not on the same build, and one tag cannot
-honestly name two root filesystems. **A machine on either must name `guest.provisioning: native`**
+honestly name two root filesystems. **A machine on either must name `guest.provisioning: exec`**
 or it will not start.
 
-**An `lxc` template source almost always needs `native` as well.** The templates
+**An `lxc` template source almost always needs `exec` as well.** The templates
 linuxcontainers.org and Proxmox distribute are `default` variant root filesystems and carry no
 cloud-init — the cloud variants are not published in that form — so a machine on one that leaves the
 backend unset is refused.
+
+### Running a machine's own script
+
+```yaml
+machines:
+  os:
+    guest:
+      provisioning: exec
+    exec:
+      script:
+        value: |
+          set -eu
+          xbps-install -Sy openssh
+          ln -sf /etc/sv/sshd /var/service/
+      environment:
+        valueFrom:
+          secretKeyRef:
+            name: machine-secrets
+            key: exec-environment
+      interpreter: /bin/sh    # the default
+      timeoutSeconds: 1800    # waiting for the boot and running the script, together
+      retries: 0              # the default
+```
+
+The script runs **inside the machine, after the machine has booted**, as its own root. Nothing that
+runs before the guest can do that: at every earlier moment there is a directory holding another
+system's binaries — which the chart must never execute — and no init, no package manager and no
+network stack of the machine's own. That is why the former `native` backend could create a user but
+never install a package.
+
+**How it gets there.** The chart renders a Job, a ServiceAccount, a Role and a RoleBinding beside the
+machine. The Job waits for the machine's pod to report itself ready, confirms the boot marker the
+shim writes immediately after `pivot_root`, streams the script onto the machine's `tmpfs` and runs
+it. Its output is the Job's logs.
+
+It is a Job and not a container in the machine's own pod, because a container there cannot enter the
+machine's mount namespace unless the pod sets `shareProcessNamespace` — and a pod that does gives
+PID 1 to the pause container rather than to the machine's init, which systemd refuses to run
+without. The whole point of this chart is that a machine runs its own init.
+
+**To have the install wait for it**, pass both flags:
+
+```bash
+helm install lab … --wait --wait-for-jobs --timeout 10m
+```
+
+`--wait` alone does not wait for Jobs. Without `--wait-for-jobs` the install reports success as soon
+as the machine is ready, while its script is still running — and a script that then fails leaves a
+green release and an unconfigured machine.
+
+The script is streamed through `kubectl exec` rather than copied with `kubectl cp`, because
+`kubectl cp` runs `tar` **inside the target container**: a machine without an archiver would fail
+for a reason that has nothing to do with its script.
+
+> [!IMPORTANT]
+> **That Job may exec into the machine, which is root inside it.** Its Role is exactly two rules —
+> `get` on one pod and `create` on `pods/exec` for that same pod, both by name — and it reaches
+> nothing else in the namespace. It cannot be smaller: a mechanism that runs a script as root inside
+> a machine *is* the right to run a command as root inside that machine. Anyone who can read that
+> ServiceAccount's token can open a root shell in the machine. Supply no script and none of it is
+> rendered.
+>
+> The machine's own pod is given no cluster credentials at all, under any backend.
+
+**When it runs.** The Job's name carries a digest of the script, the environment and
+`guest.provisioningRevision`, so:
+
+| What happened | What follows |
+| --- | --- |
+| The script changed | a different name, so a new Job is created and runs |
+| Nothing changed | the same name and the same content, so the upgrade is a no-op |
+| The release is upgraded for an unrelated reason | the same name, so nothing re-runs |
+| `provisioningRevision` was bumped | a different name, so it runs again |
+| The release is uninstalled | the Job goes with it |
+
+A Job's specification is immutable once it exists, which is what makes the digest part of the name
+necessary rather than decorative: a constant name would make `helm upgrade` fail with
+`field is immutable` the first time a script changed.
+
+**Changing the script does not restart the machine**, and no `checksum/provisioning` annotation is
+applied under this backend. The script is applied to a running machine from outside it, so nothing
+about the pod depends on its content, and replacing a pet's pod to change something it never reads
+at boot would destroy state for no effect.
+
+The one gap, stated rather than hidden: if a machine's volume is destroyed and seeded again while its
+Job is already complete, the script does not run again. `NOTES.txt` prints the command that re-runs
+it.
+
+**Where the material goes.** The script and the environment are written to
+`/run/stateful-pods/provision/` inside the machine — a `tmpfs` the boot sequence mounts, so neither
+reaches the machine's volume or any snapshot of it, and both are gone at the next boot. The
+environment is sourced from that file and never passed as arguments, which keeps it out of the Job's
+logs, out of the machine's process table and out of the cluster's audit log.
 
 The column is what a preset can serve today, and it moves when an upstream does. `presets.yaml` and
 the table above the preset section are the two places it is recorded; check them rather than
@@ -925,7 +1032,7 @@ as a machine that behaves differently.
 
 Every machine now selects a provisioning backend, and one that declares none selects `cloud-init`.
 On an image that cannot run cloud-init the pod fails, with a message naming
-`guest.provisioning: native` as the fix. That is the settled design working as intended: the
+`guest.provisioning: exec` as the fix. That is the settled design working as intended: the
 alternative is a machine that installs cleanly, boots with no users and no keys, and gives nobody a
 way in.
 
@@ -934,16 +1041,16 @@ way in.
 | A machine on … | What to do |
 | --- | --- |
 | `debian-trixie`, `alpine-3.24` | nothing — cloud-init runs and provisions from an empty configuration |
-| `ubuntu-noble` | set `guest.provisioning: native` — its upstream's cloud architectures are not yet on one build |
-| `void-current` | set `guest.provisioning: native` — its upstream publishes no cloud variant |
-| an `lxc` template source | set `guest.provisioning: native` — the published templates are `default` variants and carry no cloud-init |
-| any other image without cloud-init | set `guest.provisioning: native` |
+| `ubuntu-noble` | set `guest.provisioning: exec` — its upstream's cloud architectures are not yet on one build |
+| `void-current` | set `guest.provisioning: exec` — its upstream publishes no cloud variant |
+| an `lxc` template source | set `guest.provisioning: exec` — the published templates are `default` variants and carry no cloud-init |
+| any other image without cloud-init | set `guest.provisioning: exec` |
 
 ```yaml
 machines:
   web:
     guest:
-      provisioning: native
+      provisioning: exec
 ```
 
 **A machine that already exists is not re-seeded**, and nothing on its volume is replaced. What

@@ -243,9 +243,19 @@ Takes (dict "root" $ "name" $name "machine" $machine).
 {{- $backend := include "stateful-pods.machine.provisioning.backend" . -}}
 {{- $inline := dict -}}
 {{- $refs := list -}}
+{{- $catalog := dict -}}
+{{- $given := dict -}}
 {{- if eq $backend "cloud-init" -}}
-{{- $catalog := include "stateful-pods.provisioning.cloudInit.inputs" . | fromYaml -}}
-{{- $given := .machine.cloudInit | default dict -}}
+{{- $catalog = include "stateful-pods.provisioning.cloudInit.inputs" . | fromYaml -}}
+{{- $given = .machine.cloudInit | default dict -}}
+{{- else if eq $backend "exec" -}}
+{{- /* The same machinery, a different catalog. A script and an environment are
+       material in the sense the cloud-init inputs are, so they arrive under
+       fixed file names by the same route and the thing that reads them cannot
+       tell an inline value from a projected Secret key. */ -}}
+{{- $catalog = include "stateful-pods.provisioning.exec.inputs" . | fromYaml -}}
+{{- $given = .machine.exec | default dict -}}
+{{- end -}}
 {{- if kindIs "map" $given -}}
 {{- range $field, $path := $catalog -}}
 {{- $input := index $given $field -}}
@@ -261,7 +271,6 @@ Takes (dict "root" $ "name" $name "machine" $machine).
 {{- else if kindIs "map" (index $from "configMapKeyRef") -}}
 {{- $ref := index $from "configMapKeyRef" -}}
 {{- $refs = append $refs (dict "path" $path "kind" "configMap" "name" ($ref.name | toString) "key" ($ref.key | toString)) -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -337,6 +346,118 @@ Takes the same machine context as the other helpers.
   value: {{ include "stateful-pods.machine.provisioning.backend" . | quote }}
 - name: SP_PROVISIONING_DIR
   value: /provisioning
+{{- end -}}
+
+{{/*
+The inputs the exec backend accepts as material, mapped to the file name each one
+is materialized under.
+
+Two of them, and they are material in the sense the cloud-init inputs are: they
+carry content that may want to be named rather than spelled out. The rest of the
+backend's inputs - the interpreter, the budget, the retry count - are plain
+scalars, because nobody needs to keep a timeout out of a values file.
+
+Takes no context. Emits YAML.
+*/}}
+{{- define "stateful-pods.provisioning.exec.inputs" -}}
+script: script
+environment: environment
+{{- end -}}
+
+{{/*
+The inputs the exec backend accepts that are not material.
+*/}}
+{{- define "stateful-pods.provisioning.exec.settings" -}}
+interpreter timeoutSeconds retries
+{{- end -}}
+
+{{/*
+The name of the identity the exec Job acts under: the ServiceAccount, the Role
+and the RoleBinding all share it, because they are one grant and separating their
+names would make the grant harder to read rather than easier.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.exec.name" -}}
+{{- printf "%s-exec" (include "stateful-pods.machine.name" .) -}}
+{{- end -}}
+
+{{/*
+The name of the Job that runs a machine's script.
+
+The digest is of everything the chart can see about what would run - the
+material as it was resolved, the references by name, and the machine's own
+revision input - which is exactly the digest the cloud-init backend restarts a
+machine on. Here it names an object instead.
+
+That is the whole of the re-run policy, and it falls out of Helm's own semantics
+rather than being enforced anywhere: an unchanged script is the same name and the
+same content, so an upgrade is a no-op; a changed one is a different name, so the
+old Job is removed and a new one is created and runs; and an uninstall takes both
+with it. A Job's specification is immutable once it exists, so a name that stayed
+the same while its script changed would make `helm upgrade` fail with `field is
+immutable`.
+
+Eight hexadecimal characters, which with the `-exec-` infix is the fourteen the
+validation stage holds a machine's object name to when it supplies a script: a
+Job's name may not exceed 63 characters, because the controller puts it in a
+label.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.exec.jobName" -}}
+{{- printf "%s-exec-%s" (include "stateful-pods.machine.name" .) (include "stateful-pods.machine.provisioning.checksum" . | trunc 8) -}}
+{{- end -}}
+
+{{/*
+Whether a machine on the exec backend supplies a script.
+
+Emits "true" or "". A machine that supplies none renders no Job, no
+ServiceAccount, no Role and no RoleBinding, and is provisioned exactly as the
+`native` backend it replaced always was.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.exec.hasScript" -}}
+{{- if eq (include "stateful-pods.machine.provisioning.backend" .) "exec" -}}
+{{- $resolved := include "stateful-pods.machine.provisioning.resolved" . | fromYaml -}}
+{{- if index $resolved.inline "script" -}}
+true
+{{- else -}}
+{{- range $ref := $resolved.refs -}}
+{{- if eq $ref.path "script" -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The exec backend's non-material settings, with their defaults applied.
+
+Takes the same machine context as the other helpers. Emits YAML.
+*/}}
+{{- define "stateful-pods.machine.exec.settings" -}}
+{{- $given := .machine.exec | default dict -}}
+{{- $interpreter := "/bin/sh" -}}
+{{- $timeout := 1800 -}}
+{{- $retries := 0 -}}
+{{- if kindIs "map" $given -}}
+{{- $declared := index $given "interpreter" -}}
+{{- if and (kindIs "string" $declared) (ne ($declared | toString) "") -}}
+{{- $interpreter = $declared | toString -}}
+{{- end -}}
+{{- if not (kindIs "invalid" (index $given "timeoutSeconds")) -}}
+{{- $timeout = index $given "timeoutSeconds" | int64 -}}
+{{- end -}}
+{{- if not (kindIs "invalid" (index $given "retries")) -}}
+{{- $retries = index $given "retries" | int64 -}}
+{{- end -}}
+{{- end -}}
+interpreter: {{ $interpreter | quote }}
+timeoutSeconds: {{ $timeout }}
+retries: {{ $retries }}
 {{- end -}}
 
 {{/*
@@ -740,11 +861,12 @@ than something ignored. Silently ignoring it leaves the user believing the
 machine is configured to do something it is not, which is the same class of
 outcome as the silent no-op this whole capability exists to prevent.
 
-Takes (dict "name" $name "machine" $machine). Emits a YAML list of errors,
-possibly empty.
+Takes (dict "objectName" $objectName "name" $name "machine" $machine). Emits a
+YAML list of errors, possibly empty.
 */}}
 {{- define "stateful-pods.validate.provisioning" -}}
 {{- $name := .name -}}
+{{- $objectName := .objectName -}}
 {{- $machine := .machine -}}
 {{- $errors := list -}}
 {{- $backend := "cloud-init" -}}
@@ -754,16 +876,23 @@ possibly empty.
 {{- $declared := index $guest "provisioning" -}}
 {{- if not (kindIs "invalid" $declared) -}}
 {{- if not (kindIs "string" $declared) -}}
-{{- $errors = append $errors (printf "machines.%s.guest.provisioning: must name a provisioning backend, but is of type %s. Accepted backends: cloud-init, native." $name (kindOf $declared)) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: must name a provisioning backend, but is of type %s. Accepted backends: cloud-init, exec." $name (kindOf $declared)) -}}
 {{- $backendKnown = false -}}
 {{- else if eq ($declared | toString) "systemd-credentials" -}}
 {{- /* Not a typo on the user's part. The design describes three backends, and
        telling someone who read it that the name is wrong would send them
        looking for the right spelling of something that is not there. */ -}}
-{{- $errors = append $errors (printf "machines.%s.guest.provisioning: \"systemd-credentials\" is not implemented yet. The design describes it - credentials projected into a tmpfs at /run/host/credentials, so that nothing sensitive is written to the machine's volume - and this chart does not implement it. Accepted backends: cloud-init, native." $name) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: \"systemd-credentials\" is not implemented yet. The design describes it - credentials projected into a tmpfs at /run/host/credentials, so that nothing sensitive is written to the machine's volume - and this chart does not implement it. Accepted backends: cloud-init, exec." $name) -}}
 {{- $backendKnown = false -}}
-{{- else if not (has ($declared | toString) (list "cloud-init" "native")) -}}
-{{- $errors = append $errors (printf "machines.%s.guest.provisioning: %q is not a provisioning backend. Accepted backends: cloud-init, native. cloud-init writes a NoCloud seed into the machine and needs cloud-init in the image; native writes nothing beyond the files the chart already maintains and works with any image." $name ($declared | toString)) -}}
+{{- else if eq ($declared | toString) "native" -}}
+{{- /* Not a typo either. `native` was this backend under its old name, back
+       when it was defined by writing nothing; it runs a machine's own script
+       inside the machine now, which is not that, so the name moved with the
+       behaviour rather than quietly coming to mean something else. */ -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: \"native\" was renamed to \"exec\". It is the same backend and then some: with no script supplied it writes nothing into the machine, exactly as native did, and with machines.%s.exec.script supplied it runs that script inside the machine once the machine has booted. Set machines.%s.guest.provisioning to \"exec\"." $name $name $name) -}}
+{{- $backendKnown = false -}}
+{{- else if not (has ($declared | toString) (list "cloud-init" "exec")) -}}
+{{- $errors = append $errors (printf "machines.%s.guest.provisioning: %q is not a provisioning backend. Accepted backends: cloud-init, exec. cloud-init writes a NoCloud seed into the machine and needs cloud-init in the image; exec asks nothing of the image and runs the machine's own script inside it after it has booted." $name ($declared | toString)) -}}
 {{- $backendKnown = false -}}
 {{- else -}}
 {{- $backend = $declared | toString -}}
@@ -796,6 +925,68 @@ possibly empty.
 {{- range $field, $input := $given -}}
 {{- if kindIs "invalid" (index $catalog $field) -}}
 {{- $errors = append $errors (printf "machines.%s.cloudInit.%s: is not an input of the \"cloud-init\" backend. Accepted inputs: %s." $name $field (join ", " (keys $catalog | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The exec backend's own inputs. Two of them carry material and take the
+       same two forms every provisioning input takes; the rest are plain
+       scalars, because nobody needs to keep a timeout out of a values file. */ -}}
+{{- $exec := index $machine "exec" -}}
+{{- if not (kindIs "invalid" $exec) -}}
+{{- $catalog := include "stateful-pods.provisioning.exec.inputs" . | fromYaml -}}
+{{- $settings := splitList " " (include "stateful-pods.provisioning.exec.settings" .) -}}
+{{- if not (kindIs "map" $exec) -}}
+{{- $errors = append $errors (printf "machines.%s.exec: must be a map of the exec backend's inputs, but is of type %s. Accepted inputs: %s." $name (kindOf $exec) (join ", " (concat (keys $catalog) $settings | sortAlpha))) -}}
+{{- else if and $backendKnown (ne $backend "exec") -}}
+{{- $errors = append $errors (printf "machines.%s.exec: belongs to the \"exec\" backend, but this machine selected %q. Remove these inputs, or set machines.%s.guest.provisioning to \"exec\"." $name $backend $name) -}}
+{{- else -}}
+{{- range $field, $path := $catalog -}}
+{{- $input := index $exec $field -}}
+{{- if not (kindIs "invalid" $input) -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.valueSource" (dict "field" (printf "machines.%s.exec.%s" $name $field) "input" $input) | fromYamlArray) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $interpreter := index $exec "interpreter" -}}
+{{- if not (kindIs "invalid" $interpreter) -}}
+{{- if not (kindIs "string" $interpreter) -}}
+{{- $errors = append $errors (printf "machines.%s.exec.interpreter: must be the path of a program inside the machine, but is of type %s." $name (kindOf $interpreter)) -}}
+{{- else if not (hasPrefix "/" ($interpreter | toString)) -}}
+{{- $errors = append $errors (printf "machines.%s.exec.interpreter: %q is not an absolute path. It is resolved inside the machine, where this chart's own PATH means nothing, so give the whole path: /bin/sh, /bin/bash, /usr/bin/python3." $name ($interpreter | toString)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $timeout := index $exec "timeoutSeconds" -}}
+{{- if not (kindIs "invalid" $timeout) -}}
+{{- if or (kindIs "string" $timeout) (not (regexMatch "^[0-9]+$" ($timeout | toString))) (le (int64 $timeout) 0) -}}
+{{- $errors = append $errors (printf "machines.%s.exec.timeoutSeconds: %v is not a number of seconds. It must be a whole number greater than zero, unquoted, and it covers the whole of the run - waiting for the machine to boot and running the script, together." $name $timeout) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $retries := index $exec "retries" -}}
+{{- if not (kindIs "invalid" $retries) -}}
+{{- if or (kindIs "string" $retries) (not (regexMatch "^[0-9]+$" ($retries | toString))) -}}
+{{- $errors = append $errors (printf "machines.%s.exec.retries: %v is not a number of retries. It must be a whole number of zero or more, unquoted. Zero is the default, because re-running a provisioning script that failed half way is a decision only its author can make." $name $retries) -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $field, $input := $exec -}}
+{{- if and (kindIs "invalid" (index $catalog $field)) (not (has $field $settings)) -}}
+{{- $errors = append $errors (printf "machines.%s.exec.%s: is not an input of the \"exec\" backend. Accepted inputs: %s." $name $field (join ", " (concat (keys $catalog) $settings | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The Job that runs the script is named from the machine's object name plus
+       a fourteen-character suffix, and a Job's name may not exceed 63
+       characters because the controller puts it in a label. This is the same
+       refusal the object name already gets, with the budget this backend
+       spends. */ -}}
+{{- if kindIs "map" (index $exec "script") -}}
+{{- $jobName := printf "%s-exec-00000000" $objectName -}}
+{{- if gt (len $jobName) 63 -}}
+{{- $errors = append $errors (printf "machines.%s: the Job that would run this machine's script is named %q, which is %d characters, %d over the 63-character limit a Job's name has - the controller puts it in a label, and a label value stops there. The suffix is the chart's: \"-exec-\" and eight characters of a digest that makes an unchanged script a no-op and a changed one a new run. Shorten the release name or the machine name, or supply no script." $name $jobName (len $jobName) (sub (len $jobName) 63)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -1261,7 +1452,7 @@ Takes the root context.
 {{- end -}}
 
 {{- /* How the machine is provisioned, and the inputs it supplies for it. */ -}}
-{{- $errors = concat $errors (include "stateful-pods.validate.provisioning" (dict "name" $name "machine" $machine) | fromYamlArray) -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.provisioning" (dict "objectName" $objectName "name" $name "machine" $machine) | fromYamlArray) -}}
 
 {{- /* What the cluster is told about the machine's network presence. */ -}}
 {{- $errors = concat $errors (include "stateful-pods.validate.network" (dict "name" $name "machine" $machine) | fromYamlArray) -}}

@@ -1,0 +1,131 @@
+{{- include "stateful-pods.validate" . -}}
+{{- /* The Job that carries a machine's own script into the machine and runs it
+       there, once the machine has booted.
+
+       Beside the machine rather than inside its pod, because the one moment
+       this has to act in is the one moment no container in that pod can. Every
+       step before the guest runs before the root change, when the machine does
+       not exist; a container next to the guest cannot enter the machine's mount
+       namespace unless the pod shares its process namespace, and a pod that
+       does gives PID 1 to the pause container rather than to the machine's
+       init - which systemd refuses to run without, and which is the whole point
+       of this chart.
+
+       The name carries a digest of what it would run. A Job's specification is
+       immutable once it exists, so a name that stayed the same while the script
+       changed would make `helm upgrade` fail with `field is immutable`; with
+       the digest in it, an unchanged script is the same object and a no-op, a
+       changed one is a new object that runs, and an uninstall removes both.
+
+       The machine's own pod is untouched by any of this - no annotation, no
+       restart. The script is applied to a running machine from outside it, and
+       replacing a pet's pod to change something it never reads at boot would
+       destroy state for no effect. */ -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- if include "stateful-pods.machine.exec.hasScript" $ctx }}
+{{- $objectName := include "stateful-pods.machine.name" $ctx }}
+{{- $provisioning := include "stateful-pods.machine.provisioning.resolved" $ctx | fromYaml }}
+{{- $exec := include "stateful-pods.machine.exec.settings" $ctx | fromYaml }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "stateful-pods.machine.exec.jobName" $ctx }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+spec:
+  # Zero by default. A provisioning script is somebody's shell, and re-running
+  # one that failed half way is a decision only its author can make.
+  backoffLimit: {{ $exec.retries }}
+  # The whole of it: waiting for the machine to boot and running the script,
+  # together. One budget rather than two, because the wait includes seeding an
+  # operating system onto an empty volume and no one can usefully split that
+  # from the script's own time.
+  activeDeadlineSeconds: {{ $exec.timeoutSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "stateful-pods.machine.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "stateful-pods.machine.exec.name" $ctx }}
+      # Asked for explicitly, because the ServiceAccount beside this declines to
+      # hand its token to anything that does not: this pod is the only place the
+      # grant is meant to be used.
+      automountServiceAccountToken: true
+      volumes:
+        # The same directory of fixed file names the cloud-init backend's step
+        # reads, assembled the same way. The script cannot tell an inline value
+        # from a projected Secret key, which is what makes "inline or a
+        # reference" a property of the values rather than a branch in the code.
+        - name: provisioning
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- if $provisioning.inline }}
+              - secret:
+                  name: {{ include "stateful-pods.machine.provisioning.secretName" $ctx | quote }}
+                  items:
+                    {{- range $path, $content := $provisioning.inline }}
+                    - key: {{ $path | quote }}
+                      path: {{ $path | quote }}
+                    {{- end }}
+              {{- end }}
+              {{- range $ref := $provisioning.refs }}
+              {{- if eq $ref.kind "secret" }}
+              - secret:
+                  name: {{ $ref.name | quote }}
+                  items:
+                    - key: {{ $ref.key | quote }}
+                      path: {{ $ref.path | quote }}
+              {{- else }}
+              - configMap:
+                  name: {{ $ref.name | quote }}
+                  items:
+                    - key: {{ $ref.key | quote }}
+                      path: {{ $ref.path | quote }}
+              {{- end }}
+              {{- end }}
+      containers:
+        - name: exec
+          # The chart's own image, like every other container it renders. This
+          # is the one that carries kubectl.
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /usr/local/lib/stateful-pods/exec-provision.sh
+          env:
+            - name: SP_MACHINE
+              value: {{ $name | quote }}
+            - name: SP_RELEASE
+              value: {{ $root.Release.Name | quote }}
+            - name: SP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SP_CHART_VERSION
+              value: {{ $root.Chart.Version | quote }}
+            # The machine's pod, by name. A StatefulSet at one replica names its
+            # pod `<object>-0`, and that is the pod this Job's Role can reach and
+            # the only one it can.
+            - name: SP_TARGET_POD
+              value: {{ printf "%s-0" $objectName | quote }}
+            - name: SP_TARGET_CONTAINER
+              value: guest
+            - name: SP_EXEC_DIR
+              value: /provisioning
+            - name: SP_EXEC_INTERPRETER
+              value: {{ $exec.interpreter | quote }}
+          securityContext:
+            # The same posture every step that runs before a machine gets. This
+            # container unpacks nothing, mounts nothing and changes no root; it
+            # is a kubectl invocation, and the runtime's default syscall filter
+            # withholds nothing it needs.
+            {{- include "stateful-pods.machine.initSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: provisioning
+              mountPath: /provisioning
+              readOnly: true
+{{- end }}
+{{- end }}

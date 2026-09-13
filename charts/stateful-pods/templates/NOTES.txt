@@ -85,13 +85,46 @@ not start, and the provisioning step says so:
 That is deliberate. A machine seeded and never read would boot with no users, no keys and
 no way in, which looks exactly like a successful install. For an image without cloud-init -
 `void-current` among the presets, because its upstream publishes no cloud variant - set
-machines.{{ $name }}.guest.provisioning: native and then delete the pod, because a
+machines.{{ $name }}.guest.provisioning: exec and then delete the pod, because a
 StatefulSet does not replace a pod that never became ready.
 {{- else }}
+{{- $execJob := include "stateful-pods.machine.exec.jobName" $ctx }}
+{{- if include "stateful-pods.machine.exec.hasScript" $ctx }}
 
-This machine is provisioned natively: nothing is written into it beyond the three files
-above. It boots with the accounts and identity its source shipped, so getting in means
-`kubectl machine shell` until something inside it is configured to allow anything else.
+This machine is provisioned by its own script, run inside it once it has finished booting.
+Nothing is written into it before that: the script needs the machine's shell, its init and
+its package manager, and none of those exist until the machine is up.
+
+The script is carried by a Job beside this pod, which is where its output is:
+
+  kubectl --namespace {{ $root.Release.Namespace }} logs job/{{ $execJob }} --follow
+
+This install did not wait for it unless it was given `--wait --wait-for-jobs`: `--wait` alone waits
+for workloads and not for Jobs, so a release can report success while its machine is still being
+configured.
+
+That Job holds a ServiceAccount of its own that may get this machine's pod and exec into it,
+and reach nothing else in the namespace. That permission is root inside this machine.
+
+The Job's name carries a digest of what it runs, so changing the script creates a new one and
+leaving it alone creates none. Changing it does NOT restart the machine. To run the same
+script again - after restoring this machine's volume, say:
+
+  kubectl --namespace {{ $root.Release.Namespace }} delete job {{ $execJob }}
+  helm upgrade {{ $root.Release.Name }} ...
+
+Removing the script removes the Job and undoes nothing inside the machine. The volume is the
+machine.
+{{- else }}
+
+This machine is provisioned by exec and supplies no script, so nothing is written into it
+beyond the three files above and no Job is rendered for it. It boots with the accounts and
+identity its source shipped, so getting in means `kubectl machine shell` until something
+inside it is configured to allow anything else.
+
+To configure it from here, set machines.{{ $name }}.exec.script - it runs inside the machine,
+as its own root, once the machine is up.
+{{- end }}
 {{- end }}
 {{- $shadowed := list }}
 {{- if eq $backend "cloud-init" }}
