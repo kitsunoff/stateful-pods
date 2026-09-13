@@ -40,6 +40,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 | --- | --- |
 | **The chart** | One StatefulSet, one rootfs PersistentVolumeClaim and one headless Service per machine. Exactly one machine per release, for now. |
 | **The shim image** | The small program that fills the volume, writes the files the chart maintains inside the machine, mounts the filesystems and hands control to the guest's own init. It also carries the chart's logic, which is why the chart pins it by digest rather than by tag. |
+| **An egress proxy, when asked for** | A machine that declares what it may reach runs Envoy beside itself, with its outbound TCP redirected into it. The only container this project runs from an image it did not build, and nothing renders it unless a machine asks. |
 | **The `kubectl machine` plugin** | Addresses a machine by the name you declared it under, and answers where it is in its life rather than reporting a container. One bash file, no build step. |
 | **Four distribution presets** | A name instead of a URL and a checksum you found somewhere. Each was built from the upstream root filesystem after the upstream's signature over its own checksums verified against a pinned key. |
 
