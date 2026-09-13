@@ -373,6 +373,14 @@ spec:
             # written, allowed and refused alike.
             - --log-level
             - warning
+            # Envoy buffers its access log and flushes it every ten seconds by
+            # default. That is right for a proxy carrying a datacentre's traffic
+            # and wrong for this one: the log is the only answer to "why can
+            # this machine not reach X", and an answer that arrives ten seconds
+            # after the question is one people stop waiting for. The volume here
+            # is a machine's own connections, so a second costs nothing.
+            - --file-flush-interval-msec
+            - "1000"
           securityContext:
             # The user the redirect exempts, by exactly this number. A process
             # inside the machine running as it would be exempted too, which

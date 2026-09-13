@@ -232,6 +232,9 @@ on_exit() {
     done
     echo "--- the jobs that run a machine's own script ---" >&2
     kc logs --selector 'stateful-pods.io/machine,batch.kubernetes.io/job-name' --tail 40 >&2 2>&1 || true
+    echo "--- the egress proxies ---" >&2
+    kc logs --selector 'stateful-pods.io/machine,!batch.kubernetes.io/job-name' \
+      --container envoy --tail 40 >&2 2>&1 || true
   fi
   if [[ -n "$PORT_FORWARD_PID" ]]; then
     kill "$PORT_FORWARD_PID" 2>/dev/null || true
@@ -1085,7 +1088,19 @@ else
 fi
 
 step "asserting the proxy says what it did"
-proxy_log="$(kc logs guarded-os-0 --container envoy 2>&1 || true)"
+# Read with a wait. Envoy flushes its access log on an interval - the chart sets
+# it to a second, against a default of ten - so a read taken the instant the
+# connection closed can be taken before the line exists.
+proxy_log=""
+for _ in $(seq 1 20); do
+  proxy_log="$(kc logs guarded-os-0 --container envoy 2>&1 || true)"
+  if grep --quiet 'egress REFUSED' <<< "$proxy_log" \
+    && grep --quiet 'egress allowed by rule apiserver' <<< "$proxy_log" \
+    && grep --quiet 'egress http 403' <<< "$proxy_log"; then
+    break
+  fi
+  sleep 1
+done
 if grep --quiet 'egress REFUSED' <<< "$proxy_log"; then
   pass "the proxy's own output names the connections it refused"
 else

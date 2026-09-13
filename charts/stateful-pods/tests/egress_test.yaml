@@ -296,3 +296,17 @@ tests:
       - notMatchRegex:
           path: data["envoy.yaml"]
           pattern: 'name: "ntp-123"'
+
+  - it: flushes the proxy's log promptly, because it is the only explanation there is
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[4].args
+          content: --file-flush-interval-msec
