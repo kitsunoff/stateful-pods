@@ -100,6 +100,24 @@ data:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
           filter_chains:
+            # The chart's own check that this proxy is listening, which the step
+            # that programs the packet filter makes before it redirects anything
+            # here. It is a connection to this listener that was never
+            # redirected, so its original destination is this port - and a chain
+            # of its own, with no access log, keeps it out of the record, where
+            # it would read as the machine having been refused something it
+            # never asked for.
+            #
+            # No rule can name this port: the validation stage refuses one.
+            - name: readiness
+              filter_chain_match:
+                destination_port: {{ include "stateful-pods.egress.proxyPort" $ctx }}
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    stat_prefix: readiness
+                    cluster: blackhole
             {{- range $rule := $egress.rules }}
             {{- if eq $rule.kind "serverNames" }}
             {{- range $port := $rule.ports }}

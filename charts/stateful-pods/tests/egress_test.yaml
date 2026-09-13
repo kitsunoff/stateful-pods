@@ -255,10 +255,10 @@ tests:
     asserts:
       - matchRegex:
           path: data["envoy.yaml"]
-          pattern: 'stat_prefix: default_allow'
+          pattern: '(?s)stat_prefix: default_allow\s+cluster: passthrough'
       - notMatchRegex:
           path: data["envoy.yaml"]
-          pattern: 'cluster: blackhole\n'
+          pattern: 'egress REFUSED'
 
   - it: logs every decision without anything being turned on
     set:
@@ -340,3 +340,24 @@ tests:
       - matchRegex:
           path: data["envoy.yaml"]
           pattern: '(?s)prefix: "/debian/".*prefix: "/debian-security/"'
+
+  - it: keeps the chart's own readiness check out of the proxy's record
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      # The step that programs the packet filter connects to this listener
+      # before redirecting anything to it. Without a chain of its own that
+      # connection is logged as a refusal, and reads as the machine having been
+      # denied something it never asked for.
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)- name: readiness\s+filter_chain_match:\s+destination_port: 15001'
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)stat_prefix: readiness\s+cluster: blackhole\s+access_log'
