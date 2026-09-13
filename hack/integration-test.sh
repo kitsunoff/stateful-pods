@@ -589,8 +589,55 @@ fi
 
 wait_ready oci-web-0
 
+# ------------------------------------------------- volumes beside the root ---
+step "asserting the volume the machine declares beside its root filesystem"
+# A rendering test can see the claim template and the mount. What only a cluster
+# can answer is whether the path inside the *machine* - after the root change -
+# really is that volume, or a directory on the root filesystem that looks like
+# one. The whole risk of mounting a volume inside another volume's mount point
+# is that it silently does not happen, and a directory is what that failure
+# leaves behind.
+check "the declared volume has a claim of its own" kc get pvc data-oci-web-0
+claim_size="$(kc get pvc data-oci-web-0 --output \
+  "jsonpath={.spec.resources.requests.storage}")"
+if [[ "$claim_size" == "1Gi" ]]; then
+  pass "the claim was provisioned at the size the machine declared"
+else
+  fail "the claim asks for '${claim_size:-nothing}'"
+fi
+
+if guest sh -c 'grep -q " /var/lib/data " /proc/mounts'; then
+  pass "the declared path is a mount inside the machine, not a directory on the root"
+else
+  fail "/var/lib/data is not a mount point inside the machine"
+fi
+
+# The mount's source, not its device number. On a cluster whose storage hands
+# out directories of one node filesystem - which is what kind's provisioner
+# does, and what a hostPath class does anywhere - two different volumes have the
+# same st_dev, so comparing device numbers would report a machine whose volume
+# never mounted as correct. The fourth field of mountinfo is the root of the
+# mount within its filesystem, which is the subdirectory the claim actually is.
+mountinfo="$(guest cat /proc/self/mountinfo)"
+root_source="$(awk '$5 == "/" {print $4; exit}' <<< "$mountinfo")"
+data_source="$(awk '$5 == "/var/lib/data" {print $4; exit}' <<< "$mountinfo")"
+if [[ -n "$root_source" && -n "$data_source" && "$root_source" != "$data_source" ]]; then
+  pass "the declared path is a different volume from the machine's root filesystem"
+else
+  fail "/var/lib/data comes from '${data_source:-nothing}' and / from '${root_source:-nothing}'"
+fi
+
+mounted_in_steps="$(kc get pod oci-web-0 --output \
+  "jsonpath={.spec.initContainers[*].volumeMounts[?(@.name=='data')].name}")"
+if [[ -z "$mounted_in_steps" ]]; then
+  pass "no preparation step was given the declared volume"
+else
+  fail "a preparation step mounts the declared volume"
+fi
+
 step "asserting that a restart does not re-seed"
 guest sh -c 'echo "written by the guest" > /etc/guest-state'
+guest sh -c 'echo "written to the data volume" > /var/lib/data/witness'
 before="$(guest cat /.stateful-pods/provisioned)"
 kc delete pod oci-web-0 --wait >/dev/null
 wait_ready oci-web-0
@@ -604,6 +651,11 @@ if [[ "$(guest cat /.stateful-pods/provisioned)" == "$before" ]]; then
   pass "the seeding record is unchanged by an ordinary restart"
 else
   fail "the seeding record was rewritten on an ordinary restart"
+fi
+if [[ "$(guest cat /var/lib/data/witness)" == "written to the data volume" ]]; then
+  pass "what the machine wrote to its declared volume survived the restart"
+else
+  fail "the declared volume did not survive the pod being replaced"
 fi
 
 # ------------------------------------------------------- guest provisioning ---
