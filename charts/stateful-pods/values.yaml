@@ -555,6 +555,135 @@ envoy:
 #       # rather than over the network.
 #       ingress: any
 #
+#       # What this machine may reach, and what happens to everything else.
+#       #
+#       # Declaring this puts a proxy in the machine's pod and redirects the
+#       # machine's outbound TCP into it. A machine that declares nothing here
+#       # renders exactly what it rendered before this input existed: no proxy,
+#       # no packet filter, no policy.
+#       #
+#       # WHAT THIS IS FOR. A machine is an operating system with a package
+#       # manager, a shell, a cron table and whatever its script installed, and
+#       # every one of those reaches the whole network the pod reaches. The thing
+#       # an operator wants to write down is almost never an address: it is
+#       # "this machine may talk to the Debian mirror and to our database". A
+#       # name is not something a packet filter or a NetworkPolicy can match, and
+#       # that is why there is a proxy here at all.
+#       egress:
+#         # What happens to traffic no rule allows: deny | allow. MANDATORY when
+#         # egress is declared at all.
+#         #
+#         #   deny  - refused. Including what the proxy cannot see: UDP that no
+#         #           rule allows is dropped, and so is everything that is
+#         #           neither TCP nor UDP, and so is IPv6.
+#         #   allow - permitted. The rules then only decide what is logged, which
+#         #           is a legitimate first step: run with `allow`, read the
+#         #           proxy's log, write the rules it tells you you need, and
+#         #           then move to `deny`.
+#         #
+#         # There is no default for this. A policy whose unmatched traffic nobody
+#         # named is one that means different things to its author and its
+#         # reader.
+#         #
+#         # THE POD'S OWN RESOLVER IS ALWAYS ALLOWED, under either default, and
+#         # it is not a rule anyone writes. A machine that cannot resolve a name
+#         # cannot reach deb.debian.org however many rules name it, so a policy
+#         # that dropped DNS would be one whose every name-based rule silently
+#         # failed.
+#         default: deny
+#
+#         # What the machine may reach, in order. Each rule names the ports it
+#         # allows and EXACTLY ONE thing to match on - they see different layers
+#         # of the same connection, and a rule combining two would be one whose
+#         # refusals nobody could predict.
+#         rules:
+#             # serverNames - the name the machine asks for in the TLS
+#             # handshake, read WITHOUT DECRYPTING ANYTHING. This is the rule for
+#             # "the mirror", and it is what most policies are actually made of.
+#             #
+#             # IT IS A CLAIM THE MACHINE MAKES ABOUT ITSELF. A process inside
+#             # the machine can open a TLS connection to any address and put any
+#             # name in the handshake. This stops a package manager reaching the
+#             # wrong mirror; it does not stop a determined program inside the
+#             # machine. What does bound that program is a `cidrs` rule, which
+#             # matches the address it cannot lie about - the two forms are meant
+#             # to be used together.
+#             #
+#             # A leading "*." matches one level of subdomain.
+#           - name: debian-mirror
+#             ports: [443]
+#             serverNames:
+#               - deb.debian.org
+#               - security.debian.org
+#
+#             # cidrs - the connection's destination, which is the one thing
+#             # about it nothing inside the machine can lie about. This is layer
+#             # 4 and it is what a rule about another workload's address looks
+#             # like.
+#           - name: our-database
+#             ports: [5432]
+#             cidrs:
+#               - 10.0.5.7/32
+#
+#             # http - the authority and path of a PLAINTEXT request. There is a
+#             # request to match on only because there is no TLS in the way.
+#             #
+#             # This is deliberately not offered for HTTPS. Matching a path on an
+#             # encrypted connection means terminating TLS in the proxy and
+#             # installing a certificate authority inside the machine, which is a
+#             # different product and a decision far larger than a chart value.
+#           - name: apt-over-http
+#             ports: [80]
+#             http:
+#               authority: deb.debian.org
+#               pathPrefix: /debian/
+#
+#             # protocol - TCP | UDP. Defaults to TCP.
+#             #
+#             # A UDP rule takes `cidrs` and `ports` and nothing else: UDP is not
+#             # proxied, it is decided by the packet filter, and everything above
+#             # layer 4 on a UDP flow is invisible from here. A UDP rule naming a
+#             # server name would be a rule that never matched.
+#           - name: ntp
+#             protocol: UDP
+#             ports: [123]
+#             cidrs:
+#               - 10.0.0.0/8
+#
+#     # WHAT IT COSTS, stated where it is chosen:
+#     #
+#     #   * A second container in the machine's pod, from an image this project
+#     #     does not build - see `envoy.image` at the top of this file.
+#     #   * One more preparation step, holding NET_ADMIN and NET_RAW so that it
+#     #     can program the pod's network namespace. The machine itself is
+#     #     granted neither and cannot undo any of it from inside.
+#     #   * Every outbound TCP connection passing through a proxy in the same
+#     #     network namespace.
+#     #   * Two ports inside the pod, 15001 and 15000, which the machine may not
+#     #     also serve on. Declaring one under network.ports is refused.
+#     #   * A machine that is replaced when its policy changes: the policy is a
+#     #     ConfigMap, and a ConfigMap changing restarts nothing on its own.
+#     #
+#     # WHERE TO READ WHAT IT DID. Every decision is an access log line on the
+#     # proxy's own output, allowed and refused alike:
+#     #
+#     #   kubectl logs <release>-<machine>-0 --container envoy
+#     #
+#     # That is not something to turn on. "Why can this machine not reach X" has
+#     # to be answerable, or a policy is something people disable rather than
+#     # debug.
+#     #
+#     # TWO HOLES, NAMED RATHER THAN HIDDEN:
+#     #
+#     #   * The proxy is exempted from the redirect by the user it runs as, 1337.
+#     #     A process inside the machine running as that user is exempted too,
+#     #     and the machine's own root can create one. A `cidrs` rule is enforced
+#     #     by the packet filter, where a process's identity is not what decides,
+#     #     which is why a policy worth relying on has a layer-4 half.
+#     #   * IPv6 is not proxied. Under `deny` it is dropped outright; under
+#     #     `allow` it is untouched. A machine that needs a named IPv6
+#     #     destination is not something this serves.
+#
 #     security:
 #       # Privilege level of this machine: userns | privileged. Mandatory, per
 #       # machine, with no default and no autodetection - the chart will not weaken

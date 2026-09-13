@@ -1,0 +1,66 @@
+# A machine that may reach its distribution's mirror and one database, and
+# nothing else.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/egress.yaml
+#
+# Declaring this puts a proxy in the machine's pod. Every decision it makes is a
+# line on its own output:
+#
+#   kubectl logs lab-web-0 --container envoy
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    network:
+      # Declared so that it is obvious this is the outbound half of the same
+      # block: the machine serves SSH, and what it may reach is below.
+      ingress: declared
+      ports:
+        ssh:
+          port: 22
+
+      egress:
+        # Refused, including what the proxy cannot see. The pod's own resolver
+        # is allowed without a rule, because a policy written in names needs one.
+        default: deny
+
+        rules:
+          # The name the machine asks for in the TLS handshake, read without
+          # decrypting anything. This is what `apt` reaches over HTTPS.
+          - name: debian-mirror
+            ports: [443]
+            serverNames:
+              - deb.debian.org
+              - security.debian.org
+
+          # The same mirror over plaintext HTTP, where there is a request to
+          # match on rather than only a name.
+          - name: debian-mirror-plain
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian/
+
+          # An address, which is the one thing about a connection that nothing
+          # inside the machine can lie about. A policy worth relying on has a
+          # rule of this kind in it.
+          - name: our-database
+            ports: [5432]
+            cidrs:
+              - 10.0.5.7/32
+
+          # UDP is not proxied: this rule is enforced by the packet filter, and
+          # it matches on an address and a port and nothing else.
+          - name: ntp
+            protocol: UDP
+            ports: [123]
+            cidrs:
+              - 10.0.0.0/8
