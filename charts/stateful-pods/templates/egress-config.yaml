@@ -54,6 +54,17 @@ data:
         socket_address:
           address: 127.0.0.1
           port_value: {{ include "stateful-pods.egress.adminPort" $ctx }}
+    # A bound on the connections the proxy will hold open. Envoy warns on
+    # startup when there is none, and the warning is right: a machine is an
+    # operating system, and a process inside one that opens connections without
+    # limit would otherwise be bounded by the proxy's memory rather than by
+    # anything anybody chose.
+    overload_manager:
+      resource_monitors:
+        - name: envoy.resource_monitors.global_downstream_max_connections
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: 50000
     static_resources:
       listeners:
         - name: egress
