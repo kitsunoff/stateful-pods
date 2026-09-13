@@ -1,0 +1,37 @@
+# A machine configured by its own script, run inside it after it has booted.
+#
+# privileged mode, because a kind node is itself a container and user namespaces
+# nested inside one are unreliable - see docs/research/05-open-questions.md §12.
+#
+# The source carries cloud-init, and this machine deliberately does not use it:
+# what is being exercised is the backend for the images that cannot, and it is
+# easier to assert against a distribution with a package manager than against a
+# busybox rootfs.
+machines:
+  os:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi
+    guest:
+      provisioning: exec
+    exec:
+      script:
+        value: |
+          set -eu
+          # That the script ran inside the machine, as its own root, with the
+          # machine's own userland - none of which exists before the guest.
+          printf '%s\n' "$SP_WITNESS" > /etc/sp-exec-witness
+          id -u > /etc/sp-exec-uid
+          cat /etc/sp-source-marker > /etc/sp-exec-saw-the-machine
+          # That the material is on the tmpfs the boot sequence mounts, and so
+          # is gone at the machine's next boot rather than living on the volume.
+          awk '$2 == "/run" {print $3}' /proc/mounts > /etc/sp-exec-run-fstype
+      environment:
+        valueFrom:
+          secretKeyRef:
+            name: exec-environment
+            key: environment
