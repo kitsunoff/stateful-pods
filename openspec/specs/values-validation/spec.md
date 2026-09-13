@@ -74,26 +74,6 @@ chart SHALL never do the latter.
   the storage backend's support for idmapped mounts
 - **THEN** rendering succeeds and the prerequisite is documented rather than guessed at
 
-### Requirement: Exactly one machine per release, for now
-
-The chart SHALL accept exactly one entry in the machines map. Declaring none or more than one SHALL
-fail rendering.
-
-The map form exists so the restriction can be lifted without changing the values shape; the
-restriction exists because per-machine rendering is not yet implemented for more than one machine.
-
-#### Scenario: No machines declared
-
-- **WHEN** the machines map is absent or empty
-- **THEN** rendering fails with a message stating that exactly one machine must be declared, and
-  showing the expected shape
-
-#### Scenario: More than one machine declared
-
-- **WHEN** the machines map contains two or more entries
-- **THEN** rendering fails with a message stating that multiple machines per release are not
-  implemented yet and that each machine should be its own release for now
-
 ### Requirement: Machine names must be usable in object names
 
 A machine name SHALL be a valid DNS-1123 label, and the resulting `<release>-<machine>` object name
@@ -386,19 +366,6 @@ manifest is still text, and so is supplying a script to a machine provisioned by
 - **WHEN** a machine supplies a provisioning input the chart does not recognise
 - **THEN** rendering fails and lists the inputs the backend accepts
 
-### Requirement: A backend that is designed but not implemented is refused with the reason
-
-Rendering SHALL fail for a provisioning backend that the design names but the chart does not yet
-implement, and the message SHALL say that it is not implemented rather than that it does not exist.
-
-A user who read the design and asked for `systemd-credentials` did not make a typo. Telling them the
-name is wrong would send them looking for the right spelling of something that is not there.
-
-#### Scenario: A designed but unimplemented backend says so
-
-- **WHEN** a machine names a backend the design describes and the chart has not implemented
-- **THEN** rendering fails, says it is not implemented yet, and names the backends that are
-
 ### Requirement: A machine's network inputs are checked while the chart renders
 
 The chart SHALL reject, while rendering and with a message naming the input, a network block that
@@ -571,3 +538,22 @@ pod, because nothing outside would reach the machine there.
 
 - **WHEN** a machine declares an egress policy and a served port that the proxy occupies
 - **THEN** rendering fails, naming the port and both inputs
+
+### Requirement: A machines map with no entries is refused
+
+The chart SHALL fail rendering when the machines map is absent or empty, with a message stating that
+at least one machine must be declared and showing the shape one takes.
+
+There is no reasonable default machine. Installing the chart with no values would otherwise create
+something nobody described, on a volume that then becomes the machine.
+
+#### Scenario: No machines declared
+
+- **WHEN** the machines map is absent or empty
+- **THEN** rendering fails, says that at least one machine must be declared, and shows the expected
+  shape
+
+#### Scenario: A map with entries is accepted whatever its size
+
+- **WHEN** the machines map holds one entry, or several
+- **THEN** the count alone is never a reason to refuse
