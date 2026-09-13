@@ -53,6 +53,10 @@ headless Service.
 The rootfs claim SHALL request the `ReadWriteOnce` access mode, because a root filesystem can only
 be mounted by one instance at a time.
 
+A machine MAY declare further volumes, each of which adds one more volume claim template or one more
+pod volume, depending on whether the chart provisions it. The root filesystem's claim template SHALL
+remain the first, so that the guest container mounts it before anything mounted inside it.
+
 #### Scenario: A machine's objects are rendered
 
 - **WHEN** a release declares one machine
@@ -63,6 +67,12 @@ be mounted by one instance at a time.
 
 - **WHEN** the rootfs volume claim template is rendered
 - **THEN** its access modes are exactly `["ReadWriteOnce"]`
+
+#### Scenario: Declared volumes follow the root filesystem
+
+- **WHEN** a machine declares volumes the chart provisions
+- **THEN** the rootfs claim template is the first, and one further claim template is rendered per
+  declared volume
 
 ### Requirement: The guest container's image is the shim, not the machine's operating system
 
@@ -264,3 +274,117 @@ leave a machine running on material that no longer matches its values with nothi
 - **WHEN** referenced provisioning material has rotated
 - **THEN** the machine can be restarted by changing an explicit revision input, without editing
   anything else
+
+### Requirement: A machine that asks for its ports to be enforced renders one policy object
+
+Where a machine asks that only its declared ports be reachable, the chart SHALL render exactly one
+NetworkPolicy for it, named with the machine's own object name and selecting the machine's pod on
+the same labels its StatefulSet selects on.
+
+One object per machine, named like every other object a machine gets, so that a release with two
+machines has two policies that can be read, diffed and deleted independently. Selecting on the
+machine's own selector labels rather than on anything broader keeps a policy from reaching a
+neighbour that happens to share a release.
+
+#### Scenario: The policy is named like the machine's other objects
+
+- **WHEN** release `lab` declares machine `web` and asks for its ports to be enforced
+- **THEN** a NetworkPolicy named `lab-web` is rendered, selecting the same labels the StatefulSet
+  selects on
+
+#### Scenario: No policy without the request
+
+- **WHEN** a machine does not ask for its ports to be enforced
+- **THEN** no NetworkPolicy is rendered, whether or not it declares ports
+
+### Requirement: A machine whose script is supplied renders a Job and an identity of its own
+
+Where a machine on the `exec` backend supplies a script, the chart SHALL render exactly one Job, one
+ServiceAccount, one Role and one RoleBinding for it, all named from the machine's own object name,
+and the Job SHALL be named so that its name changes when and only when what it would run changes.
+
+A Job's specification is immutable once it exists, so a Job whose name stayed the same while its
+script changed would make `helm upgrade` fail with `field is immutable`. Putting a digest of the
+material in the name is therefore not decoration: it is what makes an unchanged script a no-op, a
+changed script a new run, and an uninstall a clean removal.
+
+The machine's own pod SHALL NOT change when the script does: the script is applied from outside a
+running machine, so nothing about the pod depends on it.
+
+#### Scenario: The objects are rendered together
+
+- **WHEN** release `lab` declares machine `web` on the `exec` backend with a script
+- **THEN** a ServiceAccount, a Role and a RoleBinding named from `lab-web` are rendered, and one Job
+  whose name carries a digest of what it would run
+
+#### Scenario: Nothing is rendered without a script
+
+- **WHEN** a machine on the `exec` backend supplies no script
+- **THEN** no Job, ServiceAccount, Role or RoleBinding is rendered for it
+
+#### Scenario: The Job's name follows the material
+
+- **WHEN** the script changes and the release is rendered again
+- **THEN** the Job's name differs from the one rendered before, and the machine's pod specification
+  is unchanged
+
+### Requirement: Provisioning material is mounted into the one container that consumes it
+
+Where a machine supplies provisioning material, the chart SHALL mount it into the single container
+that acts on it and into no other, whichever backend that container belongs to.
+
+Under `cloud-init` that is the preparation step that writes the seed. Under `exec` it is the Job that
+carries the script to the machine, and the preparation step is given nothing — it has nothing to do
+with a script that runs after the machine has booted, and the guest container must never be able to
+read it at all.
+
+#### Scenario: The cloud-init material reaches the preparation step alone
+
+- **WHEN** a machine on `cloud-init` supplies material
+- **THEN** the preparation step that writes the seed mounts it, and no other container does
+
+#### Scenario: The exec material reaches the Job alone
+
+- **WHEN** a machine on `exec` supplies a script
+- **THEN** the Job mounts it, no container of the machine's own pod does, and the machine's pod is
+  given no ServiceAccount token
+
+### Requirement: A machine with an egress policy carries a proxy and the step that programs its namespace
+
+Where a machine declares an egress policy, the chart SHALL render one ConfigMap holding the proxy's
+configuration, one long-running proxy container in the machine's own pod, and one preparation step
+that programs the pod's network namespace and exits.
+
+The proxy is in the machine's pod and not beside it because it must share the machine's network
+namespace: a redirect is a rule in that namespace, and a proxy in another pod would be a proxy the
+redirect could not reach.
+
+#### Scenario: The proxy and its step are rendered together
+
+- **WHEN** a machine declares an egress policy
+- **THEN** a ConfigMap named for the machine, a proxy container that keeps running, and a
+  preparation step that programs the namespace are all rendered
+
+#### Scenario: Nothing is rendered without a policy
+
+- **WHEN** a machine declares no egress policy
+- **THEN** none of them is rendered, and the pod is what it was
+
+### Requirement: A change to an egress policy replaces the machine
+
+The chart SHALL replace a machine's pod when its egress policy changes.
+
+The policy is a ConfigMap, and a ConfigMap whose content changes restarts nothing on its own: the
+proxy would go on enforcing the policy it was started with, and the values would describe something
+the machine is not doing. Unlike provisioning material, the whole of an egress policy is visible to
+the chart, so the digest that triggers the replacement is exact.
+
+#### Scenario: A changed policy takes effect
+
+- **WHEN** a machine's egress policy changes and the release is upgraded
+- **THEN** the machine's pod is replaced and the proxy starts with the new policy
+
+#### Scenario: An unrelated change does not replace the machine
+
+- **WHEN** a release is upgraded and the machine's egress policy is unchanged
+- **THEN** the digest that governs the replacement is unchanged

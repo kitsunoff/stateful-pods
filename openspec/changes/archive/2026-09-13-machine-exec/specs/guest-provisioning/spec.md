@@ -36,6 +36,53 @@ backend is no longer defined by writing nothing.
 - **THEN** rendering fails, saying that it is described in the design and not implemented, rather
   than that the name is unknown
 
+### Requirement: An image that cannot run the chosen backend fails the machine
+
+Before a machine boots, the chart SHALL establish that the machine's own root filesystem can
+actually run the backend the machine named, and SHALL fail the pod with an explicit message naming
+the `exec` backend as the fix when it cannot.
+
+This is the most important requirement in this capability. On an image without cloud-init a seed is
+written, nothing reads it, and the machine boots with no users, no keys and no way in, with nothing
+in the logs to explain it. That failure looks exactly like a successful install, which makes it the
+worst outcome available to this chart.
+
+Establishing that the backend can run means more than finding the program. A distribution may ship
+cloud-init installed and switched off, in which case a seed alone changes nothing.
+
+The `exec` backend asks nothing of the image and therefore has nothing to establish: its script runs
+inside the machine after the machine has started, with whatever the machine turns out to have.
+
+#### Scenario: A machine on an image with no cloud-init does not boot silently
+
+- **WHEN** a machine selects the cloud-init backend and its root filesystem cannot run cloud-init
+- **THEN** the pod fails before the machine starts, and the message says what was looked for and
+  that `guest.provisioning: exec` is the fix
+
+#### Scenario: The check never switches backend on the machine's behalf
+
+- **WHEN** the chosen backend cannot run
+- **THEN** the chart fails rather than provisioning by some other means
+
+#### Scenario: The message describes a fix that actually works
+
+- **WHEN** the message tells a user how to recover
+- **THEN** it names every step required, including replacing the machine's pod — changing the value
+  alone leaves the failing pod in place, because a StatefulSet does not replace a pod that never
+  became ready
+
+#### Scenario: A failed check leaves nothing behind
+
+- **WHEN** the check refuses an image
+- **THEN** nothing has been written into the machine, so a later start on a backend that can run
+  finds the root filesystem as its source left it
+
+#### Scenario: An image that ships the backend disabled is not treated as able to run it
+
+- **WHEN** a root filesystem carries cloud-init together with the marker its distribution uses to
+  keep it from running
+- **THEN** provisioning either makes cloud-init able to run or fails, and never leaves a seed that
+
 ## ADDED Requirements
 
 ### Requirement: The exec backend runs a machine's own commands inside it
