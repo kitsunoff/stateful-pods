@@ -37,13 +37,3 @@ backend is no longer defined by writing nothing.
 
 - **WHEN** a machine declares a backend that is neither `cloud-init` nor `exec` nor the former name
 - **THEN** rendering fails, naming the two backends that exist, with no third described as planned
-
-## REMOVED Requirements
-
-### Requirement: A backend that is designed but not implemented is refused with the reason
-
-**Reason**: it described one value, `systemd-credentials`, which is no longer a name the chart knows.
-The gap it was filed against — a machine that cannot run cloud-init — is served by `exec`, and the
-mechanism it named is systemd's, which a chart whose backends are chosen for being agnostic should
-not carry. What remains is the general form, already required: an unknown backend is refused and the
-accepted ones are listed.

@@ -10,11 +10,14 @@ mechanism must stop the machine rather than boot one nobody can reach.
 ### Requirement: A machine declares how it is provisioned
 
 Each machine SHALL declare a provisioning backend. `cloud-init` and `exec` SHALL be accepted, and
-`cloud-init` SHALL be the default when a machine declares none.
+`cloud-init` SHALL be the default when a machine declares none. No other backend SHALL be accepted,
+and none SHALL be named in the documentation as forthcoming.
 
-The default is the mechanism people actually want, and the one the images the audience reaches for
-already carry. `exec` asks nothing of the image and is what a machine on an image without cloud-init
-must name.
+The two are chosen for what they do not ask for. `cloud-init` needs cloud-init in the image and says
+so loudly when it is absent, but asks nothing of the init system: a systemd unit and an OpenRC script
+are both recognised. `exec` asks for a shell and nothing else. Between them they serve every image
+this project ships a name for, and neither is tied to one init system — which is the property a third
+backend built on `/run/host/credentials` could not have had, because that mechanism is systemd's.
 
 `native` SHALL be refused, with a message saying that it was renamed to `exec` and that `exec` with
 no script supplied behaves exactly as `native` did. The name changed because the behaviour did: the
@@ -37,11 +40,10 @@ backend is no longer defined by writing nothing.
 - **THEN** rendering fails, saying that the backend is now called `exec` and that `exec` with no
   script behaves as `native` did
 
-#### Scenario: An unimplemented backend says so
+#### Scenario: Any other name is refused as unknown
 
-- **WHEN** a machine declares `systemd-credentials`
-- **THEN** rendering fails, saying that it is described in the design and not implemented, rather
-  than that the name is unknown
+- **WHEN** a machine declares a backend that is neither `cloud-init` nor `exec` nor the former name
+- **THEN** rendering fails, naming the two backends that exist, with no third described as planned
 
 ### Requirement: An image that cannot run the chosen backend fails the machine
 
