@@ -1,0 +1,371 @@
+suite: values validation - the volumes beside the root filesystem
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects a volumes block that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes: 50Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes: must be a map keyed by volume name'
+
+  - it: rejects a volume entry that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data: 50Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data: must be a map of the volume''s inputs'
+
+  - it: rejects a volume name the API server would refuse
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          Data_Store:
+            mountPath: /var/lib/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.Data_Store.*DNS-1123 label'
+
+  - it: rejects a volume named after one the chart already renders
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          provisioning:
+            mountPath: /var/lib/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.provisioning: "provisioning" is a name the chart already uses'
+
+  - it: rejects a volume named after the machine's own object name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          lab-web:
+            mountPath: /var/lib/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.lab-web: "lab-web" is the machine''s own object name'
+
+  - it: rejects a volume with no mount path
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: not set'
+
+  - it: rejects a mount path that is not absolute
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: var/lib/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: "var/lib/data" is not an absolute path'
+
+  - it: rejects a mount path that climbs out of the machine
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/../../data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: .*contains ".."'
+
+  - it: rejects the machine's own root, and points at the rootfs inputs
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: "/" is the machine''s root filesystem.*machines\.web\.rootfs'
+
+  - it: rejects a mount path the boot sequence mounts over
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /run/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: "/run/data" is at or under /run, which the boot sequence mounts over'
+
+  - it: rejects a mount path over the chart's own state on the volume
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /.stateful-pods
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: "/\.stateful-pods" is at or under /\.stateful-pods'
+
+  - it: rejects two volumes at one path, naming both
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 1Gi
+          archive:
+            mountPath: /var/lib/data
+            size: 1Gi
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.mountPath: "/var/lib/data" is already declared by machines\.web\.volumes\.archive'
+
+  - it: rejects a volume naming both a size and an existing claim
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 1Gi
+            existingClaim: somebody-elses
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data: names both `size` and `existingClaim`'
+
+  - it: rejects a volume naming neither
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data: names neither `size` nor `existingClaim`'
+
+  - it: rejects a size that is not a storage quantity
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: fifty gigabytes
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.size: "fifty gigabytes" is not a storage quantity'
+
+  - it: rejects a size, class or data source beside an existing claim
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            existingClaim: somebody-elses
+            storageClassName: fast
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.storageClassName: does not belong to a volume that names an existingClaim'
+
+  - it: rejects a claim name the API server would refuse
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            existingClaim: Not A Claim
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.existingClaim: "Not A Claim" is not a valid claim name'
+
+  - it: rejects a key a volume does not accept
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 1Gi
+            accessModes:
+              - ReadWriteMany
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.accessModes: is not an input of a volume.*Accepted inputs: dataSource, existingClaim, mountPath, readOnly, size, storageClassName'
+
+  - it: rejects a data source the chart does not offer
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 1Gi
+            dataSource:
+              persistentVolumeClaimName: another
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.dataSource\.persistentVolumeClaimName: is not an input'
+
+  - it: rejects a readOnly that is not a switch
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        volumes:
+          data:
+            mountPath: /var/lib/data
+            size: 1Gi
+            readOnly: "yes"
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.volumes\.data\.readOnly: must be true or false'
