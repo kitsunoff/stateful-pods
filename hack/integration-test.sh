@@ -1140,6 +1140,79 @@ else
   fail "the proxy reports '${proxy_ready:-nothing}'"
 fi
 
+# --------------------------------------- more than one machine in a release ---
+# The chart was written per machine from the first release, so this is less about
+# whether it renders and more about whether the two machines are really separate
+# once they are running: their own volumes, their own lifetimes, and a change to
+# one that leaves the other alone.
+step "installing a release that holds two machines"
+helm --kube-context "$CONTEXT" upgrade --install pair "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/pair.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.alpha.source.reference=$SOURCE_REFERENCE" \
+  --set "machines.beta.source.reference=$SOURCE_REFERENCE" \
+  --wait --timeout 10m >/dev/null
+wait_ready pair-alpha-0
+wait_ready pair-beta-0
+pass "both machines in the release booted and became ready"
+
+alpha() { kc exec pair-alpha-0 --container guest -- "$@"; }
+beta() { kc exec pair-beta-0 --container guest -- "$@"; }
+
+step "asserting the two machines share nothing but the release"
+check "each machine has a claim of its own for its own volume" \
+  bash -c "kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get pvc data-pair-alpha-0 data-pair-beta-0"
+alpha sh -c 'echo alpha > /var/lib/data/whose' >/dev/null
+beta sh -c 'echo beta > /var/lib/data/whose' >/dev/null
+if [[ "$(alpha cat /var/lib/data/whose)" == "alpha" \
+   && "$(beta cat /var/lib/data/whose)" == "beta" ]]; then
+  pass "a volume named the same in both machines is two volumes"
+else
+  fail "the machines see each other's volume: alpha has '$(alpha cat /var/lib/data/whose 2>&1 || true)', beta has '$(beta cat /var/lib/data/whose 2>&1 || true)'"
+fi
+alpha_host="$(alpha cat /etc/hostname)"
+beta_host="$(beta cat /etc/hostname)"
+if [[ "$alpha_host" != "$beta_host" ]]; then
+  pass "each machine has its own identity inside itself ($alpha_host, $beta_host)"
+else
+  fail "both machines answer to $alpha_host"
+fi
+
+step "asserting one machine's life is its own"
+beta_uid_before="$(kc get pod pair-beta-0 --output "jsonpath={.metadata.uid}")"
+kc delete pod pair-alpha-0 --wait=true >/dev/null
+wait_ready pair-alpha-0
+check "the machine that was deleted came back with its volume" \
+  bash -c "[ \"\$(kubectl --context '$CONTEXT' --namespace '$NAMESPACE' exec pair-alpha-0 \
+    --container guest -- cat /var/lib/data/whose)\" = alpha ]"
+check "the other machine was not touched" \
+  bash -c "[ \"\$(kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get pod pair-beta-0 \
+    --output 'jsonpath={.metadata.uid}')\" = '$beta_uid_before' ]"
+
+step "asserting a change to one machine leaves the other alone"
+alpha_uid_before="$(kc get pod pair-alpha-0 --output "jsonpath={.metadata.uid}")"
+beta_uid_before="$(kc get pod pair-beta-0 --output "jsonpath={.metadata.uid}")"
+helm --kube-context "$CONTEXT" upgrade pair "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/pair.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.alpha.source.reference=$SOURCE_REFERENCE" \
+  --set "machines.beta.source.reference=$SOURCE_REFERENCE" \
+  --set-string "machines.alpha.hostname=alpha-renamed" \
+  --wait --timeout 5m >/dev/null
+wait_ready pair-alpha-0
+if [[ "$(kc get pod pair-alpha-0 --output "jsonpath={.metadata.uid}")" != "$alpha_uid_before" ]]; then
+  pass "the machine whose values changed was replaced"
+else
+  fail "the machine whose values changed was not replaced"
+fi
+if [[ "$(kc get pod pair-beta-0 --output "jsonpath={.metadata.uid}")" == "$beta_uid_before" ]]; then
+  pass "the machine whose values did not change was left running"
+else
+  fail "a change to one machine replaced the other"
+fi
+
 # ------------------------------------------------------- a source with no shell ---
 step "installing a machine whose source carries no shell and no GNU tar"
 helm --kube-context "$CONTEXT" upgrade --install alpine "$CHART" \
