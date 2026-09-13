@@ -315,6 +315,60 @@ fi
 check "the release renders no ConfigMap of scripts" \
   bash -c "! kubectl --context '$CONTEXT' --namespace '$NAMESPACE' get configmap oci-web"
 
+# --------------------------------------------------------- the declared ports ---
+step "asserting the ports the machine declares"
+# What a rendering test already covers is that the fields appear in the manifest.
+# What only a cluster covers is that the API server accepts them - a port name it
+# refuses, or a repeated number and protocol, surfaces as a StatefulSet that
+# renders cleanly and never creates a pod, and this machine has a pod.
+container_ports="$(kc get pod oci-web-0 --output \
+  "jsonpath={range .spec.containers[0].ports[*]}{.name}/{.containerPort}/{.protocol} {end}")"
+if [[ "$container_ports" == "dns-tcp/53/TCP dns-udp/53/UDP ssh/22/TCP " ]]; then
+  pass "the guest container carries every declared port, in a stable order"
+else
+  fail "the guest container declares '${container_ports:-nothing}'"
+fi
+
+service_ports="$(kc get service oci-web --output \
+  "jsonpath={range .spec.ports[*]}{.name}/{.port}/{.targetPort}/{.protocol} {end}")"
+if [[ "$service_ports" == "dns-tcp/53/53/TCP dns-udp/53/53/UDP ssh/22/22/TCP " ]]; then
+  pass "the headless Service publishes every declared port under its own name"
+else
+  fail "the Service declares '${service_ports:-nothing}'"
+fi
+
+# The preparation steps are not where a machine's services live, and a port
+# list on one would be a claim about a container that has already exited.
+for step_container in 0 1 2 3; do
+  if [[ -n "$(kc get pod oci-web-0 --output \
+      "jsonpath={.spec.initContainers[$step_container].ports}")" ]]; then
+    fail "preparation step $step_container carries a port list"
+  fi
+done
+pass "no preparation step carries a port list"
+
+step "asserting the ingress posture the machine asked for"
+check "the machine renders a NetworkPolicy of its own" kc get networkpolicy oci-web
+policy_types="$(kc get networkpolicy oci-web --output "jsonpath={.spec.policyTypes[*]}")"
+if [[ "$policy_types" == "Ingress" ]]; then
+  pass "the policy governs inbound traffic only, so the machine keeps its resolver"
+else
+  fail "the policy governs '${policy_types:-nothing}'"
+fi
+admitted="$(kc get networkpolicy oci-web --output \
+  "jsonpath={range .spec.ingress[0].ports[*]}{.port}/{.protocol} {end}")"
+if [[ "$admitted" == "53/TCP 53/UDP 22/TCP " ]]; then
+  pass "the policy admits exactly the declared ports"
+else
+  fail "the policy admits '${admitted:-nothing}'"
+fi
+# The machine is Ready, and it got there under the policy above. That is the
+# assertion worth making on kind: kindnet enforces no NetworkPolicy, so nothing
+# here proves traffic is restricted - only that asking for the posture does not
+# stop a machine booting, and that the readiness probe, which runs through the
+# container runtime rather than over the network, is untouched by it.
+pass "a machine that admits only its declared ports still becomes ready"
+
 step "asserting the oci machine's volume"
 # After the root change this lands inside the machine, not in the chart's image.
 guest() { kc exec oci-web-0 --container guest -- "$@"; }

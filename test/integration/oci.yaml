@@ -10,3 +10,19 @@ machines:
       mode: privileged
     rootfs:
       size: 2Gi
+    # Declared ports, and the posture that asks for only those to be admitted.
+    # kind runs kindnet, which implements no NetworkPolicy at all, so what the
+    # suite can prove here is the shape of what was rendered and that a machine
+    # asking for the posture still boots and still becomes ready. Enforcement
+    # belongs to the cluster's network plugin and is deliberately not claimed.
+    network:
+      ingress: declared
+      ports:
+        ssh:
+          port: 22
+        dns-tcp:
+          port: 53
+          protocol: TCP
+        dns-udp:
+          port: 53
+          protocol: UDP
