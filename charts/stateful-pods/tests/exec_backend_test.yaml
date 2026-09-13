@@ -1,0 +1,399 @@
+suite: rendering - the exec provisioning backend
+templates:
+  - exec-job.yaml
+  - exec-rbac.yaml
+  - statefulset.yaml
+  - provisioning-secret.yaml
+release:
+  name: lab
+  namespace: homelab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: renders no Job and no identity for a machine that supplies no script
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: exec-job.yaml
+      - hasDocuments:
+          count: 0
+        template: exec-rbac.yaml
+
+  - it: renders no Job for a machine provisioned by cloud-init
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        cloudInit:
+          user:
+            value: maxim
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: exec-job.yaml
+      - hasDocuments:
+          count: 0
+        template: exec-rbac.yaml
+
+  - it: renders one Job whose name carries a digest of what it would run
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: |
+              apk add --no-cache openssh
+    template: exec-job.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Job
+      - matchRegex:
+          path: metadata.name
+          pattern: '^lab-web-exec-[0-9a-f]{8}$'
+
+  - it: fails the run rather than retrying it, and bounds the whole of it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: exec-job.yaml
+    asserts:
+      - equal:
+          path: spec.backoffLimit
+          value: 0
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 1800
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+
+  - it: takes the budget and the retry count a machine names
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+          timeoutSeconds: 600
+          retries: 2
+          interpreter: /bin/bash
+    template: exec-job.yaml
+    asserts:
+      - equal:
+          path: spec.backoffLimit
+          value: 2
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 600
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SP_EXEC_INTERPRETER
+            value: /bin/bash
+
+  - it: names the machine's own pod as the one it acts on
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: exec-job.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SP_TARGET_POD
+            value: lab-web-0
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lab-web-exec
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value:
+            - /usr/local/lib/stateful-pods/exec-provision.sh
+
+  - it: grants exactly the right to get one pod and exec into that same pod
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: exec-rbac.yaml
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: ["pods"]
+              verbs: ["get"]
+              resourceNames: ["lab-web-0"]
+            - apiGroups: [""]
+              resources: ["pods/exec"]
+              verbs: ["create"]
+              resourceNames: ["lab-web-0"]
+
+  - it: binds that Role to an identity of the machine's own
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: exec-rbac.yaml
+    documentSelector:
+      path: kind
+      value: RoleBinding
+    asserts:
+      - equal:
+          path: roleRef.name
+          value: lab-web-exec
+      - equal:
+          path: subjects
+          value:
+            - kind: ServiceAccount
+              name: lab-web-exec
+              namespace: homelab
+
+  - it: hands the identity's token to nothing that does not ask for it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - equal:
+          path: automountServiceAccountToken
+          value: false
+        template: exec-rbac.yaml
+        documentSelector:
+          path: kind
+          value: ServiceAccount
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true
+        template: exec-job.yaml
+
+  - it: gives the machine's own pod no cluster credentials
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - notExists:
+          path: spec.template.spec.serviceAccountName
+
+  - it: mounts the script into the Job and into nothing in the machine's pod
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0]
+          value:
+            name: provisioning
+            mountPath: /provisioning
+            readOnly: true
+        template: exec-job.yaml
+      - notExists:
+          path: spec.template.spec.volumes
+        template: statefulset.yaml
+      - lengthEqual:
+          path: spec.template.spec.initContainers[3].volumeMounts
+          count: 1
+        template: statefulset.yaml
+
+  - it: does not restart the machine when the script changes
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo something else entirely
+    template: statefulset.yaml
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: keeps the inline script in the chart's own Secret, under its own name
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    template: provisioning-secret.yaml
+    asserts:
+      - isKind:
+          of: Secret
+      - equal:
+          path: metadata.name
+          value: lab-web-provisioning
+      - exists:
+          path: data.script
+
+  - it: takes a referenced script and environment from where they already are
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            valueFrom:
+              configMapKeyRef:
+                name: machine-config
+                key: bootstrap.sh
+          environment:
+            valueFrom:
+              secretKeyRef:
+                name: machine-secrets
+                key: exec-environment
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: provisioning-secret.yaml
+      - equal:
+          path: spec.template.spec.volumes[0].projected.sources
+          value:
+            - secret:
+                name: machine-secrets
+                items:
+                  - key: exec-environment
+                    path: environment
+            - configMap:
+                name: machine-config
+                items:
+                  - key: bootstrap.sh
+                    path: script
+        template: exec-job.yaml

@@ -1,0 +1,74 @@
+# The exec job refuses the same values every other template does.
+#
+# A suite of its own, and not a case added to a suite that lists several
+# templates, because Helm attributes a `fail` to whichever template it was
+# rendering when the failure was raised. A suite listing two templates can
+# therefore assert the refusal for one of them and be told "no failed document"
+# for the other, which says nothing about whether the second validates at all.
+#
+# What it guards is real in both files. A Job that rendered while the
+# StatefulSet refused would wait forever for a machine that was never created;
+# a Role and a RoleBinding that rendered would leave the right to exec into a
+# pod lying in the namespace with no pod to exec into.
+suite: values validation - the exec job has the same entry point
+templates:
+  - exec-job.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: refuses a machine with no security mode, even though it has a script
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.mode: not set'
+
+  - it: refuses a script that is malformed
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+            valueFrom:
+              secretKeyRef:
+                name: s
+                key: k
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.exec\.script: carries both'
+
+  - it: renders when the values are accepted
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        guest:
+          provisioning: exec
+        exec:
+          script:
+            value: echo hello
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: 'lab-web-exec'
