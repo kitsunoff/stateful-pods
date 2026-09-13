@@ -1016,12 +1016,6 @@ YAML list of errors, possibly empty.
 {{- if not (kindIs "string" $declared) -}}
 {{- $errors = append $errors (printf "machines.%s.guest.provisioning: must name a provisioning backend, but is of type %s. Accepted backends: cloud-init, exec." $name (kindOf $declared)) -}}
 {{- $backendKnown = false -}}
-{{- else if eq ($declared | toString) "systemd-credentials" -}}
-{{- /* Not a typo on the user's part. The design describes three backends, and
-       telling someone who read it that the name is wrong would send them
-       looking for the right spelling of something that is not there. */ -}}
-{{- $errors = append $errors (printf "machines.%s.guest.provisioning: \"systemd-credentials\" is not implemented yet. The design describes it - credentials projected into a tmpfs at /run/host/credentials, so that nothing sensitive is written to the machine's volume - and this chart does not implement it. Accepted backends: cloud-init, exec." $name) -}}
-{{- $backendKnown = false -}}
 {{- else if eq ($declared | toString) "native" -}}
 {{- /* Not a typo either. `native` was this backend under its old name, back
        when it was defined by writing nothing; it runs a machine's own script

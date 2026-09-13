@@ -243,9 +243,19 @@ envoy:
 #       #                value change that silently edited a running machine's
 #       #                /etc would be a chart that destroys state on a typo.
 #       #
-#       # `systemd-credentials` is described in the design and is not implemented;
-#       # naming it fails rendering and says so, rather than pretending the name
-#       # is a typo.
+#       # THERE ARE TWO, AND NO THIRD IS PLANNED. Any other name is refused as
+#       # an unknown backend, listing these.
+#       #
+#       # They were chosen for what they do NOT ask for. cloud-init needs
+#       # cloud-init in the image and fails the pod loudly when it is absent,
+#       # but it asks nothing of the init system: a systemd unit and an OpenRC
+#       # script are both recognised. exec asks for a shell and nothing else.
+#       # Between them they serve every image this project ships a name for.
+#       #
+#       # That is also why there is no backend built on systemd's
+#       # /run/host/credentials, which an earlier design named: it would have
+#       # been the only one tied to one init system, and two of the four presets
+#       # do not run systemd.
 #       provisioning: cloud-init
 #
 #       # Optional: bump this to restart the machine and re-apply its

@@ -422,9 +422,11 @@ insecure-registry input in the chart.
 it is named for what it ran, so an unchanged script is a Job that already completed. Deleting that
 Job and upgrading runs it again, and `NOTES.txt` prints the command.
 
-**`systemd-credentials` is not implemented.** It is the backend that would keep provisioning
-material off the machine's volume entirely, projected into a `tmpfs` instead. Naming it fails
-rendering and says so, rather than pretending the name is a typo.
+**There are two provisioning backends and no third is planned.** `cloud-init` asks the image for
+cloud-init; `exec` asks it for a shell; neither asks anything of the machine's init system, which is
+why those two and not others. An earlier design named a third built on systemd's
+`/run/host/credentials`, and it is not built: it would have been the only one tied to one init
+system, and two of the four presets do not run systemd.
 
 ## License
 

@@ -38,20 +38,23 @@ tests:
 
   # The design names three backends. Telling someone who read it that their
   # spelling is wrong would send them looking for the right one.
-  - it: says systemd-credentials is not implemented rather than that it does not exist
+  - it: refuses a backend it does not have as unknown, describing no third as planned
     set:
       machines.web:
         source:
           kind: oci
           reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
         security:
           mode: userns
         guest:
           provisioning: systemd-credentials
     asserts:
+      # It used to say "described in the design and not implemented", which
+      # promised a third backend to everyone who met the message. There are two.
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.guest\.provisioning: "systemd-credentials" is not implemented yet.*cloud-init, exec'
-
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "systemd-credentials" is not a provisioning backend.*Accepted backends: cloud-init, exec'
   - it: refuses a backend that is not a string
     set:
       machines.web:
