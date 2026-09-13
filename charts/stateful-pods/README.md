@@ -1367,7 +1367,7 @@ helm-unittest to try.
 | A cluster too old for user namespaces is rejected | `security_version_check_test.yaml` |
 | An unverifiable prerequisite does not block rendering | `security_version_check_test.yaml` |
 | No machines declared | `values_machines_map_test.yaml` |
-| More than one machine declared | `values_machines_map_test.yaml`, `machine_iteration_test.yaml` |
+| More than one machine declared | `multiple_machines_test.yaml`, `machine_iteration_test.yaml` |
 | Invalid machine name is rejected | `values_machine_name_test.yaml` |
 | Overlong combined name is rejected | `values_machine_name_test.yaml` |
 | Missing source is rejected | `values_rootfs_source_test.yaml` |

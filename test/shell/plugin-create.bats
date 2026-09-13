@@ -220,3 +220,23 @@ setup() { plugin_setup; }
     [ "$status" -eq 0 ]
     [[ "$(calls)" == *"helm upgrade --install web"* ]]
 }
+
+@test "a release read that failed installs nothing" {
+    export SP_TEST_BROAD_STATUS=1
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --namespace homelab
+    [ "$status" -ne 0 ]
+    ! grep --quiet 'helm upgrade' "$RECORD"
+}
+
+# --values is passed to helm unchanged, so a file naming every machine in the
+# release is the user stating the release's machines themselves - which is what
+# the refusal tells them to do.
+@test "values of the user's own are not refused for holding another machine" {
+    export SP_TEST_NARROWED="$(sts_line db lab lab-db)"
+    machine create web --source-oci docker.io/library/debian:13 --mode userns \
+        --release lab --values /tmp/both.yaml --namespace homelab
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"helm upgrade --install lab"* ]]
+    [[ "$(calls)" == *"--values /tmp/both.yaml"* ]]
+}

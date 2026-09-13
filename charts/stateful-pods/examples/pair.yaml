@@ -1,0 +1,59 @@
+# Two machines in one release.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/pair.yaml
+#
+# They share the release and nothing else: their own objects, their own volumes,
+# their own lifetimes. Upgrading a release replaces only the machines whose own
+# values moved.
+#
+# What they do share is that lifetime. `helm uninstall lab` takes both, and so
+# does `kubectl machine delete web` - which names `db` before it acts and then
+# asks for the release's name rather than the machine's.
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    network:
+      ingress: declared
+      ports:
+        http:
+          port: 80
+
+    # The volume is called `data` in both machines, which is the one name two
+    # machines can share: a claim template is named for the volume, and the
+    # controller appends the pod's name to it. These are two volumes.
+    volumes:
+      data:
+        mountPath: /var/lib/www
+        size: 20Gi
+
+  db:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    network:
+      ingress: declared
+      ports:
+        pg:
+          port: 5432
+
+    volumes:
+      data:
+        mountPath: /var/lib/postgresql
+        size: 200Gi
+        storageClassName: fast

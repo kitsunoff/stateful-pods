@@ -7,7 +7,7 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: fails two valid machines on the count guard, not on a naming collision
+  - it: renders both machines when a release declares two
     set:
       machines.web:
         source:

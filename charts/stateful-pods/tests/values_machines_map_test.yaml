@@ -7,7 +7,7 @@ capabilities:
   majorVersion: 1
   minorVersion: 33
 tests:
-  - it: rejects an absent machines map, stating that exactly one machine is required
+  - it: rejects an absent machines map, stating that at least one machine is required
     asserts:
       - failedTemplate:
           errorPattern: '(?s)machines: no machines declared.*[Aa]t least one machine'
@@ -38,7 +38,7 @@ tests:
       - hasDocuments:
           count: 1
 
-  - it: rejects two machines as not implemented yet
+  - it: accepts two machines in one release
     set:
       machines.web:
         source:

@@ -139,12 +139,12 @@ setup() {
 # A release may hold several machines now, and this command uninstalls the
 # release. The sibling is somebody's pet, and finding out it had stopped by
 # noticing would be the worst way to learn it.
+#
+# SP_TEST_NARROWED is what the stub answers a read narrowed to one release with,
+# and SP_TEST_STATEFULSETS what it answers a read naming one machine with. That
+# asymmetry is real: the two selectors this command builds are exactly those.
 
 @test "it names the other machines the release holds" {
-    # The read for one machine answers with that machine; the read for the
-    # release answers with everything the release holds. That asymmetry is the
-    # stub's, and it is what a selector naming a machine and one naming only a
-    # release really produce.
     export SP_TEST_NARROWED="$(sts_line web lab lab-web)
 $(sts_line db lab lab-db)"
     machine delete web --namespace homelab <<< "lab"
@@ -156,10 +156,6 @@ $(sts_line db lab lab-db)"
 # What is being removed is the release. A confirmation that asks for the name of
 # one machine reads as a promise that only that machine goes.
 @test "it asks for the release's name, not the machine's, when a sibling would go too" {
-    # The read for one machine answers with that machine; the read for the
-    # release answers with everything the release holds. That asymmetry is the
-    # stub's, and it is what a selector naming a machine and one naming only a
-    # release really produce.
     export SP_TEST_NARROWED="$(sts_line web lab lab-web)
 $(sts_line db lab lab-db)"
     machine delete web --namespace homelab <<< "lab"
@@ -169,10 +165,6 @@ $(sts_line db lab lab-db)"
 }
 
 @test "the machine's own name is not the confirmation when a sibling would go too" {
-    # The read for one machine answers with that machine; the read for the
-    # release answers with everything the release holds. That asymmetry is the
-    # stub's, and it is what a selector naming a machine and one naming only a
-    # release really produce.
     export SP_TEST_NARROWED="$(sts_line web lab lab-web)
 $(sts_line db lab lab-db)"
     machine delete web --namespace homelab <<< "web"
@@ -188,14 +180,45 @@ $(sts_line db lab lab-db)"
 }
 
 @test "--yes still removes a release that holds several" {
-    # The read for one machine answers with that machine; the read for the
-    # release answers with everything the release holds. That asymmetry is the
-    # stub's, and it is what a selector naming a machine and one naming only a
-    # release really produce.
     export SP_TEST_NARROWED="$(sts_line web lab lab-web)
 $(sts_line db lab lab-db)"
     machine delete web --namespace homelab --yes < /dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"db"* ]]
     [[ "$(calls)" == *"helm uninstall lab"* ]]
+}
+
+# A removal that stops several machines keeps several volumes. Naming one of
+# them would leave the rest with no name anywhere - which is worse than naming
+# none, because it reads as the complete list.
+@test "it points at every volume the release kept, not at one machine's" {
+    export SP_TEST_NARROWED="$(sts_line web lab lab-web)
+$(sts_line db lab lab-db)"
+    machine delete web --namespace homelab <<< "lab"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"get persistentvolumeclaim --selector app.kubernetes.io/instance=lab"* ]]
+    [[ "$output" != *"delete persistentvolumeclaim lab-web-lab-web-0"* ]]
+}
+
+@test "a lone machine is still shown the command that deletes its own volume" {
+    machine delete web --namespace homelab <<< "web"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"delete persistentvolumeclaim lab-web-lab-web-0"* ]]
+}
+
+# The answer this plugin declines to give everywhere else, and the worst one to
+# give immediately before somebody uninstalls a release.
+@test "a claim read that was denied is not reported as a machine with no volume" {
+    export SP_TEST_PVC_STATUS=1
+    machine delete web --namespace homelab <<< "web"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"none found under this label"* ]]
+    [[ "$output" == *"could not be read"* ]]
+}
+
+@test "a release read that failed removes nothing" {
+    export SP_TEST_BROAD_STATUS=1
+    machine delete web --namespace homelab --yes < /dev/null
+    [ "$status" -ne 0 ]
+    ! grep --quiet 'helm uninstall' "$RECORD"
 }

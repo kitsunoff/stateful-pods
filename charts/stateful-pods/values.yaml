@@ -62,8 +62,9 @@ envoy:
 # release replaces only the machines whose own values moved.
 #
 # What they do share is their lifetime. `helm uninstall` takes the whole release,
-# and so does `kubectl machine delete`, which names the other machines it is
-# about to stop and asks for the release's name rather than the machine's.
+# and so does `kubectl machine delete` - which, when the release holds more than
+# one, names the other machines it is about to stop and asks for the release's
+# name rather than the machine's.
 #
 # Every object rendered for a machine is named `<release>-<machine>`, and that name
 # is permanent: the root filesystem lives in a PersistentVolumeClaim derived from
