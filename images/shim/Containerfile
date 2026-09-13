@@ -26,6 +26,16 @@
 #           container, so the image needs a registry client of its own. `crane
 #           export` applies the layers, including their whiteouts, and writes the
 #           result as a tar stream that GNU tar above extracts.
+#   kubectl - the exec provisioning backend runs a machine's own script inside
+#           the machine, from a Job beside it, which means reaching that machine
+#           through the cluster's API. It is the largest thing here by some way
+#           and it is carried by every machine, including those that never use
+#           that backend; that is the same trade the two above are, and it is
+#           made for the same reason. One image is what stops a running machine
+#           having two versions of its own logic, and a second image for one Job
+#           would be a second digest to pin, a second package to publish and a
+#           second thing to keep in step with the chart - to save a layer a node
+#           pulls once and shares between every machine on it.
 FROM alpine:3.22
 
 # renovate: datasource=repology
@@ -41,6 +51,7 @@ RUN apk add --no-cache \
       coreutils \
       libcap \
       crane \
+      kubectl \
  && rm -rf /var/cache/apk/*
 
 # The chart's logic, at the path its containers are told to run. Nothing here
@@ -52,6 +63,7 @@ COPY scripts/ /usr/local/lib/stateful-pods/
 RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
  && chmod 0755 /usr/local/lib/stateful-pods/boot.sh \
       /usr/local/lib/stateful-pods/customize.sh \
+      /usr/local/lib/stateful-pods/exec-provision.sh \
       /usr/local/lib/stateful-pods/prepare.sh \
       /usr/local/lib/stateful-pods/provision.sh \
       /usr/local/lib/stateful-pods/ready.sh \

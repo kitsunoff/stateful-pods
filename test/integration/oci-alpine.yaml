@@ -9,7 +9,7 @@
 machines:
   tiny:
     guest:
-      provisioning: native
+      provisioning: exec
     source:
       kind: oci
       reference: replaced-by-the-test

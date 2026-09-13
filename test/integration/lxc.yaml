@@ -10,7 +10,7 @@
 machines:
   db:
     guest:
-      provisioning: native
+      provisioning: exec
     source:
       kind: lxc
       url: PLACEHOLDER_URL

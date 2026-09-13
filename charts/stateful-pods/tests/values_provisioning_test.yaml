@@ -17,7 +17,7 @@ tests:
         security:
           mode: userns
         guest:
-          provisioning: native
+          provisioning: exec
     asserts:
       - hasDocuments:
           count: 1
@@ -34,7 +34,7 @@ tests:
           provisioning: ansible
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.guest\.provisioning: "ansible" is not a provisioning backend.*cloud-init, native'
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "ansible" is not a provisioning backend.*cloud-init, exec'
 
   # The design names three backends. Telling someone who read it that their
   # spelling is wrong would send them looking for the right one.
@@ -50,7 +50,7 @@ tests:
           provisioning: systemd-credentials
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.guest\.provisioning: "systemd-credentials" is not implemented yet.*cloud-init, native'
+          errorPattern: '(?s)machines\.web\.guest\.provisioning: "systemd-credentials" is not implemented yet.*cloud-init, exec'
 
   - it: refuses a backend that is not a string
     set:
@@ -207,7 +207,7 @@ tests:
           errorPattern: '(?s)machines\.web\.cloudInit\.user: must be a map naming `value` or `valueFrom`, but is of type string.*given under `value`'
 
   # ----------------------------------------------- inputs and their backend ---
-  - it: refuses a cloud-init input on a machine provisioned natively
+  - it: refuses a cloud-init input on a machine provisioned by exec
     set:
       machines.web:
         source:
@@ -216,13 +216,13 @@ tests:
         security:
           mode: userns
         guest:
-          provisioning: native
+          provisioning: exec
         cloudInit:
           userData:
             value: "#cloud-config\n"
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.cloudInit: belongs to the "cloud-init" backend, but this machine selected "native"'
+          errorPattern: '(?s)machines\.web\.cloudInit: belongs to the "cloud-init" backend, but this machine selected "exec"'
 
   - it: refuses an input the cloud-init backend does not have
     set:

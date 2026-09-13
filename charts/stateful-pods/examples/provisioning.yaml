@@ -6,7 +6,7 @@
 # in the Helm release.
 #
 # The preset carries cloud-init, which the default backend requires. `void-current`
-# does not and would have to say `guest.provisioning: native` instead.
+# does not and would have to say `guest.provisioning: exec` instead.
 machines:
   web:
     source:

@@ -17,6 +17,12 @@
        names the machine's inputs are materialized under and never the inputs. */ -}}
 {{- $provisioning := include "stateful-pods.machine.provisioning.resolved" $ctx | fromYaml }}
 {{- $hasMaterial := include "stateful-pods.machine.provisioning.hasMaterial" $ctx }}
+{{- /* Whether that material is mounted into this pod at all. Under `cloud-init`
+       it is: the step that writes the seed reads it before the machine starts.
+       Under `exec` it is not - the script is carried to a booted machine by a
+       Job beside this pod, and mounting it here would put it in a container
+       that has nothing to do with it, inside a pod a user execs into. */ -}}
+{{- $inPod := and (eq $provisioning.backend "cloud-init") $hasMaterial }}
 {{- /* The ports the machine declares, normalised and in a stable order. */ -}}
 {{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
 {{- /* The volumes beside the root filesystem, ordered by mount path so that one
@@ -118,7 +124,7 @@ spec:
     {{- end }}
   template:
     metadata:
-      {{- if $hasMaterial }}
+      {{- if $inPod }}
       annotations:
         # What restarts a machine when its provisioning material changes. Helm
         # renders the inline material itself, so a change to it changes this
@@ -145,7 +151,15 @@ spec:
       {{- with $machine.hostname }}
       hostname: {{ . }}
       {{- end }}
-      {{- if or $pullSecret $hasMaterial $mounted }}
+      # A machine is an operating system, not a workload that talks to the
+      # cluster. It has never had a use for a ServiceAccount token, and after
+      # the root change it could not reach one anyway - the path the kubelet
+      # projects it to is in the shim's filesystem, on the other side of the
+      # pivot. Declining it is the honest form of that, and it means the one
+      # identity this chart does create, for the Job that runs a machine's
+      # script, is the only one anywhere near a machine.
+      automountServiceAccountToken: false
+      {{- if or $pullSecret $inPod $mounted }}
       volumes:
         {{- /* The claims the machine mounts but the chart did not create. Their
                size, class, access mode and lifetime belong to whoever made them,
@@ -168,7 +182,7 @@ spec:
               - key: .dockerconfigjson
                 path: config.json
         {{- end }}
-        {{- if $hasMaterial }}
+        {{- if $inPod }}
         # The machine's provisioning material, assembled into one directory of
         # fixed file names. This is where "inline or a reference" stops being two
         # things: the step that reads this directory cannot tell which form an
@@ -295,7 +309,7 @@ spec:
         #
         # Rendered under both backends. A pod whose shape changed with the
         # backend would make a backend switch a replacement by a different kind
-        # of pod, and under `native` the step's one line of output is what says
+        # of pod, and under `exec` the step's one line of output is what says
         # the chart deliberately did nothing.
         #
         # Last, because the drop-in it writes is about files the step above has
@@ -313,7 +327,7 @@ spec:
           volumeMounts:
             - name: {{ $objectName }}
               mountPath: /mnt/rootfs
-            {{- if $hasMaterial }}
+            {{- if $inPod }}
             - name: provisioning
               mountPath: /provisioning
               readOnly: true

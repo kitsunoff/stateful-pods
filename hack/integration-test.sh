@@ -804,7 +804,7 @@ fi
 # failure says which part went missing.
 for expected in \
     "does not carry cloud-init" \
-    "guest.provisioning: native" \
+    "guest.provisioning: exec" \
     "Nothing has been written into the machine" \
     "delete this pod"; do
   if grep --quiet --fixed-strings "$expected" <<< "$provision_message"; then
@@ -824,7 +824,7 @@ helm --kube-context "$CONTEXT" upgrade nocloudinit "$CHART" \
   --values test/integration/no-cloud-init.yaml \
   --set "shim.image=$SHIM_IMAGE" \
   --set "machines.broken.source.reference=$ALPINE_SOURCE_REFERENCE" \
-  --set "machines.broken.guest.provisioning=native" \
+  --set "machines.broken.guest.provisioning=exec" \
   --timeout 5m >/dev/null 2>&1 || true
 # Deleted rather than waited for, which is exactly what the message tells the
 # user to do: a StatefulSet does not replace a pod that never became ready, so
@@ -1001,12 +1001,12 @@ else
     # The backend each preset can actually serve, which is a property of the
     # upstream and not of this suite. Alpine is built from the cloud variant, so
     # it takes the default; Void's upstream publishes no cloud variant at all, so
-    # a Void machine has to say `native` or the pod fails by design. Naming it
+    # a Void machine has to say `exec` or the pod fails by design. Naming it
     # here is the same thing a user has to do, and getting it wrong is what the
     # refusal asserted earlier in this file is for.
     case "$preset" in
-      void-current) preset_backend=native ;;
-      *)            preset_backend=cloud-init ;;
+      void-current) preset_backend="exec" ;;
+      *)            preset_backend="cloud-init" ;;
     esac
 
     step "installing a machine that names the $preset preset, provisioned by $preset_backend"
@@ -1095,7 +1095,7 @@ else
         check "the machine booted an init that is neither systemd nor busybox" \
           osguest sh -c '[ "$(cat /proc/1/comm)" = "runit" ]'
         # The upstream publishes no cloud variant of Void, so this preset is the
-        # `default` one and serves the native backend only. It is asserted rather
+        # `default` one and serves the exec backend only. It is asserted rather
         # than documented because the asymmetry between the four presets is the
         # thing a reader is most likely to assume away.
         check "the Void preset carries no cloud-init" \

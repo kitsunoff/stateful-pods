@@ -56,10 +56,10 @@ given_material() { printf '%s' "$2" > "$MATERIAL/$1"; }
 
 seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
 
-# --------------------------------------------------------------- the native ---
+# ----------------------------------------------------------------- the exec ---
 
-@test "the native backend writes nothing into the machine" {
-    export SP_PROVISIONING=native
+@test "the exec backend writes nothing into the machine" {
+    export SP_PROVISIONING="exec"
     given_systemd_cloud_init
     run sp_provision "$ROOTFS"
     [ "$status" -eq 0 ]
@@ -67,11 +67,11 @@ seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
     [ ! -e "$ROOTFS/etc/cloud/cloud.cfg.d/99-stateful-pods.cfg" ]
 }
 
-# Switching a machine to native is "stop managing this", not "undo what was
+# Switching a machine to exec is "stop managing this", not "undo what was
 # done". The volume is the machine, and a value change that silently edited a
 # running machine's /etc would be a chart that destroys state on a typo.
-@test "the native backend removes nothing the machine already has" {
-    export SP_PROVISIONING=native
+@test "the exec backend removes nothing the machine already has" {
+    export SP_PROVISIONING="exec"
     given_systemd_cloud_init
     mkdir -p "$(seed_dir)"
     printf 'instance-id: earlier\n' > "$(seed_dir)/meta-data"
@@ -81,11 +81,11 @@ seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
     [ -e "$ROOTFS/etc/cloud/cloud-init.disabled" ]
 }
 
-@test "the native backend says what it did" {
-    export SP_PROVISIONING=native
+@test "the exec backend says what it did" {
+    export SP_PROVISIONING="exec"
     run sp_provision "$ROOTFS"
     [ "$status" -eq 0 ]
-    [[ "$output" == *native* ]]
+    [[ "$output" == *exec* ]]
 }
 
 @test "an unknown backend fails rather than doing nothing" {
@@ -105,7 +105,7 @@ seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
 @test "the message names the backend that would work" {
     run sp_provision "$ROOTFS"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"guest.provisioning: native"* ]]
+    [[ "$output" == *"guest.provisioning: exec"* ]]
 }
 
 # Changing the value is not enough on its own, which was found on a cluster
@@ -151,7 +151,7 @@ seed_dir() { echo "$ROOTFS/var/lib/cloud/seed/nocloud"; }
     chmod 0755 "$ROOTFS/usr/bin/cloud-init"
     run sp_provision "$ROOTFS"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"guest.provisioning: native"* ]]
+    [[ "$output" == *"guest.provisioning: exec"* ]]
     [ ! -d "$ROOTFS/var/lib/cloud/seed" ]
 }
 

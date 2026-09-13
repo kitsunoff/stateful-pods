@@ -37,7 +37,7 @@ tests:
   # The pod's shape must not change when the backend does. A backend switch that
   # added or removed a container would be a different kind of pod, and the step
   # is what says in the logs that the chart deliberately did nothing.
-  - it: runs the same step under the native backend
+  - it: runs the same step under the exec backend
     template: statefulset.yaml
     set:
       machines.web:
@@ -47,7 +47,7 @@ tests:
         security:
           mode: userns
         guest:
-          provisioning: native
+          provisioning: exec
     asserts:
       - lengthEqual:
           path: spec.template.spec.initContainers
@@ -59,7 +59,7 @@ tests:
           path: spec.template.spec.initContainers[3].env
           content:
             name: SP_PROVISIONING
-            value: native
+            value: exec
 
   - it: tells the step which backend the machine chose, defaulting to cloud-init
     template: statefulset.yaml
