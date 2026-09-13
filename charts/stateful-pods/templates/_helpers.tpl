@@ -407,6 +407,94 @@ seccompProfile:
 
 {{/*
 --------------------------------------------------------------------------------
+The network a machine is reachable on
+--------------------------------------------------------------------------------
+
+What the cluster is told about a machine, and never what the machine's own
+interface is configured with - the pod's addressing belongs to the CNI, which is
+why `values.yaml` refuses the Proxmox options that would set it.
+*/}}
+
+{{/*
+The protocols a declared port may name. Kubernetes accepts exactly these three
+for a container port and for a Service port, so the list is theirs rather than
+this chart's.
+*/}}
+{{- define "stateful-pods.network.protocols" -}}
+TCP UDP SCTP
+{{- end -}}
+
+{{/*
+The inputs one port entry accepts, so that the refusal of anything else can list
+them rather than merely reject.
+*/}}
+{{- define "stateful-pods.network.portInputs" -}}
+port protocol
+{{- end -}}
+
+{{/*
+The inputs the network block accepts.
+*/}}
+{{- define "stateful-pods.network.inputs" -}}
+ports ingress
+{{- end -}}
+
+{{/*
+A machine's declared ports, normalised: one entry per port, with the name it was
+declared under, its number, and its protocol defaulted to TCP.
+
+Sorted by name, because Helm iterates a map in key order and the rendered list
+must not reorder itself when an unrelated value changes - a container port list
+that permutes between renders is a pod the StatefulSet controller replaces for no
+reason anyone can see in the diff.
+
+Validation has already run by the time this is called, so it assumes the entries
+are well formed.
+
+Takes (dict "root" $ "name" $name "machine" $machine). Emits a YAML list.
+*/}}
+{{- define "stateful-pods.machine.ports" -}}
+{{- $ports := list -}}
+{{- $network := .machine.network | default dict -}}
+{{- if kindIs "map" $network -}}
+{{- $given := index $network "ports" | default dict -}}
+{{- if kindIs "map" $given -}}
+{{- range $name := keys $given | sortAlpha -}}
+{{- $entry := index $given $name -}}
+{{- if kindIs "map" $entry -}}
+{{- $ports = append $ports (dict "name" ($name | toString) "port" (index $entry "port" | int64) "protocol" (index $entry "protocol" | default "TCP" | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $ports }}
+{{- end -}}
+
+{{/*
+The ingress posture a machine declares: `any` unless it says otherwise.
+
+`any` renders no policy and changes nothing, which is what a chart upgrade must
+do to a running pet's traffic. A value of the wrong type resolves to the default
+here and is reported by the validation stage, so that one mistake produces one
+message.
+
+Takes the same machine context as the other helpers.
+*/}}
+{{- define "stateful-pods.machine.network.ingress" -}}
+{{- $network := .machine.network | default dict -}}
+{{- $declared := "" -}}
+{{- if kindIs "map" $network -}}
+{{- $declared = index $network "ingress" -}}
+{{- end -}}
+{{- if and (kindIs "string" $declared) (ne ($declared | toString) "") -}}
+{{- $declared | toString -}}
+{{- else -}}
+any
+{{- end -}}
+{{- end -}}
+
+{{/*
+--------------------------------------------------------------------------------
 Validation
 --------------------------------------------------------------------------------
 
@@ -637,6 +725,125 @@ possibly empty.
 {{- end -}}
 
 {{/*
+The checks on a machine's network block: the ports it declares and the ingress
+posture it asks for.
+
+Every one of these is a manifest the API server would reject on apply. A port
+name it refuses, a number it refuses and a duplicate pair all surface as a
+StatefulSet that renders cleanly and never creates a pod, with a message about a
+field index rather than about a machine - so they are refused here, naming the
+machine, the input and the rule.
+
+Takes (dict "name" $name "machine" $machine). Emits a YAML list of errors,
+possibly empty.
+*/}}
+{{- define "stateful-pods.validate.network" -}}
+{{- $name := .name -}}
+{{- $machine := .machine -}}
+{{- $errors := list -}}
+{{- $network := index $machine "network" -}}
+{{- if not (kindIs "invalid" $network) -}}
+{{- if not (kindIs "map" $network) -}}
+{{- $errors = append $errors (printf "machines.%s.network: must be a map of this machine's network inputs, but is of type %s. Accepted inputs: %s. It describes what the cluster is told about the machine - never what the machine's own interface is configured with, which belongs to the cluster's CNI." $name (kindOf $network) (join ", " (splitList " " (include "stateful-pods.network.inputs" .) | sortAlpha))) -}}
+{{- else -}}
+{{- $accepted := splitList " " (include "stateful-pods.network.inputs" .) -}}
+{{- range $field, $value := $network -}}
+{{- if not (has $field $accepted) -}}
+{{- $errors = append $errors (printf "machines.%s.network.%s: is not an input of the network block. Accepted inputs: %s." $name $field (join ", " ($accepted | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The posture, before the ports, because a machine that asks for an
+       enforcement the chart does not offer has a different problem from one
+       whose port list is wrong. */ -}}
+{{- $ingress := index $network "ingress" -}}
+{{- if not (kindIs "invalid" $ingress) -}}
+{{- if not (kindIs "string" $ingress) -}}
+{{- $errors = append $errors (printf "machines.%s.network.ingress: must name an ingress posture, but is of type %s. Accepted postures:\n%s" $name (kindOf $ingress) (include "stateful-pods.errors.ingressPostures" .)) -}}
+{{- else if not (has ($ingress | toString) (list "any" "declared")) -}}
+{{- $errors = append $errors (printf "machines.%s.network.ingress: %q is not an ingress posture. Accepted postures:\n%s" $name ($ingress | toString) (include "stateful-pods.errors.ingressPostures" .)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $ports := index $network "ports" -}}
+{{- if not (kindIs "invalid" $ports) -}}
+{{- if not (kindIs "map" $ports) -}}
+{{- $errors = append $errors (printf "machines.%s.network.ports: must be a map keyed by port name, but is of type %s. The key is the name the port is published under - it appears in the Service's SRV record and in `kubectl describe pod` - so each port is declared under its own name rather than as an item in a list." $name (kindOf $ports)) -}}
+{{- else -}}
+{{- $protocols := splitList " " (include "stateful-pods.network.protocols" .) -}}
+{{- $portInputs := splitList " " (include "stateful-pods.network.portInputs" .) -}}
+{{- $seen := dict -}}
+{{- range $portName := keys $ports | sortAlpha -}}
+{{- $field := printf "machines.%s.network.ports.%s" $name $portName -}}
+{{- $entry := index $ports $portName -}}
+{{- /* The name first: it is the key, so every message below quotes it, and a
+       key the API will refuse makes the rest academic. The rule is the
+       Kubernetes IANA_SVC_NAME rule, stated rather than shown as a pattern. */ -}}
+{{- if gt (len $portName) 15 -}}
+{{- $errors = append $errors (printf "%s: %q is %d characters, and a port name is at most fifteen characters. Kubernetes validates a port name strictly - at most fifteen characters, lowercase letters, digits and hyphens, at least one letter, no leading, trailing or consecutive hyphens - and a name outside that is rejected by the API server, which surfaces as a machine whose pod is never created." $field $portName (len $portName)) -}}
+{{- else if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $portName) -}}
+{{- $errors = append $errors (printf "%s: %q is not a port name Kubernetes accepts. It must be at most fifteen characters of lowercase letters, digits and hyphens, starting and ending with a letter or a digit." $field $portName) -}}
+{{- else if not (regexMatch "[a-z]" $portName) -}}
+{{- $errors = append $errors (printf "%s: %q has no letter in it, and a port name must contain at least one. A name of digits alone is rejected by the API server, because it could not be told apart from a port number." $field $portName) -}}
+{{- else if contains "--" $portName -}}
+{{- $errors = append $errors (printf "%s: %q contains consecutive hyphens, which a port name may not." $field $portName) -}}
+{{- end -}}
+{{- if not (kindIs "map" $entry) -}}
+{{- $errors = append $errors (printf "%s: must be a map naming the port number, but is of type %s. Accepted inputs: %s. The number goes under `port` rather than beside the name, so that a protocol can be named next to it." $field (kindOf $entry) (join ", " ($portInputs | sortAlpha))) -}}
+{{- else -}}
+{{- range $key, $value := $entry -}}
+{{- if not (has $key $portInputs) -}}
+{{- $errors = append $errors (printf "%s.%s: is not an input of a port. Accepted inputs: %s." $field $key (join ", " ($portInputs | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+{{- $number := index $entry "port" -}}
+{{- $numberUsable := false -}}
+{{- if kindIs "invalid" $number -}}
+{{- $errors = append $errors (printf "%s.port: not set. A declared port needs the number it is served on." $field) -}}
+{{- else if or (kindIs "string" $number) (not (regexMatch "^[0-9]+$" ($number | toString))) -}}
+{{- /* The shape rather than the YAML type, for the reason the checksum check
+       gives: a quoted number is a string and renders into the manifest as one,
+       where the API server refuses it, and a fractional one is a float that
+       renders in whatever form Go prints it. Both are the same mistake to the
+       person making it. */ -}}
+{{- $errors = append $errors (printf "%s.port: %v is not a port number. It must be a whole number between 1 and 65535, unquoted: the API server takes an integer here, so a quoted value renders as a string and is refused on apply." $field $number) -}}
+{{- else if or (lt (int64 $number) 1) (gt (int64 $number) 65535) -}}
+{{- $errors = append $errors (printf "%s.port: %v is outside the range of a port. It must be a whole number between 1 and 65535." $field $number) -}}
+{{- else -}}
+{{- $numberUsable = true -}}
+{{- end -}}
+{{- $protocol := index $entry "protocol" -}}
+{{- $protocolUsable := true -}}
+{{- if not (kindIs "invalid" $protocol) -}}
+{{- if not (kindIs "string" $protocol) -}}
+{{- $errors = append $errors (printf "%s.protocol: must name a protocol, but is of type %s. Accepted protocols: %s." $field (kindOf $protocol) (join ", " ($protocols | sortAlpha))) -}}
+{{- $protocolUsable = false -}}
+{{- else if not (has ($protocol | toString) $protocols) -}}
+{{- $errors = append $errors (printf "%s.protocol: %q is not a protocol a port may name. Accepted protocols: %s. This is the transport, not the application protocol - a port serving HTTP names TCP." $field ($protocol | toString) (join ", " ($protocols | sortAlpha))) -}}
+{{- $protocolUsable = false -}}
+{{- end -}}
+{{- end -}}
+{{- /* The duplicate check last, and only on entries whose number and protocol
+       both came out usable: a pair derived from a value already reported would
+       collide with every other broken entry and bury the real message. */ -}}
+{{- if and $numberUsable $protocolUsable -}}
+{{- $pair := printf "%d/%s" (int64 $number) ($protocol | default "TCP" | toString) -}}
+{{- $already := index $seen $pair -}}
+{{- if $already -}}
+{{- $errors = append $errors (printf "%s: declares %s, which machines.%s.network.ports.%s already declares. Two ports may share a number only on different protocols, so one of these is a duplicate the API server would refuse." $field $pair $name $already) -}}
+{{- else -}}
+{{- $_ := set $seen $pair $portName -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+{{/*
 Stage two: every remaining check, accumulated and reported together.
 Takes the root context.
 */}}
@@ -839,6 +1046,9 @@ Takes the root context.
 {{- /* How the machine is provisioned, and the inputs it supplies for it. */ -}}
 {{- $errors = concat $errors (include "stateful-pods.validate.provisioning" (dict "name" $name "machine" $machine) | fromYamlArray) -}}
 
+{{- /* What the cluster is told about the machine's network presence. */ -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.network" (dict "name" $name "machine" $machine) | fromYamlArray) -}}
+
 {{- end -}}
 
 {{- if $errors -}}
@@ -894,4 +1104,21 @@ machines: no machines declared. Exactly one machine must be declared, keyed by i
             mode: userns
           rootfs:
             size: 8Gi
+{{- end -}}
+
+{{/*
+The ingress postures a machine may ask for. It doubles as the documentation of
+them, which is why it states what each one renders and what enforcing it depends
+on.
+*/}}
+{{- define "stateful-pods.errors.ingressPostures" }}
+      any      - the cluster is told nothing about which ports may be reached, and the machine is
+                 reachable on every port something inside it listens on. The default, and what a
+                 machine gets when it names no posture: a chart upgrade must not take a running
+                 pet off the network.
+      declared - a NetworkPolicy admitting inbound traffic to the ports declared under
+                 machines.<name>.network.ports and to no others. Outbound traffic is untouched.
+                 A NetworkPolicy is enforced by the cluster's network plugin and by nothing else,
+                 so on a cluster whose plugin implements none this posture is accepted by the API
+                 server and restricts nothing at all.
 {{- end -}}

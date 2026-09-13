@@ -1,0 +1,288 @@
+suite: values validation - the network block
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: rejects a network block that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network: must be a map'
+
+  - it: rejects a key the network block does not accept, and lists the ones it does
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          port: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.port: is not an input.*Accepted inputs: ingress, ports'
+
+  - it: rejects a port collection that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports: must be a map keyed by port name'
+
+  - it: rejects a port entry that is not a map
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh: must be a map naming the port'
+
+  - it: rejects a port name longer than the API accepts
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            a-very-long-port-name:
+              port: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.a-very-long-port-name.*at most fifteen characters'
+
+  - it: rejects a port name with no letter in it
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            "22":
+              port: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.22.*must contain at least one'
+
+  - it: rejects a port name with doubled hyphens
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh--alt:
+              port: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh--alt.*consecutive hyphens'
+
+  - it: rejects a port entry with no number
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              protocol: TCP
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.port: not set'
+
+  - it: rejects a port number that is not a whole number
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22.5
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.port: .*whole number between 1 and 65535'
+
+  - it: rejects a quoted port number, because the API takes an integer
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: "22"
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.port: .*whole number between 1 and 65535'
+
+  - it: rejects a port number outside the range
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 70000
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.port: .*whole number between 1 and 65535'
+
+  - it: rejects an unknown protocol and lists the ones it accepts
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+              protocol: HTTP
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.protocol: "HTTP".*Accepted protocols: SCTP, TCP, UDP'
+
+  - it: rejects a key a port entry does not accept
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+              hostPort: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh\.hostPort: is not an input.*Accepted inputs: port, protocol'
+
+  - it: rejects two entries declaring the same number and protocol, naming both
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ports:
+            ssh:
+              port: 22
+            admin:
+              port: 22
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.ssh: declares 22/TCP, which machines\.web\.network\.ports\.admin already declares'
+
+  - it: rejects an unknown ingress posture and says what each accepted one renders
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ingress: strict
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ingress: "strict" is not an ingress posture.*Accepted postures'
+
+  - it: rejects an ingress posture that is not a string
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          ingress: true
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ingress: must name an ingress posture'
