@@ -544,6 +544,98 @@ shim:
 #       # means "no class" and disables dynamic provisioning - these are different
 #       # things and the chart preserves the difference.
 #       storageClassName: null
+#
+#     # Volumes beside the root filesystem, keyed by the name each is known by.
+#     #
+#     # The root filesystem above is the machine: its operating system, its
+#     # /etc, its package cache. These are the storage next to it - a database's
+#     # data directory, a media library, anything that should outlive a rebuild
+#     # of the operating system rather than be rebuilt with it. Proxmox calls
+#     # them mount points and gives a container up to 256; this gives a machine
+#     # as many as the pod can carry.
+#     #
+#     # A machine that declares none renders exactly what it rendered before
+#     # this input existed.
+#     volumes:
+#       data:
+#         # Where this volume appears inside the machine. Mandatory, absolute,
+#         # and the one input every volume needs whichever way it is backed.
+#         #
+#         # THE BOOT SEQUENCE OWNS SOME PATHS AND THEY ARE REFUSED HERE:
+#         # /proc, /sys, /dev, /run, /tmp and /.stateful-pods, and anything
+#         # under them. The machine's own kernel and temporary filesystems are
+#         # mounted over those after the pod's volumes are in place, so a volume
+#         # there would be provisioned, bound, mounted and then covered -
+#         # present, empty on every start, and with nothing to say why. "/" is
+#         # refused too: that is the root filesystem, declared under `rootfs`
+#         # and seeded from `source`.
+#         #
+#         # What is already at the path inside the machine is HIDDEN, not
+#         # deleted, exactly as any Unix mount hides what it covers. A
+#         # distribution's empty /var/lib/postgresql skeleton disappearing under
+#         # a volume is the normal case and is what was intended; it comes back
+#         # if the volume is removed.
+#         mountPath: /var/lib/data
+#
+#         # Size of the volume. Give this OR existingClaim below, never both and
+#         # never neither: one has the chart provision a claim for this machine,
+#         # the other mounts a claim somebody else made. They are not
+#         # alternatives, and choosing between them here would either provision
+#         # a volume nobody asked for or ignore a size you believed was in
+#         # effect.
+#         #
+#         # THIS CANNOT BE CHANGED LATER. A StatefulSet's volume claim templates
+#         # are immutable once it exists, so raising this renders a manifest the
+#         # API server refuses. That is a property of the primitive rather than
+#         # a decision of this chart's: growing a volume means expanding the
+#         # PersistentVolumeClaim itself, on a StorageClass that allows it.
+#         size: 50Gi
+#
+#         # StorageClass for this volume, independently of the root filesystem
+#         # and of every other volume - which is the reason to have a second
+#         # volume at all: a database's data on fast storage while its operating
+#         # system stays on the default class.
+#         #
+#         # Unset (null) omits the field entirely, so the cluster's default
+#         # StorageClass applies. An explicit "" means "no class" and disables
+#         # dynamic provisioning - these are different things and the chart
+#         # preserves the difference, exactly as it does for the root
+#         # filesystem.
+#         # storageClassName: fast
+#
+#         # Optional: create this volume from an existing VolumeSnapshot instead
+#         # of provisioning it empty. Per volume, so a machine can restore its
+#         # data without touching its operating system.
+#         # dataSource:
+#         #   volumeSnapshotName: data-yesterday
+#
+#         # Optional: mount it read-only inside the machine. Defaults to false.
+#         # readOnly: false
+#
+#       # A volume the chart does not create. It names a PersistentVolumeClaim
+#       # that already exists in this release's namespace, and everything about
+#       # that claim - its size, its class, its access mode, whether it survives
+#       # this release - belongs to whoever made it.
+#       #
+#       # This is how a machine reaches shared storage. A volume the chart
+#       # provisions is ReadWriteOnce, because a machine is a single instance;
+#       # a claim that is ReadWriteMany is one somebody else made deliberately.
+#       #
+#       # size, storageClassName and dataSource are refused beside it: there is
+#       # nothing here for them to describe.
+#       # media:
+#       #   mountPath: /srv/media
+#       #   existingClaim: media-share
+#       #   readOnly: true
+#
+#     # THE NAME OF A VOLUME IS AS PERMANENT AS THE MACHINE'S OWN. The claim
+#     # behind `data` above is named `data-<release>-<machine>-0`, so renaming
+#     # the volume does not move the data: it orphans the old claim and
+#     # provisions a new empty one beside it. A claim the chart provisions is
+#     # retained when the release is uninstalled, exactly as the root filesystem
+#     # is, so nothing is lost by the rename - but nothing is carried across it
+#     # either.
+#
 machines: {}
 
 # Deliberately not chart inputs
