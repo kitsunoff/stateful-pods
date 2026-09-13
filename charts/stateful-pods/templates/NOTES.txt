@@ -157,6 +157,7 @@ or bump machines.{{ $name }}.guest.provisioningRevision.
 
 {{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
 {{- $ingress := include "stateful-pods.machine.network.ingress" $ctx }}
+{{- $egress := include "stateful-pods.machine.egress" $ctx | fromYaml }}
 {{- if $ports }}
 
 This machine declares {{ len $ports }} port{{ if ne (len $ports) 1 }}s{{ end }}. Each is published under its own name, so a
@@ -190,6 +191,36 @@ runs one that implements no policy, the object above exists and restricts nothin
 `kubectl exec` and this machine's readiness are unaffected either way. Both go through the container
 runtime rather than over the network, so a machine that admits nothing still becomes ready and can
 still be logged into.
+{{- end }}
+
+{{- if $egress.declared }}
+
+This machine's outbound traffic is decided by a proxy in its own pod: {{ len $egress.rules }} rule{{ if ne (len $egress.rules) 1 }}s{{ end }}, and
+everything else is {{ if eq $egress.default "deny" }}REFUSED{{ else }}allowed{{ end }}.
+{{- range $rule := $egress.rules }}
+{{- if eq $rule.kind "serverNames" }}
+
+  {{ $rule.name }}  {{ join ", " $rule.serverNames }} on {{ join ", " $rule.ports }}/TCP (by the name in the TLS handshake)
+{{- else if eq $rule.kind "http" }}
+
+  {{ $rule.name }}  http://{{ $rule.authority }}{{ $rule.pathPrefix }} on {{ join ", " $rule.ports }}/TCP (plaintext only)
+{{- else }}
+
+  {{ $rule.name }}  {{ join ", " $rule.cidrs }} on {{ join ", " $rule.ports }}/{{ $rule.protocol }}
+{{- end }}
+{{- end }}
+
+Every decision it makes is a line on the proxy's own output, allowed and refused alike:
+
+  kubectl --namespace {{ $root.Release.Namespace }} logs {{ $objectName }}-0 --container envoy
+
+That is where "why can this machine not reach X" is answered. Nothing has to be turned on.
+{{- if eq $egress.default "deny" }}
+
+The pod's own resolver is allowed without a rule, because a rule written as a name needs one.
+IPv6 is not proxied and is dropped outright. A process inside the machine running as user 1337 is
+exempt from the redirect, which is why a policy worth relying on has a rule matching an address.
+{{- end }}
 {{- end }}
 
 The root volume is retained when the release is uninstalled - by `helm uninstall

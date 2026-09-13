@@ -25,6 +25,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 - [Declaring a machine](#declaring-a-machine)
 - [Getting into a machine](#getting-into-a-machine)
 - [The ports a machine serves](#the-ports-a-machine-serves)
+- [What a machine may reach](#what-a-machine-may-reach)
 - [Storage beside the root filesystem](#storage-beside-the-root-filesystem)
 - [The kubectl plugin](#the-kubectl-plugin)
 - [Security modes](#security-modes)
@@ -220,6 +221,46 @@ cannot detect and therefore says out loud.
 
 The restriction is inbound only. A machine that asked for it keeps its resolver, its package mirror
 and everything else it reaches out to.
+
+## What a machine may reach
+
+A machine is an operating system with a package manager, a shell and somebody's script on it, and it
+reaches everything the pod reaches. `network.egress` is where it says what it may reach instead.
+
+```yaml
+machines:
+  web:
+    network:
+      egress:
+        default: deny
+        rules:
+          - name: debian-mirror
+            ports: [443]
+            serverNames: [deb.debian.org, security.debian.org]
+          - name: our-database
+            ports: [5432]
+            cidrs: ["10.0.5.7/32"]
+```
+
+The rule people actually write is a **name**, and a name is not something a packet filter or a
+NetworkPolicy can match — it resolves to a rotating set of addresses. What can match it is the name
+the machine itself puts in the TLS handshake, so declaring a policy puts an **Envoy in the machine's
+own pod** with its outbound TCP redirected into it. Nothing is decrypted.
+
+A rule matches on exactly one of: an address range (layer 4), a TLS server name, or the authority and
+path of a plaintext HTTP request. `deny` covers what the proxy cannot see too — unmatched UDP and
+IPv6 are dropped — and the pod's own resolver is always allowed, because a policy written in names
+needs one.
+
+Every decision is a line on the proxy's output, allowed and refused alike:
+
+```bash
+kubectl logs lab-web-0 --container envoy
+```
+
+**A server-name rule is a claim the machine makes about itself**: a process inside it can put any
+name in a handshake. That is why a policy worth relying on also has an address rule, which is
+enforced where a process's identity is not what decides.
 
 ## Storage beside the root filesystem
 

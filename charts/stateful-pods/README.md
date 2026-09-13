@@ -589,15 +589,127 @@ an `exec` probe, so the kubelet runs it through the container runtime rather tha
 which means the most common way a default-deny ingress policy takes a workload down, an HTTP probe
 it also blocks, cannot happen here.
 
+### What a machine may reach
+
+`network.egress` is the outbound half. It names a default and a list of rules, and declaring it puts
+a proxy in the machine's own pod with the machine's outbound TCP redirected into it.
+
+```yaml
+machines:
+  web:
+    network:
+      egress:
+        default: deny
+        rules:
+          - name: debian-mirror
+            ports: [443]
+            serverNames: [deb.debian.org, security.debian.org]
+          - name: our-database
+            ports: [5432]
+            cidrs: ["10.0.5.7/32"]
+          - name: ntp
+            protocol: UDP
+            ports: [123]
+            cidrs: ["10.0.0.0/8"]
+```
+
+**Why a proxy and not a NetworkPolicy.** The rule an operator actually writes is `deb.debian.org`,
+and a name is not something a packet filter or a NetworkPolicy can match: it resolves to a rotating
+set of CDN addresses, and resolving it while the chart renders would pin the policy to whatever the
+answer was that afternoon. What *can* match it is the name the machine itself puts in the TLS
+handshake — and reading that means something has to sit in the connection.
+
+#### What each form of rule can see
+
+| Form | Matches | Cannot see |
+| --- | --- | --- |
+| `cidrs` + `ports` | the connection's original destination | anything about the request |
+| `serverNames` | the name in the TLS handshake, **undecrypted** | the path, the method, the response |
+| `http` | the authority and path of a **plaintext** request | anything on a TLS connection |
+| `protocol: UDP` + `cidrs` + `ports` | the packet's destination | everything above layer 4 |
+
+Exactly one per rule. They see different layers of the same connection, and a rule combining two
+would be one whose refusals nobody could predict; the chart refuses it, naming both.
+
+> [!IMPORTANT]
+> **A `serverNames` rule is a claim the machine makes about itself.** A process inside the machine
+> can open a TLS connection to any address and put any name in the handshake. This stops a package
+> manager reaching the wrong mirror; it does not stop a determined program inside the machine. What
+> bounds such a program is the layer-4 half — an address it cannot lie about — so a policy worth
+> relying on has a `cidrs` rule in it.
+
+`http` is plaintext only, and deliberately. Matching a path on an HTTPS connection means terminating
+TLS in the proxy and installing a certificate authority inside the machine, which is a different
+product and a far larger decision than a chart value.
+
+#### `deny` denies what the proxy cannot see
+
+The proxy is given TCP. If that were the whole of it, `default: deny` would be a policy a machine
+could step around with a UDP socket — so the same step that installs the redirect also, under
+`deny`, allows every `protocol: UDP` rule and drops everything else that is not TCP, IPv6 included.
+
+**The pod's own resolver is allowed automatically**, under either default, and is not a rule anyone
+writes. A machine that cannot resolve a name cannot reach `deb.debian.org` however many rules name
+it, so a policy that dropped DNS would be one whose every name-based rule silently failed.
+
+#### Where the policy sits in the boot sequence
+
+```text
+  seed · prepare · customize · provision     ordinary init containers, no policy yet
+  envoy                                      a sidecar: starts here, outlives the machine
+  egress                                     installs the redirect, then exits
+  guest                                      the machine
+```
+
+Three constraints fix that ordering and nothing else satisfies all three. The redirect must come
+**after** seeding, or the policy would need a rule for the chart's own registry. The proxy must be
+listening **before** the redirect, or the machine's first connections are refused — so the `egress`
+step waits for the proxy's `/ready` before programming anything. And both must be in place **before**
+the machine, or the policy depends on timing.
+
+The `egress` step is the only container in the pod granted `NET_ADMIN`, and it exits. The machine is
+not granted it and cannot undo any of this from inside itself.
+
+#### Reading what it did
+
+```bash
+kubectl logs lab-web-0 --container envoy
+```
+
+Every decision is a line there, allowed and refused alike, and it is on by default. A policy whose
+refusals are silent is one that gets disabled rather than debugged.
+
+#### What it costs, and two holes
+
+- A second container in the pod, from `envoy.image` — **the one image this chart runs that it did not
+  build**, pinned by digest like the shim.
+- One more preparation step, holding `NET_ADMIN` and `NET_RAW`.
+- Every outbound TCP connection passing through a proxy in the same network namespace.
+- Ports 15001 and 15000 inside the pod, which the machine may not also serve on — declaring one under
+  `network.ports` is refused.
+- A machine that is replaced when its policy changes. The policy is a ConfigMap, and a ConfigMap
+  whose content changes restarts nothing on its own.
+
+The two holes, named rather than hidden:
+
+- **The proxy is exempted from the redirect by the user it runs as, 1337.** A process inside the
+  machine running as that user is exempted too, and the machine's own root can create one. A `cidrs`
+  rule is enforced by the packet filter, where a process's identity is not what decides — which is
+  the second reason a policy worth relying on has a layer-4 half.
+- **IPv6 is not proxied.** Under `deny` it is dropped outright; under `allow` it is untouched. A
+  machine that needs a named IPv6 destination is not something this serves, and an IPv6 range in a
+  `cidrs` rule is refused rather than rendered into a rule that never matches.
+
 ### What is not an input
 
 - **`hostPort`.** It pins a machine to one node's port space and fails the second machine that wants
   the same number, which is a scheduling surprise rather than a network input.
 - **A ClusterIP or LoadBalancer Service.** A machine is a pet addressed by its own name, not a member
   of a pool. Publishing one outside the cluster is the cluster's ingress story.
-- **Which peers may reach a machine.** The policy restricts ports and never sources. A `from`
+- **Which peers may reach a machine.** The ingress policy restricts ports and never sources. A `from`
   selector is a statement about other workloads, and putting it in each machine's own values would
   scatter half of a cluster's policy across them.
+- **Decrypting TLS.** See above: an egress rule reads a handshake and never opens it.
 
 ## Provisioning
 
