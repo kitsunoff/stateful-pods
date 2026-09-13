@@ -1,0 +1,79 @@
+# The proxy's configuration refuses the same values every other template does.
+#
+# A suite of its own, and not a case added to the rendering suite, because Helm
+# attributes a `fail` to whichever template it was rendering when the failure was
+# raised: a suite listing several can assert the refusal for one of them and be
+# told "no failed document" for the rest.
+#
+# What it guards is real. A ConfigMap that rendered while the StatefulSet refused
+# would leave a machine's egress policy in the namespace with no machine to
+# enforce it on - and, worse, would make a later apply of the StatefulSet start a
+# machine against a policy nobody had reviewed together with it.
+suite: values validation - the proxy configuration has the same entry point
+templates:
+  - egress-config.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+tests:
+  - it: refuses a machine with no security mode, even though it has a policy
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        network:
+          egress:
+            default: deny
+            rules:
+              - name: mirror
+                ports: [443]
+                serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'machines\.web\.security\.mode: not set'
+
+  - it: refuses a policy that would render a duplicate match
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        network:
+          egress:
+            default: deny
+            rules:
+              - name: mirror
+                ports: [443]
+                serverNames: [deb.debian.org]
+              - name: mirror-again
+                ports: [443]
+                serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: 'already allows'
+
+  - it: renders when the values are accepted
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        security:
+          mode: userns
+        network:
+          egress:
+            default: deny
+            rules:
+              - name: mirror
+                ports: [443]
+                serverNames: [deb.debian.org]
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap

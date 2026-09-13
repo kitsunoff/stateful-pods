@@ -36,6 +36,10 @@
 #           would be a second digest to pin, a second package to publish and a
 #           second thing to keep in step with the chart - to save a layer a node
 #           pulls once and shares between every machine on it.
+#   iptables - a machine that declares an egress policy has its outbound TCP
+#           redirected into a proxy, and what the proxy cannot decide is decided
+#           by the packet filter. ip6tables comes with it, because a policy that
+#           refused IPv4 and left IPv6 open would be one with a door in it.
 FROM alpine:3.22
 
 # renovate: datasource=repology
@@ -52,6 +56,8 @@ RUN apk add --no-cache \
       libcap \
       crane \
       kubectl \
+      iptables \
+      ip6tables \
  && rm -rf /var/cache/apk/*
 
 # The chart's logic, at the path its containers are told to run. Nothing here
@@ -63,6 +69,7 @@ COPY scripts/ /usr/local/lib/stateful-pods/
 RUN chmod 0644 /usr/local/lib/stateful-pods/*.sh \
  && chmod 0755 /usr/local/lib/stateful-pods/boot.sh \
       /usr/local/lib/stateful-pods/customize.sh \
+      /usr/local/lib/stateful-pods/egress-setup.sh \
       /usr/local/lib/stateful-pods/exec-provision.sh \
       /usr/local/lib/stateful-pods/prepare.sh \
       /usr/local/lib/stateful-pods/provision.sh \

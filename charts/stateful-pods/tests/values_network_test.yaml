@@ -36,7 +36,7 @@ tests:
           port: 22
     asserts:
       - failedTemplate:
-          errorPattern: '(?s)machines\.web\.network\.port: is not an input.*Accepted inputs: ingress, ports'
+          errorPattern: '(?s)machines\.web\.network\.port: is not an input.*Accepted inputs: egress, ingress, ports'
 
   - it: rejects a port collection that is not a map
     set:

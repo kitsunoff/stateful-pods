@@ -557,7 +557,7 @@ port protocol
 The inputs the network block accepts.
 */}}
 {{- define "stateful-pods.network.inputs" -}}
-ports ingress
+ports ingress egress
 {{- end -}}
 
 {{/*
@@ -691,6 +691,144 @@ Takes (dict "root" $ "name" $name "machine" $machine). Emits a YAML list.
 {{- end -}}
 {{- end -}}
 {{ toYaml $volumes }}
+{{- end -}}
+
+{{/*
+--------------------------------------------------------------------------------
+What a machine may reach
+--------------------------------------------------------------------------------
+
+The outbound half of the network block. A rule is matched by a proxy in the
+machine's own pod, which is what lets one be written as a name rather than as an
+address - and the proxy is why the layers a rule can match on are the layers a
+connection actually exposes.
+*/}}
+
+{{/*
+The forms a rule may take, and the input that selects each. Exactly one per rule:
+a rule matching on two layers at once would be a rule whose refusals nobody could
+predict.
+*/}}
+{{- define "stateful-pods.egress.matchers" -}}
+serverNames cidrs http
+{{- end -}}
+
+{{/*
+The inputs one egress rule accepts.
+*/}}
+{{- define "stateful-pods.egress.ruleInputs" -}}
+name ports protocol serverNames cidrs http
+{{- end -}}
+
+{{/*
+The inputs the egress block accepts.
+*/}}
+{{- define "stateful-pods.egress.inputs" -}}
+default rules
+{{- end -}}
+
+{{/*
+The inputs an `http` matcher accepts.
+*/}}
+{{- define "stateful-pods.egress.httpInputs" -}}
+authority pathPrefix
+{{- end -}}
+
+{{/*
+The port Envoy listens on inside the machine's own pod. Not an input: it is the
+chart's own number, and a machine that wanted to serve it would be declaring a
+port the proxy already holds - which the validation stage refuses, naming both.
+
+There is no second one. The proxy has no administration interface: an endpoint on
+the loopback address would be reachable from inside the machine, which shares this
+network namespace.
+*/}}
+{{- define "stateful-pods.egress.proxyPort" -}}15001{{- end -}}
+
+{{/*
+The user the proxy runs as. The redirect exempts it by exactly this number, which
+is what keeps the proxy's own outbound connections from being redirected back
+into itself.
+*/}}
+{{- define "stateful-pods.egress.proxyUser" -}}1337{{- end -}}
+
+{{/*
+A machine's egress policy, normalised.
+
+Emits YAML with:
+
+  declared  "true" when the machine declares one at all
+  default   deny | allow
+  rules     one entry per rule, with `kind` naming the form it took and its
+            ports as a list of numbers
+
+Ordered as the machine wrote them, because a policy is read in the order it was
+written and reordering it would make a rendered manifest disagree with the values
+it came from.
+
+Validation has already run by the time this is called.
+
+Takes (dict "root" $ "name" $name "machine" $machine).
+*/}}
+{{- define "stateful-pods.machine.egress" -}}
+{{- $network := .machine.network | default dict -}}
+{{- $given := dict -}}
+{{- if kindIs "map" $network -}}
+{{- $given = index $network "egress" | default dict -}}
+{{- end -}}
+{{- if or (not (kindIs "map" $given)) (eq (len $given) 0) -}}
+declared: false
+default: allow
+rules: []
+{{- else -}}
+{{- $rules := list -}}
+{{- range $rule := index $given "rules" | default list -}}
+{{- if kindIs "map" $rule -}}
+{{- $ports := list -}}
+{{- range $port := index $rule "ports" | default list -}}
+{{- $ports = append $ports ($port | int64) -}}
+{{- end -}}
+{{- $kind := "" -}}
+{{- if not (kindIs "invalid" (index $rule "serverNames")) -}}
+{{- $kind = "serverNames" -}}
+{{- else if not (kindIs "invalid" (index $rule "http")) -}}
+{{- $kind = "http" -}}
+{{- else -}}
+{{- $kind = "cidrs" -}}
+{{- end -}}
+{{- $http := index $rule "http" | default dict -}}
+{{- $rules = append $rules (dict
+      "name" (index $rule "name" | toString)
+      "protocol" (index $rule "protocol" | default "TCP" | toString)
+      "kind" $kind
+      "ports" $ports
+      "serverNames" (index $rule "serverNames" | default list)
+      "cidrs" (index $rule "cidrs" | default list)
+      "authority" (index $http "authority" | default "" | toString)
+      "pathPrefix" (index $http "pathPrefix" | default "/" | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml (dict "declared" true "default" (index $given "default" | default "deny" | toString) "rules" $rules) }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The name of the ConfigMap holding a machine's proxy configuration.
+*/}}
+{{- define "stateful-pods.machine.egress.configName" -}}
+{{- printf "%s-egress" (include "stateful-pods.machine.name" .) -}}
+{{- end -}}
+
+{{/*
+The digest that replaces a machine's pod when its egress policy changes.
+
+The configuration is a ConfigMap, and a ConfigMap's content changing does not
+restart anything on its own. Unlike the provisioning material, this one is
+entirely visible to Helm - there is no reference form for a firewall rule - so
+the digest is over the whole policy and is exact.
+*/}}
+{{- define "stateful-pods.machine.egress.checksum" -}}
+{{- include "stateful-pods.machine.egress" . | sha256sum -}}
 {{- end -}}
 
 {{/*
@@ -1252,6 +1390,241 @@ YAML list of errors, possibly empty.
 {{- end -}}
 
 {{/*
+The checks on a machine's egress policy.
+
+Almost all of them are about one failure: a proxy configuration Envoy refuses.
+Envoy validates its configuration on startup and exits when it cannot parse or
+reconcile it, which surfaces as a sidecar that crash-loops behind a machine whose
+own containers are all healthy - and whose traffic, until the sidecar comes up,
+is going nowhere. Two filter chains with the same match are the commonest way to
+get there, so the duplicate checks below are not tidiness.
+
+The rest are about a policy that renders, applies, and quietly means something
+other than what was written: a rule whose form cannot see the thing it names, a
+port the proxy already holds, a name where an address belongs.
+
+Takes (dict "name" $name "machine" $machine). Emits a YAML list of errors,
+possibly empty.
+*/}}
+{{- define "stateful-pods.validate.egress" -}}
+{{- $name := .name -}}
+{{- $machine := .machine -}}
+{{- $errors := list -}}
+{{- $network := index $machine "network" -}}
+{{- if kindIs "map" $network -}}
+{{- $egress := index $network "egress" -}}
+{{- if not (kindIs "invalid" $egress) -}}
+{{- if not (kindIs "map" $egress) -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress: must be a map, but is of type %s. Accepted inputs: %s." $name (kindOf $egress) (join ", " (splitList " " (include "stateful-pods.egress.inputs" .) | sortAlpha))) -}}
+{{- else -}}
+{{- $accepted := splitList " " (include "stateful-pods.egress.inputs" .) -}}
+{{- $proxyPort := include "stateful-pods.egress.proxyPort" . | int64 -}}
+{{- range $field, $value := $egress -}}
+{{- if not (has $field $accepted) -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress.%s: is not an input of the egress policy. Accepted inputs: %s." $name $field (join ", " ($accepted | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The default first: it is what every rule is an exception to, and a policy
+       whose default nobody can name is one nobody can read. */ -}}
+{{- $default := index $egress "default" -}}
+{{- if kindIs "invalid" $default -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress.default: not set. Name what happens to traffic no rule allows, explicitly: \"deny\" refuses it, \"allow\" permits it. There is no default for this, because a policy whose unmatched traffic nobody named is one that means different things to its author and its reader." $name) -}}
+{{- else if or (not (kindIs "string" $default)) (not (has ($default | toString) (list "deny" "allow"))) -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress.default: %v is not an egress default. Accepted: \"deny\", which refuses traffic no rule allows, and \"allow\", which permits it and leaves the rules as exceptions that are only logged." $name $default) -}}
+{{- end -}}
+
+{{- $rules := index $egress "rules" -}}
+{{- if not (kindIs "invalid" $rules) -}}
+{{- if not (kindIs "slice" $rules) -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress.rules: must be a list of rules, but is of type %s. A policy is read in the order it was written, which a map would not preserve." $name (kindOf $rules)) -}}
+{{- else -}}
+{{- $matchers := splitList " " (include "stateful-pods.egress.matchers" .) -}}
+{{- $ruleInputs := splitList " " (include "stateful-pods.egress.ruleInputs" .) -}}
+{{- $httpInputs := splitList " " (include "stateful-pods.egress.httpInputs" .) -}}
+{{- $seenNames := dict -}}
+{{- $seenChains := dict -}}
+{{- $httpPorts := dict -}}
+{{- range $index, $rule := $rules -}}
+{{- $field := printf "machines.%s.network.egress.rules[%d]" $name $index -}}
+{{- if not (kindIs "map" $rule) -}}
+{{- $errors = append $errors (printf "%s: must be a map naming what it allows, but is of type %s. Accepted inputs: %s." $field (kindOf $rule) (join ", " ($ruleInputs | sortAlpha))) -}}
+{{- else -}}
+{{- range $key, $value := $rule -}}
+{{- if not (has $key $ruleInputs) -}}
+{{- $errors = append $errors (printf "%s.%s: is not an input of an egress rule. Accepted inputs: %s." $field $key (join ", " ($ruleInputs | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The name: it appears in the proxy's access log beside every connection
+       the rule allowed, which is how a refusal or a permission is traced back
+       to the line that caused it. */ -}}
+{{- $ruleName := index $rule "name" | default "" | toString -}}
+{{- if eq $ruleName "" -}}
+{{- $errors = append $errors (printf "%s.name: not set. Every rule is named, because the name is what the proxy's access log puts beside each connection the rule allowed - which is how a permission is traced back to the line that granted it." $field) -}}
+{{- else if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $ruleName) -}}
+{{- $errors = append $errors (printf "%s.name: %q must be lowercase letters, digits and hyphens, starting and ending with a letter or a digit. It becomes part of a statistic name in the proxy." $field $ruleName) -}}
+{{- else if index $seenNames $ruleName -}}
+{{- $errors = append $errors (printf "%s.name: %q is already the name of another rule. Two rules of one name make the access log unreadable, which is the only place a policy explains itself." $field $ruleName) -}}
+{{- else -}}
+{{- $_ := set $seenNames $ruleName true -}}
+{{- end -}}
+
+{{- /* Exactly one matcher. A rule matching on two layers at once would be a
+       rule whose refusals nobody could predict. */ -}}
+{{- $named := list -}}
+{{- range $matcher := $matchers -}}
+{{- if not (kindIs "invalid" (index $rule $matcher)) -}}
+{{- $named = append $named $matcher -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $named) 1 -}}
+{{- $errors = append $errors (printf "%s: names %s. A rule matches on exactly one of them: %s. They see different things - an address, the name in a TLS handshake, a plaintext request - and a rule combining two would be one whose refusals nobody could predict. Write two rules." $field (join " and " $named) (join ", " ($matchers | sortAlpha))) -}}
+{{- else if eq (len $named) 0 -}}
+{{- $errors = append $errors (printf "%s: names nothing to match on. Give exactly one of: %s. `cidrs` matches the connection's destination, `serverNames` the name the machine asks for in the TLS handshake, and `http` the authority and path of a plaintext request." $field (join ", " ($matchers | sortAlpha))) -}}
+{{- end -}}
+
+{{- $protocol := index $rule "protocol" | default "TCP" | toString -}}
+{{- if not (has $protocol (list "TCP" "UDP")) -}}
+{{- $errors = append $errors (printf "%s.protocol: %q is not a protocol a rule may name. Accepted: TCP, which the proxy decides, and UDP, which the packet filter decides and which therefore takes only `cidrs`." $field $protocol) -}}
+{{- else if and (eq $protocol "UDP") (eq (len $named) 1) (ne (index $named 0) "cidrs") -}}
+{{- $errors = append $errors (printf "%s: is a UDP rule matching on %q, which only a proxy could see, and UDP is not proxied here. A UDP rule matches on `cidrs` and `ports`. Everything above layer 4 on a UDP flow is invisible to this chart, and pretending otherwise would be a rule that never matches." $field (index $named 0)) -}}
+{{- end -}}
+
+{{- /* The ports. */ -}}
+{{- $ports := index $rule "ports" -}}
+{{- $portsUsable := true -}}
+{{- if kindIs "invalid" $ports -}}
+{{- $errors = append $errors (printf "%s.ports: not set. A rule names the ports it allows, as a list of numbers: a rule with no port would allow its destination on every port, which is almost never what anyone means and is never what anyone should have to guess." $field) -}}
+{{- $portsUsable = false -}}
+{{- else if or (not (kindIs "slice" $ports)) (eq (len $ports) 0) -}}
+{{- $errors = append $errors (printf "%s.ports: must be a non-empty list of port numbers." $field) -}}
+{{- $portsUsable = false -}}
+{{- else -}}
+{{- range $port := $ports -}}
+{{- if or (kindIs "string" $port) (not (regexMatch "^[0-9]+$" ($port | toString))) (lt ($port | int64) 1) (gt ($port | int64) 65535) -}}
+{{- $errors = append $errors (printf "%s.ports: %v is not a port number. Each must be a whole number between 1 and 65535, unquoted." $field $port) -}}
+{{- $portsUsable = false -}}
+{{- else if eq ($port | int64) $proxyPort -}}
+{{- $errors = append $errors (printf "%s.ports: %v is the port the proxy itself listens on inside this pod. A rule naming it would describe traffic that never reaches the network." $field $port) -}}
+{{- $portsUsable = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Each matcher's own shape, and the chain it would render. */ -}}
+{{- if eq (len $named) 1 -}}
+{{- $matcher := index $named 0 -}}
+{{- if eq $matcher "serverNames" -}}
+{{- $serverNames := index $rule "serverNames" -}}
+{{- if or (not (kindIs "slice" $serverNames)) (eq (len $serverNames) 0) -}}
+{{- $errors = append $errors (printf "%s.serverNames: must be a non-empty list of host names." $field) -}}
+{{- else -}}
+{{- range $serverName := $serverNames -}}
+{{- if or (not (kindIs "string" $serverName)) (not (regexMatch "^(\\*\\.)?[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?)*$" ($serverName | toString))) -}}
+{{- $errors = append $errors (printf "%s.serverNames: %v is not a host name. It is matched against the name the machine puts in its TLS handshake, so it is a name and never an address or a URL; a leading \"*.\" matches one level of subdomain." $field $serverName) -}}
+{{- else if $portsUsable -}}
+{{- range $port := $ports -}}
+{{- $chain := printf "sni/%d/%s" ($port | int64) ($serverName | toString) -}}
+{{- if index $seenChains $chain -}}
+{{- $errors = append $errors (printf "%s: allows %s on port %v, which %s already allows. Two rules producing the same match render two identical filter chains, which the proxy refuses outright - so the machine would start and its sidecar would crash-loop behind it." $field $serverName $port (index $seenChains $chain)) -}}
+{{- else -}}
+{{- $_ := set $seenChains $chain $field -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- else if eq $matcher "cidrs" -}}
+{{- $cidrs := index $rule "cidrs" -}}
+{{- if or (not (kindIs "slice" $cidrs)) (eq (len $cidrs) 0) -}}
+{{- $errors = append $errors (printf "%s.cidrs: must be a non-empty list of address ranges, each as an address and a prefix length: 10.0.5.7/32, 10.96.0.0/12." $field) -}}
+{{- else -}}
+{{- range $cidr := $cidrs -}}
+{{- if or (not (kindIs "string" $cidr)) (not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$" ($cidr | toString))) -}}
+{{- $errors = append $errors (printf "%s.cidrs: %v is not an IPv4 address range. Give an address and a prefix length, for example 10.0.5.7/32. IPv6 is not proxied here - under a default of deny it is dropped, and under allow it is untouched - so an IPv6 range would be a rule that never matched." $field $cidr) -}}
+{{- else if $portsUsable -}}
+{{- range $port := $ports -}}
+{{- $chain := printf "cidr/%d/%s" ($port | int64) ($cidr | toString) -}}
+{{- if index $seenChains $chain -}}
+{{- $errors = append $errors (printf "%s: allows %s on port %v, which %s already allows. Two rules producing the same match render two identical filter chains, which the proxy refuses outright." $field $cidr $port (index $seenChains $chain)) -}}
+{{- else -}}
+{{- $_ := set $seenChains $chain $field -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- else if eq $matcher "http" -}}
+{{- $http := index $rule "http" -}}
+{{- if not (kindIs "map" $http) -}}
+{{- $errors = append $errors (printf "%s.http: must be a map naming the authority and, optionally, a path prefix. Accepted inputs: %s." $field (join ", " ($httpInputs | sortAlpha))) -}}
+{{- else -}}
+{{- range $key, $value := $http -}}
+{{- if not (has $key $httpInputs) -}}
+{{- $errors = append $errors (printf "%s.http.%s: is not an input. Accepted inputs: %s. A method or a header matcher is not offered: this rule sees a plaintext request, and the useful half of what it can see is where the request is going." $field $key (join ", " ($httpInputs | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+{{- $authority := index $http "authority" | default "" | toString -}}
+{{- if eq $authority "" -}}
+{{- $errors = append $errors (printf "%s.http.authority: not set. An http rule matches the host a plaintext request is addressed to, so it needs one." $field) -}}
+{{- else if not (regexMatch "^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?)*$" $authority) -}}
+{{- $errors = append $errors (printf "%s.http.authority: %q is not a host name. Give the host alone, without a scheme, a port or a path - the port is in `ports` and the path in `pathPrefix`." $field $authority) -}}
+{{- end -}}
+{{- $prefix := index $http "pathPrefix" -}}
+{{- if and (not (kindIs "invalid" $prefix)) (or (not (kindIs "string" $prefix)) (not (hasPrefix "/" ($prefix | toString)))) -}}
+{{- $errors = append $errors (printf "%s.http.pathPrefix: %v is not a path. It begins at the root of the request: /debian/, not debian/. Leave it out to allow every path on that authority." $field $prefix) -}}
+{{- end -}}
+{{- if $portsUsable -}}
+{{- range $port := $ports -}}
+{{- $chain := printf "http/%d/%s%s" ($port | int64) $authority ($prefix | default "/" | toString) -}}
+{{- if index $seenChains $chain -}}
+{{- $errors = append $errors (printf "%s: allows the same authority and path prefix on port %v as %s. One of them has no effect, and which one is not something a reader should have to work out from the order." $field $port (index $seenChains $chain)) -}}
+{{- else -}}
+{{- $_ := set $seenChains $chain $field -}}
+{{- end -}}
+{{- $_ := set $httpPorts (printf "%d" ($port | int64)) $field -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* An http rule and a serverNames rule on one port. Both render, and the
+       combination is not what anybody means: the name chain is the more
+       specific, so TLS carrying a name no rule allows falls into the connection
+       manager instead - where it is read as a broken plaintext request and
+       answered with a 400 rather than refused as the policy says. Two ports, or
+       one form. */ -}}
+{{- range $sniChain, $sniField := $seenChains -}}
+{{- if hasPrefix "sni/" $sniChain -}}
+{{- $sniPort := index (splitList "/" $sniChain) 1 -}}
+{{- $httpField := index $httpPorts $sniPort -}}
+{{- if $httpField -}}
+{{- $errors = append $errors (printf "machines.%s.network.egress: %s matches a server name on port %s and %s matches a plaintext request on the same port. One port takes one form: the name chain is the more specific, so a TLS connection carrying a name no rule allows would fall into the plaintext one and be answered as a broken request rather than refused. Move one of them to a port of its own." $name $sniField $sniPort $httpField) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- end -}}
+{{- end -}}
+
+{{- /* A machine cannot serve a port the proxy is holding in the same
+       namespace, and the two blocks are far enough apart in a values file
+       that nobody would notice. */ -}}
+{{- range $port := include "stateful-pods.machine.ports" (dict "root" $.root "name" $name "machine" $machine) | fromYamlArray -}}
+{{- if eq (int64 $port.port) $proxyPort -}}
+{{- $errors = append $errors (printf "machines.%s.network.ports.%s: %d is the port the egress proxy listens on inside this machine's pod. Nothing outside would reach the machine on it, because the proxy answers there first. Serve this on another port, or remove machines.%s.network.egress." $name $port.name (int64 $port.port) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{ toYaml $errors }}
+{{- end -}}
+
+{{/*
 Stage two: every remaining check, accumulated and reported together.
 Takes the root context.
 */}}
@@ -1263,6 +1636,23 @@ Takes the root context.
 {{- $shim := $root.Values.shim | default dict -}}
 {{- if or (not (kindIs "map" $shim)) (eq ($shim.image | default "") "") -}}
 {{- $errors = append $errors "shim.image: not set. It is the image of the shim that mounts the machine's root filesystem, and it is never the machine's own operating system. Leave the chart default in place unless you are building your own shim." -}}
+{{- end -}}
+{{- /* Checked only when a machine asks for it. A release whose machines declare
+       no egress policy renders no proxy and must not be refused for the sake of
+       an image it will never pull. */ -}}
+{{- $wantsProxy := false -}}
+{{- range $name, $machine := $root.Values.machines -}}
+{{- if and (kindIs "map" $machine) (kindIs "map" (index $machine "network")) -}}
+{{- if kindIs "map" (index (index $machine "network") "egress") -}}
+{{- $wantsProxy = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $wantsProxy -}}
+{{- $envoy := $root.Values.envoy | default dict -}}
+{{- if or (not (kindIs "map" $envoy)) (eq ($envoy.image | default "") "") -}}
+{{- $errors = append $errors "envoy.image: not set, and a machine in this release declares an egress policy. It is the image of the proxy that decides what such a machine may reach, and it is the one image this chart runs that it did not build. Leave the chart default in place unless you are pinning your own build of Envoy." -}}
+{{- end -}}
 {{- end -}}
 {{- range $key := list "replicas" "replicaCount" -}}
 {{- if not (kindIs "invalid" (index $root.Values $key)) -}}
@@ -1459,6 +1849,9 @@ Takes the root context.
 
 {{- /* The storage the machine has beside its root filesystem. */ -}}
 {{- $errors = concat $errors (include "stateful-pods.validate.volumes" (dict "objectName" $objectName "name" $name "machine" $machine) | fromYamlArray) -}}
+
+{{- /* What the machine may reach, and what happens to everything else. */ -}}
+{{- $errors = concat $errors (include "stateful-pods.validate.egress" (dict "root" $root "name" $name "machine" $machine) | fromYamlArray) -}}
 
 {{- end -}}
 

@@ -308,3 +308,40 @@ tests:
           pattern: '/var/lib/data  <-  data-lab-web-0 \(50Gi, provisioned here, retained on uninstall\)'
       - matchRegexRaw:
           pattern: "Renaming a volume does not move its data"
+
+  - it: says nothing about an egress policy for a machine that declares none
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "outbound traffic is decided by a proxy"
+
+  - it: reports the policy, what it refuses and where its log is
+    set:
+      machines.web:
+        source:
+          kind: oci
+          reference: docker.io/library/debian:13
+        rootfs:
+          size: 8Gi
+        security:
+          mode: userns
+        network:
+          egress:
+            default: deny
+            rules:
+              - name: debian-mirror
+                ports: [443]
+                serverNames: [deb.debian.org]
+              - name: our-database
+                ports: [5432]
+                cidrs: ["10.0.5.7/32"]
+    asserts:
+      - matchRegexRaw:
+          pattern: '2 rules, and\neverything else is REFUSED'
+      - matchRegexRaw:
+          pattern: 'debian-mirror  deb\.debian\.org on 443/TCP \(by the name in the TLS handshake\)'
+      - matchRegexRaw:
+          pattern: 'our-database  10\.0\.5\.7/32 on 5432/TCP'
+      - matchRegexRaw:
+          pattern: 'logs lab-web-0 --container envoy'
+      - matchRegexRaw:
+          pattern: "The pod's own resolver is allowed without a rule"

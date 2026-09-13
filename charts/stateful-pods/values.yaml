@@ -30,6 +30,27 @@ shim:
   # if you are building your own shim.
   image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:3e7af746d685d4215902dabc8d80e8c6c080c4caa55d75a2abc5f08457e8e046
 
+# Image of the egress proxy: the program that decides what a machine may reach.
+#
+# THE ONE IMAGE THIS CHART RUNS THAT IT DID NOT BUILD. Everything else in a
+# machine's pod comes from `shim.image` above, which this project builds and
+# releases alongside the chart; this is Envoy, published by the Envoy project,
+# and the chart pins a digest of it for the same reason it pins one of its own:
+# a machine is a pet whose behaviour must be reproducible, and a tag that quietly
+# comes to mean different content makes it not.
+#
+# It is pulled only by a machine that declares `network.egress`. A machine that
+# declares none renders no proxy and never reaches for this.
+#
+# An override must be an Envoy. The chart renders a configuration in Envoy's own
+# schema and hands it over with `--config-path`; an image that is not Envoy will
+# refuse it at startup, which surfaces as a sidecar that crash-loops behind a
+# machine that otherwise looks healthy.
+envoy:
+  # Envoy, pinned by digest. The distroless variant: it is a proxy in somebody
+  # else's pod and it has no business carrying a shell.
+  image: docker.io/envoyproxy/envoy@sha256:b50d40392a05c866c4fffb5efcd17caded11d970ed1abbab317614d33377d0d7
+
 # Machines to run, keyed by machine name.
 #
 # Empty by default: there is no reasonable default machine, so installing the chart
@@ -533,6 +554,146 @@ shim:
 #       # probe are unaffected either way: both go through the container runtime
 #       # rather than over the network.
 #       ingress: any
+#
+#       # What this machine may reach, and what happens to everything else.
+#       #
+#       # Declaring this puts a proxy in the machine's pod and redirects the
+#       # machine's outbound TCP into it. A machine that declares nothing here
+#       # renders exactly what it rendered before this input existed: no proxy,
+#       # no packet filter, no policy.
+#       #
+#       # WHAT THIS IS FOR. A machine is an operating system with a package
+#       # manager, a shell, a cron table and whatever its script installed, and
+#       # every one of those reaches the whole network the pod reaches. The thing
+#       # an operator wants to write down is almost never an address: it is
+#       # "this machine may talk to the Debian mirror and to our database". A
+#       # name is not something a packet filter or a NetworkPolicy can match, and
+#       # that is why there is a proxy here at all.
+#       egress:
+#         # What happens to traffic no rule allows: deny | allow. MANDATORY when
+#         # egress is declared at all.
+#         #
+#         #   deny  - refused. Including what the proxy cannot see: UDP that no
+#         #           rule allows is dropped, and so is everything that is
+#         #           neither TCP nor UDP, and so is IPv6.
+#         #   allow - permitted. The rules then only decide what is logged, which
+#         #           is a legitimate first step: run with `allow`, read the
+#         #           proxy's log, write the rules it tells you you need, and
+#         #           then move to `deny`.
+#         #
+#         # There is no default for this. A policy whose unmatched traffic nobody
+#         # named is one that means different things to its author and its
+#         # reader.
+#         #
+#         # THE POD'S OWN RESOLVER IS ALWAYS ALLOWED, under either default, and
+#         # it is not a rule anyone writes. A machine that cannot resolve a name
+#         # cannot reach deb.debian.org however many rules name it, so a policy
+#         # that dropped DNS would be one whose every name-based rule silently
+#         # failed.
+#         default: deny
+#
+#         # What the machine may reach, in order. Each rule names the ports it
+#         # allows and EXACTLY ONE thing to match on - they see different layers
+#         # of the same connection, and a rule combining two would be one whose
+#         # refusals nobody could predict.
+#         rules:
+#             # serverNames - the name the machine asks for in the TLS
+#             # handshake, read WITHOUT DECRYPTING ANYTHING. This is the rule for
+#             # "the mirror", and it is what most policies are actually made of.
+#             #
+#             # IT IS A CLAIM THE MACHINE MAKES ABOUT ITSELF. A process inside
+#             # the machine can open a TLS connection to any address and put any
+#             # name in the handshake, and the proxy will believe it. This stops
+#             # a package manager reaching the wrong mirror, and a `cidrs` rule
+#             # beside it stops the same connection reaching the wrong address -
+#             # which is a different and stronger thing, because an address is
+#             # not something the machine gets to assert.
+#             #
+#             # Neither stops a program that has root inside the machine. See the
+#             # holes at the end of this block.
+#             #
+#             # A leading "*." matches one level of subdomain.
+#           - name: debian-mirror
+#             ports: [443]
+#             serverNames:
+#               - deb.debian.org
+#               - security.debian.org
+#
+#             # cidrs - the connection's destination, which is the one thing
+#             # about it nothing inside the machine can lie about. This is layer
+#             # 4 and it is what a rule about another workload's address looks
+#             # like.
+#           - name: our-database
+#             ports: [5432]
+#             cidrs:
+#               - 10.0.5.7/32
+#
+#             # http - the authority and path of a PLAINTEXT request. There is a
+#             # request to match on only because there is no TLS in the way.
+#             #
+#             # This is deliberately not offered for HTTPS. Matching a path on an
+#             # encrypted connection means terminating TLS in the proxy and
+#             # installing a certificate authority inside the machine, which is a
+#             # different product and a decision far larger than a chart value.
+#           - name: apt-over-http
+#             ports: [80]
+#             http:
+#               authority: deb.debian.org
+#               pathPrefix: /debian/
+#
+#             # protocol - TCP | UDP. Defaults to TCP.
+#             #
+#             # A UDP rule takes `cidrs` and `ports` and nothing else: UDP is not
+#             # proxied, it is decided by the packet filter, and everything above
+#             # layer 4 on a UDP flow is invisible from here. A UDP rule naming a
+#             # server name would be a rule that never matched.
+#           - name: ntp
+#             protocol: UDP
+#             ports: [123]
+#             cidrs:
+#               - 10.0.0.0/8
+#
+#     # WHAT IT COSTS, stated where it is chosen:
+#     #
+#     #   * A second container in the machine's pod, from an image this project
+#     #     does not build - see `envoy.image` at the top of this file.
+#     #   * One more preparation step, holding NET_ADMIN and NET_RAW so that it
+#     #     can program the pod's network namespace. The machine itself is
+#     #     granted neither and cannot undo any of it from inside.
+#     #   * Every outbound TCP connection passing through a proxy in the same
+#     #     network namespace.
+#     #   * Two ports inside the pod, 15001 and 15000, which the machine may not
+#     #     also serve on. Declaring one under network.ports is refused.
+#     #   * A machine that is replaced when its policy changes: the policy is a
+#     #     ConfigMap, and a ConfigMap changing restarts nothing on its own.
+#     #
+#     # WHERE TO READ WHAT IT DID. Every decision is an access log line on the
+#     # proxy's own output, allowed and refused alike:
+#     #
+#     #   kubectl logs <release>-<machine>-0 --container envoy
+#     #
+#     # That is not something to turn on. "Why can this machine not reach X" has
+#     # to be answerable, or a policy is something people disable rather than
+#     # debug.
+#     #
+#     # TWO HOLES, NAMED RATHER THAN HIDDEN:
+#     #
+#     #   * THE POLICY GOVERNS THE MACHINE'S SOFTWARE, NOT THE MACHINE'S ROOT.
+#     #     The proxy is exempted from the redirect by the user it runs as,
+#     #     1337, and nothing in this namespace can tell that user's traffic from
+#     #     a process inside the machine running as the same user. A machine's
+#     #     own root can become that user with one command, and its TCP then
+#     #     bypasses every rule here - `cidrs` rules included, because those are
+#     #     decided by the proxy too.
+#     #
+#     #     This is the shape every sidecar proxy has, and it cannot be closed
+#     #     from inside the namespace the guest shares. What the policy is worth
+#     #     is what it is: a machine's package manager, its cron table and its
+#     #     first-boot script go where the rules say, and a mistake in any of
+#     #     them is caught. It is not a sandbox around a hostile administrator.
+#     #   * IPv6 is not proxied. Under `deny` it is dropped outright; under
+#     #     `allow` it is untouched. A machine that needs a named IPv6
+#     #     destination is not something this serves.
 #
 #     security:
 #       # Privilege level of this machine: userns | privileged. Mandatory, per

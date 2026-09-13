@@ -1,0 +1,363 @@
+suite: rendering - the egress policy
+templates:
+  - egress-config.yaml
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web.source.kind: oci
+  machines.web.source.reference: docker.io/library/debian:13
+  machines.web.rootfs.size: 8Gi
+  machines.web.security.mode: privileged
+tests:
+  - it: renders nothing at all for a machine that declares no policy
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: egress-config.yaml
+      - notExists:
+          path: spec.template.spec.volumes
+        template: statefulset.yaml
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 4
+        template: statefulset.yaml
+      - notExists:
+          path: spec.template.metadata.annotations
+        template: statefulset.yaml
+
+  - it: renders the proxy and the step that programs the namespace, in that order
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.initContainers
+          count: 6
+      - equal:
+          path: spec.template.spec.initContainers[4].name
+          value: envoy
+      - equal:
+          path: spec.template.spec.initContainers[4].restartPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.initContainers[5].name
+          value: egress
+      - equal:
+          path: spec.template.spec.initContainers[5].command
+          value:
+            - /usr/local/lib/stateful-pods/egress-setup.sh
+
+  - it: grants the capability to the step that programs the namespace and to nothing else
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[5].securityContext.capabilities.add
+          value:
+            - NET_ADMIN
+            - NET_RAW
+      - equal:
+          path: spec.template.spec.initContainers[4].securityContext.capabilities.drop
+          value:
+            - ALL
+      - notContains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: NET_ADMIN
+
+  - it: runs the proxy as the user the redirect exempts
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[4].securityContext.runAsUser
+          value: 1337
+      - contains:
+          path: spec.template.spec.initContainers[5].env
+          content:
+            name: SP_EGRESS_PROXY_USER
+            value: "1337"
+
+  - it: replaces the machine when the policy changes and not otherwise
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - exists:
+          path: spec.template.metadata.annotations["checksum/egress"]
+
+  - it: mounts the policy into the proxy and the step, and into nothing else
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value:
+            name: egress
+            configMap:
+              name: lab-web-egress
+      - equal:
+          path: spec.template.spec.initContainers[4].volumeMounts[0].mountPath
+          value: /etc/stateful-pods/egress
+      - equal:
+          path: spec.template.spec.initContainers[5].volumeMounts[0].mountPath
+          value: /etc/stateful-pods/egress
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+
+  - it: names the machine's own ConfigMap
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lab-web-egress
+
+  - it: renders one chain per server name rule and port
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [80, 443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "mirror-80"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "mirror-443"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '- "deb.debian.org"'
+
+  - it: renders an address range as a prefix and a length
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: database
+            ports: [5432]
+            cidrs: ["10.0.5.7/32"]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'address_prefix: "10.0.5.7"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'prefix_len: 32'
+
+  - it: gathers every http rule for one port into one chain
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: debian
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian/
+          - name: security
+            ports: [80]
+            http:
+              authority: security.debian.org
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "http-80"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "debian"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "security"'
+      # Everything the rules did not name is refused with a reason rather than
+      # left to hang.
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: refused'
+
+  - it: sends what no rule matched to a cluster with no endpoints when the default is deny
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'stat_prefix: default_deny'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'cluster: blackhole'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'egress REFUSED, no rule allows it'
+
+  - it: sends what no rule matched onwards when the default is allow
+    set:
+      machines.web.network.egress:
+        default: allow
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)stat_prefix: default_allow\s+cluster: passthrough'
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'egress REFUSED'
+
+  - it: logs every decision without anything being turned on
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'egress allowed by rule mirror'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'egress REFUSED'
+
+  - it: hands the packet filter the rules the proxy cannot decide
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: ntp
+            protocol: UDP
+            ports: [123]
+            cidrs: ["10.0.0.0/8"]
+    template: egress-config.yaml
+    asserts:
+      - matchRegex:
+          path: data["udp-allow"]
+          pattern: '10.0.0.0/8 123'
+      # A UDP rule is not a filter chain: the proxy is given TCP, and a chain
+      # for something it never sees would be a chain that never matched.
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: 'name: "ntp-123"'
+
+  - it: flushes the proxy's log promptly, because it is the only explanation there is
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: statefulset.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[4].args
+          content: --file-flush-interval-msec
+
+  - it: gathers two paths on one host into one virtual host, not two
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: debian-main
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian/
+          - name: debian-security
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian-security/
+    template: egress-config.yaml
+    asserts:
+      # Two virtual hosts carrying one domain is a configuration the proxy
+      # refuses outright, so the rules for a host become routes within it -
+      # matched in the order they were written.
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '- name: "80-deb.debian.org"'
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)- "deb.debian.org:80".*- "deb.debian.org:80"'
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)prefix: "/debian/".*prefix: "/debian-security/"'
+
+  - it: keeps the chart's own readiness check out of the proxy's record
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+    template: egress-config.yaml
+    asserts:
+      # The step that programs the packet filter connects to this listener
+      # before redirecting anything to it. Without a chain of its own that
+      # connection is logged as a refusal, and reads as the machine having been
+      # denied something it never asked for.
+      - matchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)- name: readiness\s+filter_chain_match:\s+destination_port: 15001'
+      - notMatchRegex:
+          path: data["envoy.yaml"]
+          pattern: '(?s)stat_prefix: readiness\s+cluster: blackhole\s+access_log'

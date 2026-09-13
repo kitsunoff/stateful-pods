@@ -1,0 +1,283 @@
+{{- include "stateful-pods.validate" . -}}
+{{- /* The proxy's configuration, for a machine that declares an egress policy.
+
+       Written out in full rather than fetched from anywhere: there is no control
+       plane here, and a machine's policy is a property of the release that
+       rendered it. A ConfigMap changing does not restart anything on its own, so
+       the pod carries a digest of this and is replaced when it moves.
+
+       Every chain writes an access log line to standard output. That is not an
+       option: "why can this machine not reach X" has to be answerable with
+       `kubectl logs`, without anything being turned on first, or the policy is
+       something people disable rather than debug. */ -}}
+{{- $root := . }}
+{{- range $name, $machine := .Values.machines }}
+{{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- $egress := include "stateful-pods.machine.egress" $ctx | fromYaml }}
+{{- if $egress.declared }}
+{{- $objectName := include "stateful-pods.machine.name" $ctx }}
+{{- /* The HTTP rules, grouped twice.
+
+       By port, because two filter chains cannot share a match: one connection
+       manager per port carries every rule written for it.
+
+       Then by authority, because two virtual hosts cannot share a domain either -
+       Envoy refuses a configuration with a duplicate. Two rules allowing
+       different paths on one host are therefore two routes in one virtual host,
+       matched in the order they were written. */ -}}
+{{- $httpPorts := dict }}
+{{- $httpHosts := dict }}
+{{- range $rule := $egress.rules }}
+{{- if eq $rule.kind "http" }}
+{{- range $port := $rule.ports }}
+{{- $portKey := printf "%d" (int64 $port) }}
+{{- $hosts := index $httpPorts $portKey | default list }}
+{{- if not (has $rule.authority $hosts) }}
+{{- $_ := set $httpPorts $portKey (append $hosts $rule.authority) }}
+{{- end }}
+{{- $hostKey := printf "%s/%s" $portKey $rule.authority }}
+{{- $_ := set $httpHosts $hostKey (append (index $httpHosts $hostKey | default list) $rule) }}
+{{- end }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "stateful-pods.machine.egress.configName" $ctx }}
+  labels:
+    {{- include "stateful-pods.machine.labels" $ctx | nindent 4 }}
+data:
+  # What the proxy cannot decide, for the step that programs the packet filter:
+  # one "<address range> <port>" per line. UDP is not proxied, so a rule about it
+  # is enforced here instead - and `deny` would not mean deny without it.
+  udp-allow: |
+    {{- range $rule := $egress.rules }}
+    {{- if and (eq $rule.kind "cidrs") (eq $rule.protocol "UDP") }}
+    {{- range $cidr := $rule.cidrs }}
+    {{- range $port := $rule.ports }}
+    {{ $cidr }} {{ int64 $port }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+  envoy.yaml: |
+    # No administration interface. One on the loopback address would be reachable
+    # from inside the machine - which shares this network namespace - where
+    # /quitquitquit would stop the policy and /config_dump would read it. What it
+    # was used for was asking whether the proxy is listening, and the answer to
+    # that is a connection to the listener itself.
+    #
+    # The policy is readable without it: it is this ConfigMap.
+    #
+    # A bound on the connections the proxy will hold open. Envoy warns on
+    # startup when there is none, and the warning is right: a machine is an
+    # operating system, and a process inside one that opens connections without
+    # limit would otherwise be bounded by the proxy's memory rather than by
+    # anything anybody chose.
+    overload_manager:
+      resource_monitors:
+        - name: envoy.resource_monitors.global_downstream_max_connections
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: 50000
+    static_resources:
+      listeners:
+        - name: egress
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: {{ include "stateful-pods.egress.proxyPort" $ctx }}
+          # What a redirected connection was going to before the packet filter
+          # took it, and whether it began with a TLS handshake. Without the
+          # first, every rule below would match on the proxy's own address;
+          # without the second, no rule could be written as a name.
+          listener_filters:
+            - name: envoy.filters.listener.original_dst
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+            - name: envoy.filters.listener.tls_inspector
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+          filter_chains:
+            # The chart's own check that this proxy is listening, which the step
+            # that programs the packet filter makes before it redirects anything
+            # here. It is a connection to this listener that was never
+            # redirected, so its original destination is this port - and a chain
+            # of its own, with no access log, keeps it out of the record, where
+            # it would read as the machine having been refused something it
+            # never asked for.
+            #
+            # No rule can name this port: the validation stage refuses one.
+            - name: readiness
+              filter_chain_match:
+                destination_port: {{ include "stateful-pods.egress.proxyPort" $ctx }}
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    stat_prefix: readiness
+                    cluster: blackhole
+            {{- range $rule := $egress.rules }}
+            {{- if eq $rule.kind "serverNames" }}
+            {{- range $port := $rule.ports }}
+            # {{ $rule.name }}: the name the machine asks for in the handshake,
+            # read and not decrypted.
+            - name: {{ printf "%s-%d" $rule.name (int64 $port) | quote }}
+              filter_chain_match:
+                destination_port: {{ int64 $port }}
+                server_names:
+                  {{- range $serverName := $rule.serverNames }}
+                  - {{ $serverName | quote }}
+                  {{- end }}
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    stat_prefix: {{ printf "allow_%s" $rule.name | quote }}
+                    cluster: passthrough
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "stateful-pods: egress allowed by rule {{ $rule.name }}: %DOWNSTREAM_LOCAL_ADDRESS% sni=%REQUESTED_SERVER_NAME% bytes=%BYTES_SENT%\n"
+            {{- end }}
+            {{- end }}
+            {{- if eq $rule.kind "cidrs" }}
+            {{- if eq $rule.protocol "TCP" }}
+            {{- range $port := $rule.ports }}
+            # {{ $rule.name }}: the connection's original destination, which is
+            # the one thing about it a process inside the machine cannot lie
+            # about.
+            - name: {{ printf "%s-%d" $rule.name (int64 $port) | quote }}
+              filter_chain_match:
+                destination_port: {{ int64 $port }}
+                prefix_ranges:
+                  {{- range $cidr := $rule.cidrs }}
+                  - address_prefix: {{ (splitList "/" $cidr) | first | quote }}
+                    prefix_len: {{ (splitList "/" $cidr) | last | int64 }}
+                  {{- end }}
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    stat_prefix: {{ printf "allow_%s" $rule.name | quote }}
+                    cluster: passthrough
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "stateful-pods: egress allowed by rule {{ $rule.name }}: %DOWNSTREAM_LOCAL_ADDRESS% bytes=%BYTES_SENT%\n"
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- range $key, $hosts := $httpPorts }}
+            # Plaintext HTTP on port {{ $key }}. One chain for the port, carrying
+            # every rule written for it: two chains cannot share a match, and a
+            # duplicate is a configuration Envoy refuses outright.
+            - name: {{ printf "http-%s" $key | quote }}
+              filter_chain_match:
+                destination_port: {{ $key | int64 }}
+              filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: {{ printf "egress_http_%s" $key | quote }}
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "stateful-pods: egress http %RESPONSE_CODE% %REQ(:METHOD)% %REQ(:AUTHORITY)%%PATH% (%RESPONSE_FLAGS%)\n"
+                    route_config:
+                      name: {{ printf "egress-%s" $key | quote }}
+                      virtual_hosts:
+                        {{- range $authority := $hosts }}
+                        {{- $rules := index $httpHosts (printf "%s/%s" $key $authority) }}
+                        - name: {{ printf "%s-%s" $key $authority | quote }}
+                          domains:
+                            - {{ $authority | quote }}
+                            - {{ printf "%s:%s" $authority $key | quote }}
+                          routes:
+                            {{- range $rule := $rules }}
+                            - name: {{ $rule.name | quote }}
+                              match:
+                                prefix: {{ $rule.pathPrefix | quote }}
+                              route:
+                                cluster: passthrough
+                            {{- end }}
+                            # Everything on this host that no rule above allowed.
+                            - name: {{ printf "%s-refused" $authority | quote }}
+                              match:
+                                prefix: "/"
+                              direct_response:
+                                status: 403
+                                body:
+                                  inline_string: "stateful-pods: this machine's egress policy does not allow this path on {{ $authority }}\n"
+                        {{- end }}
+                        # Everything the rules above did not name. A refusal with
+                        # a reason, rather than a connection that hangs.
+                        - name: refused
+                          domains:
+                            - "*"
+                          routes:
+                            - match:
+                                prefix: "/"
+                              direct_response:
+                                status: 403
+                                body:
+                                  inline_string: "stateful-pods: this machine's egress policy does not allow this request\n"
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+            {{- end }}
+            # Everything no rule matched.
+            - name: default
+              filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    {{- if eq $egress.default "allow" }}
+                    stat_prefix: default_allow
+                    cluster: passthrough
+                    {{- else }}
+                    stat_prefix: default_deny
+                    # A cluster with no endpoints, rather than no filter chain at
+                    # all. Both refuse the connection; only one of them says so.
+                    cluster: blackhole
+                    {{- end }}
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              {{- if eq $egress.default "allow" }}
+                              inline_string: "stateful-pods: egress allowed by default: %DOWNSTREAM_LOCAL_ADDRESS% sni=%REQUESTED_SERVER_NAME%\n"
+                              {{- else }}
+                              inline_string: "stateful-pods: egress REFUSED, no rule allows it: %DOWNSTREAM_LOCAL_ADDRESS% sni=%REQUESTED_SERVER_NAME%\n"
+                              {{- end }}
+      clusters:
+        # Wherever the connection was going. Envoy reads the handshake or the
+        # request, decides, and then forwards to the original destination - it
+        # never resolves a name of its own, so a rule cannot be defeated by DNS
+        # answering differently to the proxy than to the machine.
+        - name: passthrough
+          type: ORIGINAL_DST
+          lb_policy: CLUSTER_PROVIDED
+          connect_timeout: 10s
+        - name: blackhole
+          type: STATIC
+          connect_timeout: 1s
+          load_assignment:
+            cluster_name: blackhole
+            endpoints: []
+{{- end }}
+{{- end }}

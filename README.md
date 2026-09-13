@@ -25,6 +25,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 - [Declaring a machine](#declaring-a-machine)
 - [Getting into a machine](#getting-into-a-machine)
 - [The ports a machine serves](#the-ports-a-machine-serves)
+- [What a machine may reach](#what-a-machine-may-reach)
 - [Storage beside the root filesystem](#storage-beside-the-root-filesystem)
 - [The kubectl plugin](#the-kubectl-plugin)
 - [Security modes](#security-modes)
@@ -39,6 +40,7 @@ model on Kubernetes primitives, not a container wearing an operating system as a
 | --- | --- |
 | **The chart** | One StatefulSet, one rootfs PersistentVolumeClaim and one headless Service per machine. Exactly one machine per release, for now. |
 | **The shim image** | The small program that fills the volume, writes the files the chart maintains inside the machine, mounts the filesystems and hands control to the guest's own init. It also carries the chart's logic, which is why the chart pins it by digest rather than by tag. |
+| **An egress proxy, when asked for** | A machine that declares what it may reach runs Envoy beside itself, with its outbound TCP redirected into it. The only container this project runs from an image it did not build, and nothing renders it unless a machine asks. |
 | **The `kubectl machine` plugin** | Addresses a machine by the name you declared it under, and answers where it is in its life rather than reporting a container. One bash file, no build step. |
 | **Four distribution presets** | A name instead of a URL and a checksum you found somewhere. Each was built from the upstream root filesystem after the upstream's signature over its own checksums verified against a pinned key. |
 
@@ -220,6 +222,47 @@ cannot detect and therefore says out loud.
 
 The restriction is inbound only. A machine that asked for it keeps its resolver, its package mirror
 and everything else it reaches out to.
+
+## What a machine may reach
+
+A machine is an operating system with a package manager, a shell and somebody's script on it, and it
+reaches everything the pod reaches. `network.egress` is where it says what it may reach instead.
+
+```yaml
+machines:
+  web:
+    network:
+      egress:
+        default: deny
+        rules:
+          - name: debian-mirror
+            ports: [443]
+            serverNames: [deb.debian.org, security.debian.org]
+          - name: our-database
+            ports: [5432]
+            cidrs: ["10.0.5.7/32"]
+```
+
+The rule people actually write is a **name**, and a name is not something a packet filter or a
+NetworkPolicy can match — it resolves to a rotating set of addresses. What can match it is the name
+the machine itself puts in the TLS handshake, so declaring a policy puts an **Envoy in the machine's
+own pod** with its outbound TCP redirected into it. Nothing is decrypted.
+
+A rule matches on exactly one of: an address range (layer 4), a TLS server name, or the authority and
+path of a plaintext HTTP request. `deny` covers what the proxy cannot see too — unmatched UDP and
+IPv6 are dropped — and the pod's own resolver is always allowed, because a policy written in names
+needs one.
+
+Every decision is a line on the proxy's output, allowed and refused alike:
+
+```bash
+kubectl logs lab-web-0 --container envoy
+```
+
+**A server-name rule is a claim the machine makes about itself**: a process inside it can put any
+name in a handshake, and the proxy believes it. An address rule is stronger, because an address is
+not something the machine gets to assert — but the policy governs the machine's software and not its
+root, and both READMEs say where that line is.
 
 ## Storage beside the root filesystem
 

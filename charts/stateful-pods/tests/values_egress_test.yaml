@@ -1,0 +1,313 @@
+suite: values validation - the egress policy
+templates:
+  - statefulset.yaml
+release:
+  name: lab
+capabilities:
+  majorVersion: 1
+  minorVersion: 33
+set:
+  machines.web.source.kind: oci
+  machines.web.source.reference: docker.io/library/debian:13
+  machines.web.rootfs.size: 8Gi
+  machines.web.security.mode: userns
+tests:
+  - it: rejects an egress block that is not a map
+    set:
+      machines.web.network.egress: deny
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress: must be a map'
+
+  - it: rejects a key the egress block does not accept
+    set:
+      machines.web.network.egress:
+        default: deny
+        policy: strict
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.policy: is not an input.*Accepted inputs: default, rules'
+
+  - it: rejects a policy that names no default, and says what each one does
+    set:
+      machines.web.network.egress:
+        rules: []
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.default: not set.*means different things to its author and its reader'
+
+  - it: rejects a default it does not implement
+    set:
+      machines.web.network.egress:
+        default: log
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.default: log is not an egress default'
+
+  - it: rejects rules that are not a list
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          debian:
+            ports: [443]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules: must be a list of rules.*read in the order it was written'
+
+  - it: rejects a rule with no name
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - ports: [443]
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.name: not set'
+
+  - it: rejects two rules of one name
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+          - name: mirror
+            ports: [443]
+            serverNames: [security.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[1\]\.name: "mirror" is already the name of another rule'
+
+  - it: rejects a rule matching on two layers at once
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+            cidrs: ["10.0.0.0/8"]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]: names serverNames and cidrs.*refusals nobody could predict'
+
+  - it: rejects a rule matching on nothing
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]: names nothing to match on'
+
+  - it: rejects a UDP rule matching on something only a proxy could see
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            protocol: UDP
+            ports: [443]
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]: is a UDP rule matching on "serverNames".*UDP is not proxied here'
+
+  - it: rejects a rule with no ports
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.ports: not set'
+
+  - it: rejects a port outside the range
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [70000]
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.ports: 70000 is not a port number'
+
+  - it: rejects a port the proxy itself holds
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [15001]
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.ports: 15001 is the port the proxy itself listens on'
+
+  - it: rejects a server name that is an address
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: ["https://deb.debian.org/debian"]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.serverNames: .* is not a host name'
+
+  - it: rejects an address range that is not one
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: database
+            ports: [5432]
+            cidrs: ["10.0.5.7"]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.cidrs: 10\.0\.5\.7 is not an IPv4 address range'
+
+  - it: rejects an IPv6 range, saying it would never match
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: database
+            ports: [5432]
+            cidrs: ["fd00::/8"]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.cidrs: .*IPv6 is not proxied here'
+
+  - it: rejects an http rule with no authority
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: apt
+            ports: [80]
+            http:
+              pathPrefix: /debian/
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.http\.authority: not set'
+
+  - it: rejects an http rule matching on something it cannot see
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: apt
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              method: GET
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.http\.method: is not an input.*Accepted inputs: authority, pathPrefix'
+
+  - it: rejects a path prefix that does not begin at the root
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: apt
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: debian/
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[0\]\.http\.pathPrefix: debian/ is not a path'
+
+  - it: rejects two rules that would render the same match, naming both
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [443]
+            serverNames: [deb.debian.org]
+          - name: mirror-again
+            ports: [443]
+            serverNames: [deb.debian.org]
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.egress\.rules\[1\]: allows deb\.debian\.org on port 443, which machines\.web\.network\.egress\.rules\[0\] already allows.*the proxy refuses'
+
+  - it: rejects a served port the proxy listens on inside the same pod
+    set:
+      machines.web.network:
+        ingress: any
+        ports:
+          proxied:
+            port: 15001
+        egress:
+          default: allow
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)machines\.web\.network\.ports\.proxied: 15001 is the port the egress proxy listens on'
+
+  - it: refuses a server name and a plaintext rule on one port, naming both
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror-tls
+            ports: [80]
+            serverNames: [deb.debian.org]
+          - name: mirror-plain
+            ports: [80]
+            http:
+              authority: deb.debian.org
+    asserts:
+      - failedTemplate:
+          errorPattern: '(?s)matches a server name on port 80 and .* matches a plaintext request on the same port'
+
+  - it: accepts a policy of every form at once
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: debian-mirror
+            ports: [443]
+            serverNames:
+              - deb.debian.org
+              - "*.debian.org"
+          - name: our-database
+            ports: [5432, 5433]
+            cidrs: ["10.0.5.7/32"]
+          - name: apt-over-http
+            ports: [80]
+            http:
+              authority: deb.debian.org
+              pathPrefix: /debian/
+          - name: ntp
+            protocol: UDP
+            ports: [123]
+            cidrs: ["10.0.0.0/8"]
+    asserts:
+      - isKind:
+          of: StatefulSet
+
+  - it: accepts the same server name on two different ports
+    set:
+      machines.web.network.egress:
+        default: deny
+        rules:
+          - name: mirror
+            ports: [80, 443]
+            serverNames: [deb.debian.org]
+    asserts:
+      - isKind:
+          of: StatefulSet

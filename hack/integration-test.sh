@@ -37,6 +37,12 @@ SHIM_IMAGE="${SHIM_IMAGE:-stateful-pods-shim:dev}"
 SOURCE_IMAGE="${SOURCE_IMAGE:-stateful-pods-test-source:integration}"
 ALPINE_SOURCE_IMAGE="${ALPINE_SOURCE_IMAGE:-stateful-pods-test-alpine:integration}"
 REGISTRY_IMAGE="${REGISTRY_IMAGE:-registry:2}"
+# The proxy a machine with an egress policy runs beside itself. Read from the
+# chart rather than named here, so that what the suite exercises is the image the
+# chart actually pins, and loaded onto the node under a tag because `kind load`
+# takes one.
+ENVOY_SOURCE="${ENVOY_SOURCE:-$(sed -n 's|^  image: \(docker\.io/envoyproxy/envoy@sha256:.*\)$|\1|p' charts/stateful-pods/values.yaml)}"
+ENVOY_IMAGE="${ENVOY_IMAGE:-stateful-pods-test-envoy:integration}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
 # The chart revision to upgrade from, for the one assertion that is about the
@@ -226,6 +232,9 @@ on_exit() {
     done
     echo "--- the jobs that run a machine's own script ---" >&2
     kc logs --selector 'stateful-pods.io/machine,batch.kubernetes.io/job-name' --tail 40 >&2 2>&1 || true
+    echo "--- the egress proxies ---" >&2
+    kc logs --selector 'stateful-pods.io/machine,!batch.kubernetes.io/job-name' \
+      --container envoy --tail 40 >&2 2>&1 || true
   fi
   if [[ -n "$PORT_FORWARD_PID" ]]; then
     kill "$PORT_FORWARD_PID" 2>/dev/null || true
@@ -253,6 +262,10 @@ docker build --tag "$SOURCE_IMAGE" --file test/integration/Containerfile.source 
 docker build --tag "$ALPINE_SOURCE_IMAGE" --file test/integration/Containerfile.alpine-source \
   test/integration >/dev/null
 docker pull --quiet "$REGISTRY_IMAGE" >/dev/null
+[[ -n "$ENVOY_SOURCE" ]] \
+  || fail "could not read the proxy image out of the chart's values; the egress assertions would prove nothing"
+docker pull --quiet "$ENVOY_SOURCE" >/dev/null
+docker tag "$ENVOY_SOURCE" "$ENVOY_IMAGE"
 
 step "creating the cluster $CLUSTER"
 existing_clusters="$(kind get clusters 2>/dev/null || true)"
@@ -261,6 +274,7 @@ if ! grep --quiet --line-regexp "$CLUSTER" <<< "$existing_clusters"; then
 fi
 kind load docker-image "$SHIM_IMAGE" --name "$CLUSTER"
 kind load docker-image "$REGISTRY_IMAGE" --name "$CLUSTER"
+kind load docker-image "$ENVOY_IMAGE" --name "$CLUSTER"
 # The source image is loaded onto the node as well, for the upgrade assertion
 # alone: the previous chart revision runs an oci source as a container image, so
 # that release needs it where the kubelet looks. Every other release fetches it
@@ -980,6 +994,151 @@ else
 fi
 check "the machine itself is still running, untouched by the failure" \
   kc get pod scripted-os-0
+
+# ------------------------------------------------ what a machine may reach ---
+# The one capability in this chart whose whole behaviour is a property of a live
+# network namespace. A rendering test can read the proxy's configuration; only a
+# cluster can say whether a machine under it reaches what a rule allows, is
+# refused what none allows, and can still resolve a name at all - which is the
+# failure that would make every name-based rule silently useless.
+step "installing a machine that may reach two things and nothing else"
+apiserver_ip="$(kubectl --context "$CONTEXT" --namespace default get service kubernetes \
+  --output "jsonpath={.spec.clusterIP}")"
+[[ -n "$apiserver_ip" ]] || fail "could not find the API server's own Service address"
+helm --kube-context "$CONTEXT" upgrade --install guarded "$CHART" \
+  --namespace "$NAMESPACE" \
+  --values test/integration/egress.yaml \
+  --set "shim.image=$SHIM_IMAGE" \
+  --set "machines.os.source.reference=$SOURCE_REFERENCE" \
+  --set "machines.os.network.egress.rules[0].http.authority=registry.$NAMESPACE.svc.cluster.local" \
+  --set "machines.os.network.egress.rules[1].cidrs[0]=$apiserver_ip/32" \
+  --set "envoy.image=$ENVOY_IMAGE" \
+  --wait --timeout 10m >/dev/null
+wait_ready guarded-os-0
+# The machine became ready under the policy, which is not nothing: the redirect
+# is installed before its init runs, so a policy that broke the boot would show
+# up here and nowhere else.
+pass "a machine under an egress policy boots and becomes ready"
+
+guarded() { kc exec guarded-os-0 --container guest -- "$@"; }
+
+step "asserting the machine can still resolve a name"
+# Allowed without a rule, and the reason the whole capability works: a rule
+# written as a name needs a resolver, so a policy that dropped DNS would be one
+# whose every name-based rule silently failed.
+if guarded getent hosts "registry.$NAMESPACE.svc.cluster.local" >/dev/null 2>&1; then
+  pass "the pod's own resolver is reachable, without a rule naming it"
+else
+  fail "the machine cannot resolve a name, so no rule written as one could match"
+fi
+
+step "asserting layer 7 on a plaintext request"
+http_status() {
+  guarded python3 -c "
+import sys, urllib.error, urllib.request
+try:
+    sys.stdout.write(str(urllib.request.urlopen(sys.argv[1], timeout=10).status))
+except urllib.error.HTTPError as error:
+    sys.stdout.write(str(error.code))
+except Exception as error:
+    sys.stdout.write('no answer: %s' % error)
+" "$1" 2>/dev/null
+}
+allowed_path="$(http_status "http://registry.$NAMESPACE.svc.cluster.local:5000/v2/")"
+if [[ "$allowed_path" == "200" ]]; then
+  pass "the path the rule allows is reached"
+else
+  fail "the allowed path answered '${allowed_path:-nothing}'"
+fi
+refused_path="$(http_status "http://registry.$NAMESPACE.svc.cluster.local:5000/refused/")"
+if [[ "$refused_path" == "403" ]]; then
+  pass "a path the rule does not allow is refused by the proxy, with a status and not a hang"
+else
+  fail "the refused path answered '${refused_path:-nothing}'"
+fi
+
+step "asserting layer 4 on an address"
+# A whole TLS handshake, not a connect. With a redirect in place, connect(2)
+# always succeeds - it reaches the proxy, which is local - and a refusal is the
+# proxy closing the connection immediately afterwards. A test that only
+# connected would report every refusal as a success.
+reaches() {
+  guarded python3 -c "
+import socket, ssl, sys
+context = ssl._create_unverified_context()
+try:
+    with context.wrap_socket(socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10),
+                             server_hostname='kubernetes.default') as connection:
+        sys.stdout.write(connection.version() or 'none')
+except Exception:
+    sys.stdout.write('refused')
+" "$1" "$2" 2>/dev/null
+}
+allowed_address="$(reaches "$apiserver_ip" 443)"
+if [[ "$allowed_address" == TLS* ]]; then
+  pass "the address the rule allows is reached, and the handshake completes through the proxy"
+else
+  fail "the machine answered '${allowed_address:-nothing}' for $apiserver_ip:443, which a rule allows"
+fi
+refused_address="$(reaches "$apiserver_ip" 8443)"
+if [[ "$refused_address" == "refused" ]]; then
+  pass "a port no rule allows is refused"
+else
+  fail "the machine answered '${refused_address:-nothing}' for $apiserver_ip:8443, which no rule allows"
+fi
+
+step "asserting the proxy says what it did"
+# Read with a wait. Envoy flushes its access log on an interval - the chart sets
+# it to a second, against a default of ten - so a read taken the instant the
+# connection closed can be taken before the line exists.
+proxy_log=""
+for _ in $(seq 1 20); do
+  proxy_log="$(kc logs guarded-os-0 --container envoy 2>&1 || true)"
+  if grep --quiet 'egress REFUSED' <<< "$proxy_log" \
+    && grep --quiet 'egress allowed by rule apiserver' <<< "$proxy_log" \
+    && grep --quiet 'egress http 403' <<< "$proxy_log"; then
+    break
+  fi
+  sleep 1
+done
+if grep --quiet 'egress REFUSED' <<< "$proxy_log"; then
+  pass "the proxy's own output names the connections it refused"
+else
+  fail "nothing in the proxy's output explains a refusal"
+fi
+if grep --quiet 'egress allowed by rule apiserver' <<< "$proxy_log"; then
+  pass "the proxy's output names the rule that allowed a connection"
+else
+  fail "the proxy's output does not say which rule allowed anything"
+fi
+if grep --quiet 'egress http 403' <<< "$proxy_log"; then
+  pass "the refused request is in the log with the status it was given"
+else
+  fail "the refused request is not in the proxy's output"
+fi
+
+step "asserting the privilege stayed with the step that used it"
+guest_caps="$(kc get pod guarded-os-0 --output \
+  "jsonpath={.spec.containers[?(@.name=='guest')].securityContext.capabilities.add}")"
+if grep --quiet 'NET_ADMIN' <<< "$guest_caps"; then
+  fail "the machine itself holds NET_ADMIN and could undo its own policy"
+else
+  pass "the machine holds no NET_ADMIN, so it cannot undo its own policy"
+fi
+egress_state="$(kc get pod guarded-os-0 --output \
+  "jsonpath={.status.initContainerStatuses[?(@.name=='egress')].state}")"
+if grep --quiet 'terminated' <<< "$egress_state"; then
+  pass "the step that programmed the namespace has exited"
+else
+  fail "the step that programmed the namespace is '${egress_state:-missing}'"
+fi
+proxy_ready="$(kc get pod guarded-os-0 --output \
+  "jsonpath={.status.initContainerStatuses[?(@.name=='envoy')].ready}")"
+if [[ "$proxy_ready" == "true" ]]; then
+  pass "the proxy is still running beside the machine, as a sidecar"
+else
+  fail "the proxy reports '${proxy_ready:-nothing}'"
+fi
 
 # ------------------------------------------------------- a source with no shell ---
 step "installing a machine whose source carries no shell and no GNU tar"

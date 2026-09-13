@@ -1,0 +1,42 @@
+# A machine that may reach two things and nothing else.
+#
+# privileged mode, because a kind node is itself a container and user namespaces
+# nested inside one are unreliable - see docs/research/05-open-questions.md §12.
+#
+# The exec backend with no script, so that nothing this machine does on its first
+# boot depends on reaching anything: what is being exercised is the policy, and a
+# provisioning step making its own connections under it would make a failure
+# ambiguous.
+#
+# The two rules' destinations are set by the suite, because they are this
+# cluster's own addresses and nothing in a values file could know them.
+machines:
+  os:
+    source:
+      kind: oci
+      reference: stateful-pods-test-source:integration
+    security:
+      mode: privileged
+    rootfs:
+      size: 2Gi
+    guest:
+      provisioning: exec
+    network:
+      egress:
+        default: deny
+        rules:
+          # Layer 7 on a plaintext request: the authority and the path. The
+          # registry is the one HTTP server this cluster is guaranteed to have.
+          - name: registry
+            ports: [5000]
+            http:
+              authority: registry.example.invalid
+              pathPrefix: /v2/
+          # Layer 4: an address the machine cannot lie about. The address here
+          # is the documentation range and is always replaced by the suite - one
+          # inside 127.0.0.0/8 would be exempt from the redirect, so a lost
+          # override would fail this for a reason unrelated to the policy.
+          - name: apiserver
+            ports: [443]
+            cidrs:
+              - 192.0.2.1/32
