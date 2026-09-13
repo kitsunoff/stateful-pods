@@ -25,6 +25,8 @@
 {{- $inPod := and (eq $provisioning.backend "cloud-init") $hasMaterial }}
 {{- /* The ports the machine declares, normalised and in a stable order. */ -}}
 {{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
+{{- /* What the machine may reach, and what happens to everything else. */ -}}
+{{- $egress := include "stateful-pods.machine.egress" $ctx | fromYaml }}
 {{- /* The volumes beside the root filesystem, ordered by mount path so that one
        declared inside another is mounted after it. */ -}}
 {{- $volumes := include "stateful-pods.machine.volumes" $ctx | fromYamlArray }}
@@ -124,8 +126,17 @@ spec:
     {{- end }}
   template:
     metadata:
-      {{- if $inPod }}
+      {{- if or $inPod $egress.declared }}
       annotations:
+        {{- if $egress.declared }}
+        # What replaces a machine when its egress policy changes. The policy is a
+        # ConfigMap, and a ConfigMap whose content changes restarts nothing on
+        # its own: the proxy would go on enforcing the policy it was started
+        # with, while the values described something else. Unlike the
+        # provisioning material this is entirely visible to Helm - there is no
+        # reference form for a firewall rule - so the digest is exact.
+        checksum/egress: {{ include "stateful-pods.machine.egress.checksum" $ctx | quote }}
+        {{- end }}
         # What restarts a machine when its provisioning material changes. Helm
         # renders the inline material itself, so a change to it changes this
         # digest and the pod is replaced.
@@ -138,7 +149,9 @@ spec:
         # happen the change applies either way, because the instance identity is
         # recomputed from the files that were actually materialized. The gap is
         # in triggering the restart, not in applying the change.
+        {{- if $inPod }}
         checksum/provisioning: {{ include "stateful-pods.machine.provisioning.checksum" $ctx | quote }}
+        {{- end }}
       {{- end }}
       labels:
         {{- include "stateful-pods.machine.labels" $ctx | nindent 8 }}
@@ -159,8 +172,16 @@ spec:
       # identity this chart does create, for the Job that runs a machine's
       # script, is the only one anywhere near a machine.
       automountServiceAccountToken: false
-      {{- if or $pullSecret $inPod $mounted }}
+      {{- if or $pullSecret $inPod $mounted $egress.declared }}
       volumes:
+        {{- if $egress.declared }}
+        # The proxy's configuration, and the rules the packet filter enforces
+        # itself. Mounted into the proxy and into the step that programs the
+        # namespace, and into nothing the machine can reach.
+        - name: egress
+          configMap:
+            name: {{ include "stateful-pods.machine.egress.configName" $ctx | quote }}
+        {{- end }}
         {{- /* The claims the machine mounts but the chart did not create. Their
                size, class, access mode and lifetime belong to whoever made them,
                which is what makes this the way a machine reaches shared
@@ -332,6 +353,91 @@ spec:
               mountPath: /provisioning
               readOnly: true
             {{- end }}
+        {{- if $egress.declared }}
+        # The proxy that decides this machine's outbound TCP.
+        #
+        # A sidecar - an init container with restartPolicy: Always - which is
+        # what makes Kubernetes start it here, wait for it, and leave it running
+        # for the life of the pod. It has to be in this pod because it has to be
+        # in this network namespace: a redirect is a rule in that namespace, and
+        # a proxy anywhere else is one the redirect could not reach.
+        #
+        # The first container this chart runs from an image it did not build.
+        - name: envoy
+          image: {{ $root.Values.envoy.image | quote }}
+          restartPolicy: Always
+          args:
+            - --config-path
+            - /etc/stateful-pods/egress/envoy.yaml
+            # Its own output is where every decision this policy makes is
+            # written, allowed and refused alike.
+            - --log-level
+            - warning
+          securityContext:
+            # The user the redirect exempts, by exactly this number. A process
+            # inside the machine running as it would be exempted too, which
+            # values.yaml says out loud - and which is why a policy worth
+            # relying on has a layer-4 half, enforced where a process's own
+            # identity is not what decides.
+            runAsUser: {{ include "stateful-pods.egress.proxyUser" $ctx }}
+            runAsGroup: {{ include "stateful-pods.egress.proxyUser" $ctx }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: egress
+              mountPath: /etc/stateful-pods/egress
+              readOnly: true
+        # Programs the pod's network namespace, and exits.
+        #
+        # After the four steps above, because seeding fetches a root filesystem
+        # from a registry and a policy applied before it would need a rule for
+        # the chart's own source. After the proxy, because traffic redirected to
+        # a port nothing is listening on is traffic refused - this step waits for
+        # the proxy to answer before it redirects anything to it. Before the
+        # guest, because a machine whose first connections escaped the policy
+        # would be a policy that depends on timing.
+        #
+        # It is the one container here granted NET_ADMIN, and it is gone by the
+        # time the machine starts. The machine is not granted it and cannot undo
+        # any of this from inside itself.
+        - name: egress
+          image: {{ $root.Values.shim.image | quote }}
+          command:
+            - /usr/local/lib/stateful-pods/egress-setup.sh
+          env:
+            - name: SP_MACHINE
+              value: {{ $name | quote }}
+            - name: SP_EGRESS_DEFAULT
+              value: {{ $egress.default | quote }}
+            - name: SP_EGRESS_DIR
+              value: /etc/stateful-pods/egress
+            - name: SP_EGRESS_PROXY_PORT
+              value: {{ include "stateful-pods.egress.proxyPort" $ctx | quote }}
+            - name: SP_EGRESS_ADMIN_PORT
+              value: {{ include "stateful-pods.egress.adminPort" $ctx | quote }}
+            - name: SP_EGRESS_PROXY_USER
+              value: {{ include "stateful-pods.egress.proxyUser" $ctx | quote }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN
+                - NET_RAW
+          volumeMounts:
+            - name: egress
+              mountPath: /etc/stateful-pods/egress
+              readOnly: true
+        {{- end }}
       # Proxmox's own TimeoutStopSec. An operating system needs longer to stop
       # than an application does, and being killed at the end of it is an unclean
       # shutdown of a pet on every ordinary delete.

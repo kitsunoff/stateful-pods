@@ -30,6 +30,27 @@ shim:
   # if you are building your own shim.
   image: ghcr.io/kitsunoff/stateful-pods-shim@sha256:3e7af746d685d4215902dabc8d80e8c6c080c4caa55d75a2abc5f08457e8e046
 
+# Image of the egress proxy: the program that decides what a machine may reach.
+#
+# THE ONE IMAGE THIS CHART RUNS THAT IT DID NOT BUILD. Everything else in a
+# machine's pod comes from `shim.image` above, which this project builds and
+# releases alongside the chart; this is Envoy, published by the Envoy project,
+# and the chart pins a digest of it for the same reason it pins one of its own:
+# a machine is a pet whose behaviour must be reproducible, and a tag that quietly
+# comes to mean different content makes it not.
+#
+# It is pulled only by a machine that declares `network.egress`. A machine that
+# declares none renders no proxy and never reaches for this.
+#
+# An override must be an Envoy. The chart renders a configuration in Envoy's own
+# schema and hands it over with `--config-path`; an image that is not Envoy will
+# refuse it at startup, which surfaces as a sidecar that crash-loops behind a
+# machine that otherwise looks healthy.
+envoy:
+  # Envoy, pinned by digest. The distroless variant: it is a proxy in somebody
+  # else's pod and it has no business carrying a shell.
+  image: docker.io/envoyproxy/envoy@sha256:b50d40392a05c866c4fffb5efcd17caded11d970ed1abbab317614d33377d0d7
+
 # Machines to run, keyed by machine name.
 #
 # Empty by default: there is no reasonable default machine, so installing the chart

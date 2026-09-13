@@ -11,7 +11,9 @@
 #   3. it can fetch an image from a registry and flatten it into the same tar,
 #      keeping security.capability and honouring the layer whiteouts;
 #   4. it carries a Kubernetes client, which the exec provisioning backend needs
-#      in order to reach a booted machine at all.
+#      in order to reach a booted machine at all;
+#   5. it carries a packet-filter client for both address families, which an
+#      egress policy is applied with.
 #
 # The third is what an oci source now depends on: the chart fetches the image
 # itself rather than running it, so a flatten that dropped an attribute or
@@ -236,6 +238,17 @@ if in_image 'kubectl version --client >/dev/null' >/dev/null 2>&1; then
   pass "kubectl is present and reports a client version"
 else
   fail "kubectl is missing or unusable; the exec provisioning backend cannot work"
+fi
+
+echo "==> 9. the image carries a packet-filter client for both address families"
+# A machine that declares an egress policy has its namespace programmed by this
+# image. A client that is missing fails that step on a cluster, after the
+# machine's root filesystem has been seeded, which is the most expensive place
+# to find out - and a missing ip6tables would leave a policy with a door in it.
+if in_image 'iptables --version >/dev/null && ip6tables --version >/dev/null' >/dev/null 2>&1; then
+  pass "iptables and ip6tables are both present and usable"
+else
+  fail "a packet-filter client is missing; an egress policy cannot be applied"
 fi
 
 echo "all image assertions held"
