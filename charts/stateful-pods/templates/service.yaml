@@ -2,6 +2,7 @@
 {{- $root := . }}
 {{- range $name, $machine := .Values.machines }}
 {{- $ctx := dict "root" $root "name" $name "machine" $machine }}
+{{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
 ---
 apiVersion: v1
 kind: Service
@@ -17,4 +18,21 @@ spec:
   publishNotReadyAddresses: true
   selector:
     {{- include "stateful-pods.machine.selectorLabels" $ctx | nindent 4 }}
+  {{- if $ports }}
+  # One entry per declared port, which is what publishes an SRV record under the
+  # port's own name - the way a client finds where a machine's service is without
+  # the number being written down a second time.
+  #
+  # The target is the number rather than the port's name. A named target resolves
+  # through the guest container's port list, so a machine whose service is
+  # declared correctly and whose container list somehow was not would resolve to
+  # nothing; there is no remapping here to justify the indirection.
+  ports:
+    {{- range $port := $ports }}
+    - name: {{ $port.name | quote }}
+      port: {{ $port.port }}
+      targetPort: {{ $port.port }}
+      protocol: {{ $port.protocol | quote }}
+    {{- end }}
+  {{- end }}
 {{- end }}

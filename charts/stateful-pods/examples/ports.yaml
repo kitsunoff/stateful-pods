@@ -1,0 +1,43 @@
+# A machine that declares the ports it serves and asks that nothing else be
+# reachable.
+#
+#   helm template lab charts/stateful-pods --values charts/stateful-pods/examples/ports.yaml
+#
+# `ingress: declared` renders a NetworkPolicy. That object is enforced by the
+# cluster's network plugin and by nothing else, so on a cluster whose plugin
+# implements no policy it is accepted and restricts nothing at all.
+machines:
+  web:
+    source:
+      kind: preset
+      name: debian-trixie
+
+    security:
+      mode: userns
+
+    rootfs:
+      size: 8Gi
+
+    network:
+      # Only the ports below are admitted. Outbound traffic is untouched, so the
+      # machine keeps its resolver and its package mirror.
+      ingress: declared
+
+      ports:
+        # The key is the name the port is published under: it appears in the
+        # Service's SRV record and in `kubectl describe pod`.
+        ssh:
+          port: 22
+
+        http:
+          port: 80
+
+        # The same number on two protocols is two entries, which is legal and is
+        # how a machine serving DNS declares itself.
+        dns-tcp:
+          port: 53
+          protocol: TCP
+
+        dns-udp:
+          port: 53
+          protocol: UDP

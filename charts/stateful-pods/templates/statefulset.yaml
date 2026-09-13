@@ -17,6 +17,8 @@
        names the machine's inputs are materialized under and never the inputs. */ -}}
 {{- $provisioning := include "stateful-pods.machine.provisioning.resolved" $ctx | fromYaml }}
 {{- $hasMaterial := include "stateful-pods.machine.provisioning.hasMaterial" $ctx }}
+{{- /* The ports the machine declares, normalised and in a stable order. */ -}}
+{{- $ports := include "stateful-pods.machine.ports" $ctx | fromYamlArray }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -268,6 +270,21 @@ spec:
           image: {{ $root.Values.shim.image | quote }}
           command:
             - /usr/local/lib/stateful-pods/boot.sh
+          {{- if $ports }}
+          # The ports this machine declares it serves. A declaration and not a
+          # gate: the pod's network namespace is reachable on every port
+          # something inside it listens on, whatever this list says. What it
+          # buys is that `kubectl describe pod` and everything built on it can
+          # see a machine's services, and that the Service beside this one can
+          # publish an SRV record per name. The input that does restrict
+          # anything is machines.<name>.network.ingress.
+          ports:
+            {{- range $port := $ports }}
+            - name: {{ $port.name | quote }}
+              containerPort: {{ $port.port }}
+              protocol: {{ $port.protocol | quote }}
+            {{- end }}
+          {{- end }}
           env:
             {{- include "stateful-pods.machine.seedEnv" $ctx | nindent 12 }}
           # A terminal is what gives the machine a /dev/console to bind, which is
